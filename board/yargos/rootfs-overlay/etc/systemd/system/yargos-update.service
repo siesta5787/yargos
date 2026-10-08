@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for a newer YARG release and stage it
+After=network-online.target yargos-firstboot.service
+Wants=network-online.target
+ConditionPathExists=/data/apps/yarg/current
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yargos-update auto
+TimeoutStartSec=2h

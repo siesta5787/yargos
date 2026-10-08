@@ -16,7 +16,9 @@ StandardError=journal
 UtmpIdentifier=tty1
 UtmpMode=user
 Environment=HOME=/data/home/player XDG_RUNTIME_DIR=/run/user/1000
+ExecStartPre=+/usr/bin/yargos-update boot-check
 ExecStart=/usr/lib/yargos/session.sh
+TimeoutStopSec=10
 Restart=always
 RestartSec=3
 

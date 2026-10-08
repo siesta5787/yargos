@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily YARG update check
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1d
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

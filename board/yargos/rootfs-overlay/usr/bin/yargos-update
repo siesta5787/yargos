@@ -1,0 +1,206 @@
+#!/bin/sh
+# yargos-update: update YARG on the data partition without rebuilding the OS.
+#
+#   yargos-update status         what is installed, staged, pending or rejected
+#   yargos-update check          is a newer YARG release available?
+#   yargos-update apply [--restart]
+#                                download, verify, stage and switch to the latest release
+#   yargos-update auto           what the daily timer runs (does nothing offline or if AUTO_UPDATE=no)
+#   yargos-update rollback       switch back to the previous version
+#   yargos-update boot-check     run before each YARG start: roll back after repeated failed starts
+#   yargos-update mark-good      run after YARG has stayed up for a while: the new version is good
+#   yargos-update verify-dir DIR check that a YARG folder looks launchable (used by apply)
+#
+# Layout under $DATA/apps/yarg:  <version>/  current -> <version>  previous -> <version>
+#   .pending (new version on trial: "<version> <failed starts>")   .rejected (versions rolled back)
+# Settings in $DATA/yargos.conf (shell syntax): AUTO_UPDATE=yes|no
+#
+# Integrity: the download is checked against the SHA-256 digest GitHub publishes in the release
+# metadata (both fetched over HTTPS). YARG's own .sig is not checked, its public key is not known.
+
+set -u
+
+DATA=${YARGOS_DATA:-/data}
+APPS=$DATA/apps/yarg
+API=${YARGOS_API:-https://api.github.com/repos/YARC-Official/YARG/releases/latest}
+ASSET_RE=${YARGOS_ASSET_RE:-Linux-x86_64\.zip$}
+MAX_ATTEMPTS=${YARGOS_MAX_ATTEMPTS:-3}
+OWNER=${YARGOS_OWNER:-player}
+CONF=$DATA/yargos.conf
+[ -f "$CONF" ] && . "$CONF"
+AUTO_UPDATE=${AUTO_UPDATE:-yes}
+
+log() { echo "yargos-update: $*"; }
+die() { log "$*" >&2; exit 1; }
+
+current_version() { [ -L "$APPS/current" ] && basename "$(readlink "$APPS/current")"; }
+previous_version() { [ -L "$APPS/previous" ] && basename "$(readlink "$APPS/previous")"; }
+
+# ver_gt A B: true if A > B (dotted numbers)
+ver_gt() {
+    awk -v a="$1" -v b="$2" 'BEGIN {
+        n = split(a, x, "."); m = split(b, y, "."); k = (n > m) ? n : m
+        for (i = 1; i <= k; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+        exit 1 }'
+}
+
+set_link() { # set_link NAME TARGET: atomic symlink replace
+    ln -sfn "$2" "$APPS/$1.new" && mv -T "$APPS/$1.new" "$APPS/$1"
+}
+
+fix_owner() { id "$OWNER" >/dev/null 2>&1 && chown -R "$OWNER:$OWNER" "$@" 2>/dev/null; return 0; }
+
+is_rejected() { [ -f "$APPS/.rejected" ] && grep -qx "$1" "$APPS/.rejected"; }
+
+# Fills LATEST_VER, LATEST_URL, LATEST_DIGEST from the release metadata.
+fetch_latest() {
+    json=$(curl -fsS --max-time 20 -H 'Accept: application/vnd.github+json' "$API") || return 1
+    tag=$(printf '%s' "$json" | jq -r '.tag_name // empty') || return 1
+    [ -n "$tag" ] || return 1
+    LATEST_VER=${tag#v}
+    asset=$(printf '%s' "$json" | jq -r --arg re "$ASSET_RE" \
+        '[.assets[] | select(.name | test($re))][0] | "\(.browser_download_url // "") \(.digest // "")"') || return 1
+    LATEST_URL=${asset% *}
+    LATEST_DIGEST=${asset#* }
+    [ -n "$LATEST_URL" ] && [ "$LATEST_URL" != null ]
+}
+
+# Does this folder look like a YARG that can start? Loads each library's dependencies without running it.
+verify_dir() {
+    d=$1
+    [ -x "$d/YARG" ] || { log "$d/YARG is missing or not executable"; return 1; }
+    [ -f "$d/UnityPlayer.so" ] || { log "$d/UnityPlayer.so is missing"; return 1; }
+    ld=$(ls /lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2 2>/dev/null | head -1)
+    [ -n "$ld" ] || { log "no dynamic loader found, skipping library check"; return 0; }
+    ok=0
+    for f in "$d/UnityPlayer.so" "$d"/YARG_Data/Plugins/*.so; do
+        [ -f "$f" ] || continue
+        out=$(LD_LIBRARY_PATH="$d:$d/YARG_Data/Plugins" "$ld" --list "$f" 2>&1)
+        # shellcheck disable=SC2181
+        if [ $? -ne 0 ] || printf '%s' "$out" | grep -q 'not found'; then
+            log "$(basename "$f"): $(printf '%s' "$out" | grep -E 'not found|error|cannot' | head -1 | sed 's/^[[:space:]]*//')"
+            ok=1
+        fi
+    done
+    return $ok
+}
+
+cmd_status() {
+    log "current:  $(current_version || echo none)"
+    log "previous: $(previous_version || echo none)"
+    [ -f "$APPS/.pending" ] && log "on trial: $(cat "$APPS/.pending")  (version, failed starts)"
+    [ -f "$APPS/.rejected" ] && log "rejected: $(tr '\n' ' ' < "$APPS/.rejected")"
+    return 0
+}
+
+cmd_check() {
+    cur=$(current_version) || die "no YARG installed under $APPS"
+    fetch_latest || die "could not read the latest release (offline?)"
+    log "installed $cur, latest $LATEST_VER"
+    if is_rejected "$LATEST_VER"; then
+        log "latest $LATEST_VER was rolled back before; ignoring it"
+    elif ver_gt "$LATEST_VER" "$cur"; then
+        log "update available: $LATEST_VER"
+    else
+        log "up to date"
+    fi
+}
+
+cmd_apply() {
+    restart=no
+    [ "${1:-}" = --restart ] && restart=yes
+    cur=$(current_version) || die "no YARG installed under $APPS"
+    fetch_latest || die "could not read the latest release (offline?)"
+    if is_rejected "$LATEST_VER"; then log "latest $LATEST_VER was rolled back before; skipping"; return 0; fi
+    ver_gt "$LATEST_VER" "$cur" || { log "up to date ($cur)"; return 0; }
+
+    case $LATEST_DIGEST in
+        sha256:*) want=${LATEST_DIGEST#sha256:} ;;
+        *) die "release $LATEST_VER has no SHA-256 digest in its metadata; refusing to install it" ;;
+    esac
+
+    mkdir "$APPS/.lock" 2>/dev/null || die "another update is running"
+    dl=$APPS/.dl
+    stage=$APPS/.stage-$LATEST_VER
+    trap 'rm -rf "$APPS/.lock" "$stage"' EXIT
+    rm -rf "$stage" "$dl"; mkdir -p "$dl" "$stage"
+
+    log "downloading $LATEST_VER"
+    curl -fL --max-time 3600 -o "$dl/yarg.zip" "$LATEST_URL" || { rm -rf "$dl"; die "download failed"; }
+    got=$(sha256sum "$dl/yarg.zip" | cut -d' ' -f1)
+    [ "$got" = "$want" ] || { rm -rf "$dl"; die "checksum mismatch (expected $want, got $got); not installing"; }
+
+    unzip -q "$dl/yarg.zip" -d "$stage" || { rm -rf "$dl"; die "could not unpack the download"; }
+    rm -rf "$dl"
+    chmod 0755 "$stage/YARG" 2>/dev/null
+    verify_dir "$stage" || die "$LATEST_VER would not start on this system (see above); keeping $cur"
+
+    [ -e "$APPS/$LATEST_VER" ] && rm -rf "$APPS/$LATEST_VER"
+    mv "$stage" "$APPS/$LATEST_VER"
+    fix_owner "$APPS/$LATEST_VER"
+    set_link previous "$cur"
+    set_link current "$LATEST_VER"
+    echo "$LATEST_VER 0" > "$APPS/.pending"
+
+    # Keep only the two newest. Skip the current/previous symlinks: "rm -rf link/" would empty
+    # the folder they point to.
+    for d in "$APPS"/*/; do
+        d=${d%/}
+        [ -L "$d" ] && continue
+        n=$(basename "$d")
+        [ "$n" = "$LATEST_VER" ] || [ "$n" = "$cur" ] || rm -rf "$d"
+    done
+    fix_owner "$APPS"
+    log "installed $LATEST_VER (was $cur); it starts the next time YARG launches"
+    if [ "$restart" = yes ]; then systemctl restart yarg.service; fi
+}
+
+cmd_auto() {
+    [ "$AUTO_UPDATE" = no ] && { log "automatic updates are off (AUTO_UPDATE=no in $CONF)"; return 0; }
+    cmd_apply || log "automatic update did not complete"
+    return 0
+}
+
+cmd_rollback() {
+    prev=$(previous_version) || die "no previous version to go back to"
+    [ -d "$APPS/$prev" ] || die "previous version $prev is gone"
+    cur=$(current_version)
+    set_link current "$prev"
+    [ -n "$cur" ] && set_link previous "$cur"
+    rm -f "$APPS/.pending"
+    log "rolled back to $prev"
+}
+
+cmd_boot_check() {
+    [ -f "$APPS/.pending" ] || return 0
+    set -- $(cat "$APPS/.pending")
+    ver=$1; tries=$(( ${2:-0} + 1 ))
+    if [ "$tries" -gt "$MAX_ATTEMPTS" ] && [ "$(current_version)" = "$ver" ] && previous_version >/dev/null; then
+        log "$ver failed to stay up after $MAX_ATTEMPTS starts; rolling back to $(previous_version)"
+        echo "$ver" >> "$APPS/.rejected"
+        cmd_rollback
+        date > "$APPS/last-rollback.txt"; echo "$ver was rolled back" >> "$APPS/last-rollback.txt"
+        fix_owner "$APPS"
+        return 0
+    fi
+    echo "$ver $tries" > "$APPS/.pending"
+    return 0
+}
+
+cmd_mark_good() {
+    [ -f "$APPS/.pending" ] || return 0
+    log "$(cut -d' ' -f1 "$APPS/.pending") is good"
+    rm -f "$APPS/.pending"
+}
+
+case ${1:-} in
+    status) cmd_status ;;
+    check) cmd_check ;;
+    apply) shift; cmd_apply "$@" ;;
+    auto) cmd_auto ;;
+    rollback) cmd_rollback ;;
+    boot-check) cmd_boot_check ;;
+    mark-good) cmd_mark_good ;;
+    verify-dir) verify_dir "${2:?usage: yargos-update verify-dir DIR}" ;;
+    *) sed -n '2,20p' "$0"; exit 2 ;;
+esac
