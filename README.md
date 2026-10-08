@@ -117,7 +117,8 @@ Not verified:
 - Playing a song on the virtual drums: whether each pad, cymbal and the kick land on the right lane
   in gameplay, and kick2.
 - Drum velocity for yellow and green (red looks right; the Ion may not encode velocity as documented
-  for Rock Band kits). The kit's idle velocity values.
+  for Rock Band kits). YARG only uses velocity for the optional bonus on ghost/accent notes and the
+  hit-sound volume; a flagged hit always registers (its layout floors the velocity at 1).
 - Wiimote guitars: protocol details in `wiimote.rs` (button bits, whammy/slider ranges, tilt axis)
   come from Wii extension documentation, covered only by unit tests. Bluetooth reconnect after
   1+2 pairing, and whether the Wiimote passes reporting mode 0x35 through hidraw, are unknown.
