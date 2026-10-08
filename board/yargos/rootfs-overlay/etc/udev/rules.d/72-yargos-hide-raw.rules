@@ -1,0 +1,4 @@
+# The Ion Drum Rocker is presented to YARG as a virtual PS3 drum kit by yargos-bridge.
+# Make the raw kit root-only (the bridge runs as root) so YARG doesn't list it as a second device.
+# Runs after 70-uaccess and before 73-seat-late, so removing the tag stops the user ACL.
+SUBSYSTEM=="input", KERNEL=="event[0-9]*|js[0-9]*", ATTRS{id/vendor}=="1bad", ATTRS{id/product}=="0130", MODE="0600", OWNER="root", GROUP="root", TAG-="uaccess"

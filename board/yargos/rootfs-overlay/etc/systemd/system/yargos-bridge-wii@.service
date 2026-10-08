@@ -1,0 +1,7 @@
+[Unit]
+Description=Wiimote guitar bridge for %I
+
+[Service]
+ExecStart=/usr/bin/yargos-bridge wii /dev/%I
+Restart=no
+User=root

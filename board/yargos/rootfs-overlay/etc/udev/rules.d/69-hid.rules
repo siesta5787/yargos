@@ -1,0 +1,3 @@
+# Give the logged-in seat raw access to HID instruments (YARG reads hidraw directly).
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", TAG+="uaccess"
+KERNEL=="uhid", TAG+="uaccess"

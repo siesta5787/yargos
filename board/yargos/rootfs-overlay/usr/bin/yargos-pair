@@ -1,0 +1,29 @@
+#!/bin/sh
+# Opens a Bluetooth pairing window. Usage: yargos-pair [seconds]
+# Put a Wiimote in 1+2 mode, or a wireless guitar in pairing mode, then run this.
+WINDOW=${1:-60}
+END=$(( $(date +%s) + WINDOW ))
+
+bluetoothctl power on >/dev/null
+bluetoothctl agent NoInputNoOutput >/dev/null
+bluetoothctl default-agent >/dev/null
+bluetoothctl pairable on >/dev/null
+bluetoothctl --timeout "$WINDOW" scan on >/dev/null &
+
+while [ "$(date +%s)" -lt "$END" ]; do
+    for mac in $(bluetoothctl devices | awk '{print $2}'); do
+        info=$(bluetoothctl info "$mac")
+        echo "$info" | grep -q 'Connected: yes' && continue
+        case "$info" in
+            *"Name: Nintendo RVL"*)
+                bluetoothctl trust "$mac" >/dev/null
+                bluetoothctl connect "$mac" >/dev/null ;;
+            *"Icon: input-gaming"*|*"Icon: input-keyboard"*|*"Icon: input-mouse"*)
+                bluetoothctl pair "$mac" >/dev/null
+                bluetoothctl trust "$mac" >/dev/null
+                bluetoothctl connect "$mac" >/dev/null ;;
+        esac
+    done
+    sleep 2
+done
+bluetoothctl pairable off >/dev/null

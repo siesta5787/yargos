@@ -1,0 +1,17 @@
+config BR2_PACKAGE_YARG
+	bool "yarg (seed release)"
+	depends on BR2_x86_64
+	depends on BR2_TOOLCHAIN_USES_GLIBC
+	help
+	  Installs a pinned YARG Linux release as a seed under
+	  /usr/share/yarg-seed. On first boot it is copied to the writable
+	  data partition, where the updater manages newer releases.
+
+	  The release bundles proprietary components (BASS, Discord SDK),
+	  so images containing it must not be redistributed.
+
+	  https://github.com/YARC-Official/YARG
+
+comment "yarg needs a glibc toolchain"
+	depends on BR2_x86_64
+	depends on !BR2_TOOLCHAIN_USES_GLIBC

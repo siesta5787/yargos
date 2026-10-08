@@ -1,0 +1,7 @@
+[Unit]
+Description=Xbox 360 drum kit bridge for %I
+
+[Service]
+ExecStart=/usr/bin/yargos-bridge drums /dev/input/%I
+Restart=no
+User=root

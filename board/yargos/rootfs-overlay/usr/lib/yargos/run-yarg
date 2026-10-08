@@ -1,0 +1,6 @@
+#!/bin/sh
+xset s off -dpms
+exec /data/apps/yarg/current/YARG \
+    -screen-fullscreen 1 \
+    -offline \
+    -persistent-data-path /data/yarg

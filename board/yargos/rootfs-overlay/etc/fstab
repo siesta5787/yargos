@@ -1,0 +1,4 @@
+# <file system>        <mount pt>    <type>  <options>                                         <dump> <pass>
+LABEL=YARGDATA         /data         ext4    rw,noatime,nofail,x-systemd.device-timeout=10s    0      2
+LABEL=YARGSONGS        /media/songs  auto    ro,noatime,nofail,x-systemd.device-timeout=5s     0      0
+tmpfs                  /tmp          tmpfs   mode=1777,nosuid,nodev                            0      0

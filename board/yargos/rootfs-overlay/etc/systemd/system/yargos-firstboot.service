@@ -1,0 +1,14 @@
+[Unit]
+Description=Prepare YARGOS data partition
+RequiresMountsFor=/data
+Before=yarg.service bluetooth.service
+DefaultDependencies=no
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/yargos/firstboot.sh
+
+[Install]
+WantedBy=multi-user.target

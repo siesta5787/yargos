@@ -1,0 +1,8 @@
+config BR2_PACKAGE_YARGOS_BRIDGE
+	bool "yargos-bridge"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  Userspace bridges that turn instruments YARG cannot read on Linux
+	  into virtual PS3 instruments (uhid) that it detects automatically:
+	  Bluetooth Wiimote guitars and wired Xbox 360 drum kits.
