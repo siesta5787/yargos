@@ -48,7 +48,7 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 
 - `yargos-firstboot.service` copies the seeded YARG into `/data/apps/yarg/<version>` and points
   `/data/apps/yarg/current` at it. YARG runs from there, so newer releases can be dropped in
-  without rebuilding the OS. (The updater itself is not written yet.)
+  without rebuilding the OS (see "Updating YARG").
 - YARG runs with `-persistent-data-path /data/yarg -offline`; settings, profiles and the song
   cache live on the data partition. It uses OpenGL (radeonsi); this Buildroot has no RADV Vulkan option.
 - The song drive: label it `YARGSONGS` (ext4, exFAT, NTFS or FAT). It mounts read-only at
@@ -83,6 +83,27 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
   (amdgpu for AMD via an OutputClass, modesetting otherwise) so the image is not tied to one GPU.
 - `session.sh` writes Xorg's log to `/tmp/Xorg.0.log` and prints it to the journal if Xorg exits.
 
+## Updating YARG
+
+`yargos-update` (shell, uses curl, jq, unzip) updates YARG on the data partition without touching the OS:
+
+- It asks GitHub for the latest release, downloads the Linux zip, and checks it against the SHA-256
+  digest GitHub publishes in the release metadata (both over HTTPS). YARG's own `.sig` is not checked
+  because its public key is unknown. A release with no digest is refused.
+- It unpacks to a staging folder, checks that every library's dependencies load, then atomically
+  switches `/data/apps/yarg/current` to the new folder and keeps the old one as `previous`.
+- It never touches the running game; the new version starts the next time YARG launches.
+- A new version is "on trial": `yarg.service` runs `yargos-update boot-check` before each start and
+  `yarg-health.service` calls `mark-good` after 60 s of uptime. Three starts without that and the next start
+  rolls back to `previous` and remembers the bad version so it is not offered again.
+- `yargos-update.timer` runs `auto` 3 minutes after boot and daily. Set `AUTO_UPDATE=no` in
+  `/data/yargos.conf` to turn that off. Other commands: `status`, `check`, `apply [--restart]`, `rollback`.
+- `tools/test-update.sh [extracted YARG folder]` tests all of this against a local fake release server.
+
+Networking: wired links use DHCP (systemd-networkd). WiFi is handled by `iwd` (which does its own DHCP):
+press Ctrl+Alt+F2, log in as root (empty password; there is no network login), and run
+`iwctl station <wlan> connect "SSID"`. Press Ctrl+Alt+F1 to return to the game.
+
 ## Boot entries
 
 `loader.conf` defaults to `yargos-debug` (verbose kernel and systemd output, also on the serial
@@ -108,6 +129,11 @@ Verified:
   Buildroot has no "all linux-firmware" option, so the image uses a broad per-chip firmware list.
 - A full build completes. Image contents were inspected (partitions, bridge, YARG seed, units, rules,
   `player` user), not booted to YARG.
+- Updater: in QEMU the daily check ran from the image, over HTTPS, and reported "up to date (0.15.0)".
+  Staging, switching and rolling back are tested only against the local fake server.
+- Polish (checked in QEMU): `/media/songs` is an automount, so there is no boot wait without the drive;
+  wired DHCP works; the WiFi regulatory-database warning is gone; YARG starts about 7 s after power on
+  (first boot copies YARG to the data partition, later boots are shorter).
 - Wiimote guitar (real hardware, desktop PC): connects over Bluetooth, the bridge lights LED 1 and the
   virtual PS3 guitar reports all five frets, strum up/down, whammy (full range), Start/Select and tilt
   correctly, with no noise at rest; a guitar without a touch bar reports an idle slider. YARG on the
@@ -139,9 +165,12 @@ Not verified:
 Known limits: root filesystem is read-write ext4 for now (read-only root + overlay is a later phase);
 the data partition is a fixed 2G.
 
-Not started: `yargos-update` (GitHub release fetch, checksum/signature verification, symlink swap,
-rollback), splash screen, power-button handling, RAUC/A-B OS updates, ALSA default-device selection
-for HDMI/USB audio.
+Not started: a logo splash screen (boot is silent: black screen, no cursor, until YARG appears),
+RAUC/A-B OS updates (the OS itself is updated by reflashing), ALSA default-device selection for HDMI/USB
+audio, a WiFi setup screen that works without a keyboard.
+
+Not verified: an actual update install on the image (only the up-to-date check ran), WiFi, the power
+button (configured, not pressed), VT switching to a maintenance console.
 
 ## License
 

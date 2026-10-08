@@ -67,6 +67,8 @@ check "4th start rolls back to 0.15.0" [ "$(cur)" = 0.15.0 ]
 check "remembers 0.99.0 as rejected" grep -qx 0.99.0 "$APPS/.rejected"
 check "clears the trial marker" [ ! -e "$APPS/.pending" ]
 "$UPD" apply 2>&1 | grep -q "rolled back before"; check "does not offer the rejected version again" [ $? -eq 0 ]
+echo "offline"
+YARGOS_API="http://127.0.0.1:1/none" "$UPD" auto >/dev/null 2>&1; check "auto exits cleanly when offline" [ $? -eq 0 ]
 echo "a healthy new version"
 rm -f "$APPS/.rejected"; "$UPD" apply >/dev/null 2>&1; "$UPD" boot-check; "$UPD" mark-good
 check "mark-good clears the trial" [ ! -e "$APPS/.pending" ]

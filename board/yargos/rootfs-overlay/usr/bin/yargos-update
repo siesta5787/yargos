@@ -23,7 +23,7 @@ set -u
 DATA=${YARGOS_DATA:-/data}
 APPS=$DATA/apps/yarg
 API=${YARGOS_API:-https://api.github.com/repos/YARC-Official/YARG/releases/latest}
-ASSET_RE=${YARGOS_ASSET_RE:-Linux-x86_64\.zip$}
+ASSET_SUFFIX=${YARGOS_ASSET_SUFFIX:-Linux-x86_64.zip}
 MAX_ATTEMPTS=${YARGOS_MAX_ATTEMPTS:-3}
 OWNER=${YARGOS_OWNER:-player}
 CONF=$DATA/yargos.conf
@@ -58,8 +58,9 @@ fetch_latest() {
     tag=$(printf '%s' "$json" | jq -r '.tag_name // empty') || return 1
     [ -n "$tag" ] || return 1
     LATEST_VER=${tag#v}
-    asset=$(printf '%s' "$json" | jq -r --arg re "$ASSET_RE" \
-        '[.assets[] | select(.name | test($re))][0] | "\(.browser_download_url // "") \(.digest // "")"') || return 1
+    # endswith, not test(): the image's jq is built without a regex library.
+    asset=$(printf '%s' "$json" | jq -r --arg suf "$ASSET_SUFFIX" \
+        '[.assets[] | select(.name | endswith($suf))][0] | "\(.browser_download_url // "") \(.digest // "")"') || return 1
     LATEST_URL=${asset% *}
     LATEST_DIGEST=${asset#* }
     [ -n "$LATEST_URL" ] && [ "$LATEST_URL" != null ]
@@ -157,7 +158,8 @@ cmd_apply() {
 
 cmd_auto() {
     [ "$AUTO_UPDATE" = no ] && { log "automatic updates are off (AUTO_UPDATE=no in $CONF)"; return 0; }
-    cmd_apply || log "automatic update did not complete"
+    # A subshell, so a failure (offline, bad download) is logged but never marks the timer's service failed.
+    (cmd_apply) || log "automatic update did not complete"
     return 0
 }
 
