@@ -26,9 +26,14 @@ setup)
     udevadm control --reload && udevadm trigger --subsystem-match=hidraw --subsystem-match=input
     # BlueZ only lets bonded HID devices connect by default; a Wiimote on 1+2 never bonds, so it
     # connects and is dropped immediately. Allow it (the image ships the same setting).
-    if [ -f /etc/bluetooth/input.conf ] && ! grep -q 'yargos-dev' /etc/bluetooth/input.conf; then
-        cp -n /etc/bluetooth/input.conf /etc/bluetooth/input.conf.yargos-bak
-        sed -i '/^\[General\]/a ClassicBondedOnly=false # yargos-dev\nUserspaceHID=true # yargos-dev' /etc/bluetooth/input.conf
+    # Note: BlueZ's parser rejects trailing comments on a value line, so the marker is its own line.
+    if [ -f /etc/bluetooth/input.conf ]; then
+        if [ -f /etc/bluetooth/input.conf.yargos-bak ]; then
+            cp /etc/bluetooth/input.conf.yargos-bak /etc/bluetooth/input.conf
+        else
+            cp /etc/bluetooth/input.conf /etc/bluetooth/input.conf.yargos-bak
+        fi
+        sed -i '/^\[General\]/a # yargos-dev (undone by teardown)\nClassicBondedOnly=false\nUserspaceHID=true' /etc/bluetooth/input.conf
         systemctl restart bluetooth
         echo "bluetooth restarted with ClassicBondedOnly=false (briefly drops Bluetooth devices)"
     fi

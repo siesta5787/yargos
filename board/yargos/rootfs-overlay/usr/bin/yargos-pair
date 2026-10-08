@@ -13,12 +13,15 @@ bluetoothctl --timeout "$WINDOW" scan on >/dev/null &
 while [ "$(date +%s)" -lt "$END" ]; do
     for mac in $(bluetoothctl devices | awk '{print $2}'); do
         info=$(bluetoothctl info "$mac")
-        echo "$info" | grep -q 'Connected: yes' && continue
         case "$info" in
             *"Name: Nintendo RVL"*)
+                # "Connected" only means the radio link is up; the HID link is what makes a hidraw node.
+                grep -qs 'HID_ID=0005:0000057E' /sys/class/hidraw/hidraw*/device/uevent 2>/dev/null && continue
+                echo "yargos-pair: Wiimote $mac found, connecting"
                 bluetoothctl trust "$mac" >/dev/null
-                bluetoothctl connect "$mac" >/dev/null ;;
+                bluetoothctl connect "$mac" | grep -E 'Connection successful|Failed' ;;
             *"Icon: input-gaming"*|*"Icon: input-keyboard"*|*"Icon: input-mouse"*)
+                echo "$info" | grep -q 'Connected: yes' && continue
                 bluetoothctl pair "$mac" >/dev/null
                 bluetoothctl trust "$mac" >/dev/null
                 bluetoothctl connect "$mac" >/dev/null ;;
@@ -26,4 +29,5 @@ while [ "$(date +%s)" -lt "$END" ]; do
     done
     sleep 2
 done
+echo "yargos-pair: pairing window closed"
 bluetoothctl pairable off >/dev/null
