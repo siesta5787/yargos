@@ -127,13 +127,16 @@ for h in glob.glob('/sys/class/hidraw/hidraw*'):
         devs[os.open(n, os.O_RDONLY)] = n
 if not devs: raise SystemExit('no virtual 12BA devices found; is a bridge running?')
 print('watching', list(devs.values()))
+# Bytes 19..26 are accelerometers: shown as tilt but not a reason to print a new line.
 last = {}
 while True:
     for fd in select.select(list(devs), [], [])[0]:
         r = os.read(fd, 64)
-        if r != last.get(fd):
-            last[fd] = r
-            print(devs[fd], r.hex(' '))
+        key = r[:19]
+        if key != last.get(fd):
+            last[fd] = key
+            tilt = int.from_bytes(r[19:21], 'little') if len(r) >= 21 else 0
+            print(devs[fd], key.hex(' '), f"tilt={tilt:03x}")
 PY
     ;;
 yarg)

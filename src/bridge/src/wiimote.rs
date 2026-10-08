@@ -22,15 +22,19 @@ enum State {
     Streaming,
 }
 
+// The accelerometer jitters by a unit or two at rest; ignore changes smaller than this (of 0..=255).
+const TILT_DEADBAND: u16 = 8;
+
 pub struct Wiimote {
     dev: File,
     state: State,
     whammy_rest: u8,
+    last_tilt: u16,
 }
 
 impl Wiimote {
     pub fn new(dev: File) -> Self {
-        Self { dev, state: State::WaitStatus, whammy_rest: WHAMMY_REST_DEFAULT }
+        Self { dev, state: State::WaitStatus, whammy_rest: WHAMMY_REST_DEFAULT, last_tilt: 0x200 }
     }
 
     pub fn start(&mut self, slot: u8) -> io::Result<()> {
@@ -119,15 +123,20 @@ impl Wiimote {
         g.guide = core[1] & 0x80 != 0;
 
         self.whammy_rest = self.whammy_rest.min(whammy_raw);
-        let span = WHAMMY_MAX.saturating_sub(self.whammy_rest).max(1) as u16;
-        let pressed = whammy_raw.saturating_sub(self.whammy_rest) as u16;
+        let span = WHAMMY_MAX.saturating_sub(self.whammy_rest).saturating_sub(1).max(1) as u16;
+        // One step of whammy noise at rest should not register as movement.
+        let pressed = whammy_raw.saturating_sub(self.whammy_rest).saturating_sub(1) as u16;
         g.whammy = 0x80 + ((pressed.min(span) * 0x7F) / span) as u8;
 
         if touch != SLIDER_REST {
             g.slider = ((touch as u16 * 0xFF) / 0x1F) as u8;
         }
 
-        g.tilt = 0x180 + (accel_y as u16 * 0x100) / 0xFF;
+        let tilt = 0x180 + (accel_y as u16 * 0x100) / 0xFF;
+        if tilt.abs_diff(self.last_tilt) >= TILT_DEADBAND {
+            self.last_tilt = tilt;
+        }
+        g.tilt = self.last_tilt;
         g
     }
 }
@@ -173,6 +182,30 @@ mod tests {
         r[6 + 3] = WHAMMY_MAX;
         let g = wm().handle(&r).unwrap().unwrap();
         assert_eq!(g.whammy, 0xFF);
+    }
+
+    #[test]
+    fn accelerometer_jitter_does_not_change_the_report() {
+        let mut w = wm();
+        let mut r = report(0xFF, 0xFF);
+        r[4] = 128;
+        let first = w.handle(&r).unwrap().unwrap();
+        for y in [127u8, 129, 126, 130, 128, 131] {
+            r[4] = y;
+            assert!(w.handle(&r).unwrap().unwrap() == first, "y={y}");
+        }
+        r[4] = 200; // a real tilt
+        assert!(w.handle(&r).unwrap().unwrap() != first);
+    }
+
+    #[test]
+    fn whammy_noise_of_one_step_is_ignored() {
+        let mut w = wm();
+        let mut r = report(0xFF, 0xFF);
+        r[6 + 3] = WHAMMY_REST_DEFAULT + 1;
+        assert_eq!(w.handle(&r).unwrap().unwrap().whammy, 0x80);
+        r[6 + 3] = WHAMMY_MAX;
+        assert_eq!(w.handle(&r).unwrap().unwrap().whammy, 0xFF);
     }
 
     #[test]
