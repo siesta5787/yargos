@@ -31,6 +31,22 @@ The first build was done at `/tmp/brout` and `/tmp/buildroot`, then moved to `~/
 
 ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much faster.
 
+## Installing / trying it on a PC
+
+`output/images/yargos.img` is a complete UEFI-bootable disk (256M boot, 3G system, 2G data; about 5.6 GB, so
+use a 8 GB or larger USB stick, preferably USB 3). It runs from the drive you write it to.
+
+    sudo tools/flash.sh                 # lists USB drives, asks which, makes you retype it, writes, verifies
+
+On the target PC: turn Secure Boot off in the firmware settings (the boot loader is unsigned) and boot from
+the USB drive (usually F7, F11, F12 or Del at power-on). The boot menu shows for 3 s; the default is the
+verbose `YARGOS (debug)` entry, which prints boot messages (useful for diagnosing a new machine). To put
+it on an internal SSD instead, write the image to that disk (`FORCE=1 sudo tools/flash.sh /dev/nvme0n1`
+from another computer or a Linux live USB); there is no on-device installer yet.
+
+For a diagnostic report on a machine with no network: press Ctrl+Alt+F2, log in as `root` (no password),
+run `journalctl -b > /data/boot.log`, then read `boot.log` from the `YARGDATA` partition on another PC.
+
 ## Layout
 
 - `configs/yargos_x86_64_defconfig` - top-level config
@@ -44,7 +60,7 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
   virtual PS3 instruments (uhid)
 - `package/yargos-home` + `src/home` - Rust session: boot splash, YARG launcher, and the dashboard shown
   when YARG is closed (needs the network once at build time to fetch its two crates, x11rb and fontdue)
-- `tools/` - `br.sh` (build), `dev-test.sh` (try the bridges on a desktop Linux PC), `test-update.sh`,
+- `tools/` - `flash.sh` (write the image to a USB drive), `br.sh` (build), `dev-test.sh` (try the bridges on a desktop Linux PC), `test-update.sh`,
   and QEMU helpers: `qemu-run.sh`, `qemu-key.sh` (send keys), `qemu-shot.sh` (screenshot), `qemu-sh.sh` (run a command in the guest)
 
 ## Runtime design
