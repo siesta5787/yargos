@@ -4,6 +4,7 @@
 #   sudo tools/dev-test.sh setup       stop hid_wiimote grabbing Wiimotes; open hidraw to your user
 #   sudo tools/dev-test.sh drums       run the Ion Drum Rocker bridge
 #   tools/dev-test.sh pair             connect a Wiimote (hold 1+2); no sudo, close the desktop Bluetooth window first
+#   tools/dev-test.sh probe            talk to a held-1+2 Wiimote directly over L2CAP (diagnostic, no sudo)
 #   sudo tools/dev-test.sh wii         run the bridge for the first connected Wiimote
 #   sudo tools/dev-test.sh watch       print reports from the virtual devices
 #   sudo tools/dev-test.sh raw         print what the Ion Drum Rocker itself sends (before the bridge)
@@ -42,6 +43,9 @@ pair)
     [ "$(id -u)" != 0 ] || { echo "run this one without sudo"; exit 1; }
     echo "Hold 1+2 on the Wiimote now (the lights blink), and keep holding until it says connected."
     exec "$HERE/board/yargos/rootfs-overlay/usr/bin/yargos-pair" 60 ;;
+probe)
+    [ "$(id -u)" != 0 ] || { echo "run this one without sudo"; exit 1; }
+    exec python3 "$HERE/tools/wii-probe.py" "${2:-}" ;;
 drums)
     DEV=$(for e in /sys/class/input/event*; do
         [ "$(cat $e/device/id/vendor 2>/dev/null)" = 1bad ] && [ "$(cat $e/device/id/product 2>/dev/null)" = 0130 ] && echo /dev/input/$(basename $e)
