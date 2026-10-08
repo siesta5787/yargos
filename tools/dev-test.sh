@@ -3,6 +3,7 @@
 #   tools/dev-test.sh build            build the bridge (no root)
 #   sudo tools/dev-test.sh setup       stop hid_wiimote grabbing Wiimotes; open hidraw to your user
 #   sudo tools/dev-test.sh drums       run the Ion Drum Rocker bridge
+#   tools/dev-test.sh pair             connect a Wiimote (hold 1+2); no sudo, close the desktop Bluetooth window first
 #   sudo tools/dev-test.sh wii         run the bridge for the first connected Wiimote
 #   sudo tools/dev-test.sh watch       print reports from the virtual devices
 #   sudo tools/dev-test.sh raw         print what the Ion Drum Rocker itself sends (before the bridge)
@@ -23,7 +24,19 @@ setup)
     cp "$HERE/board/yargos/rootfs-overlay/etc/udev/rules.d/69-hid.rules" /etc/udev/rules.d/69-yargos-dev.rules
     cp "$HERE/board/yargos/rootfs-overlay/etc/udev/rules.d/72-yargos-hide-raw.rules" /etc/udev/rules.d/72-yargos-dev-hide-raw.rules
     udevadm control --reload && udevadm trigger --subsystem-match=hidraw --subsystem-match=input
-    echo "setup done. Pair the Wiimote with: bluetoothctl (scan on, hold 1+2, pair/trust/connect)" ;;
+    # BlueZ only lets bonded HID devices connect by default; a Wiimote on 1+2 never bonds, so it
+    # connects and is dropped immediately. Allow it (the image ships the same setting).
+    if [ -f /etc/bluetooth/input.conf ] && ! grep -q 'yargos-dev' /etc/bluetooth/input.conf; then
+        cp -n /etc/bluetooth/input.conf /etc/bluetooth/input.conf.yargos-bak
+        sed -i '/^\[General\]/a ClassicBondedOnly=false # yargos-dev\nUserspaceHID=true # yargos-dev' /etc/bluetooth/input.conf
+        systemctl restart bluetooth
+        echo "bluetooth restarted with ClassicBondedOnly=false (briefly drops Bluetooth devices)"
+    fi
+    echo "setup done. Close the desktop's Bluetooth settings window, then run (no sudo): tools/dev-test.sh pair" ;;
+pair)
+    [ "$(id -u)" != 0 ] || { echo "run this one without sudo"; exit 1; }
+    echo "Hold 1+2 on the Wiimote now (the lights blink), and keep holding until it says connected."
+    exec "$HERE/board/yargos/rootfs-overlay/usr/bin/yargos-pair" 60 ;;
 drums)
     DEV=$(for e in /sys/class/input/event*; do
         [ "$(cat $e/device/id/vendor 2>/dev/null)" = 1bad ] && [ "$(cat $e/device/id/product 2>/dev/null)" = 0130 ] && echo /dev/input/$(basename $e)
@@ -96,6 +109,7 @@ yarg)
         -offline -persistent-data-path "$Y/data" ;;
 teardown)
     rm -f /etc/modprobe.d/yargos-dev.conf /etc/udev/rules.d/69-yargos-dev.rules /etc/udev/rules.d/72-yargos-dev-hide-raw.rules
+    if [ -f /etc/bluetooth/input.conf.yargos-bak ]; then mv /etc/bluetooth/input.conf.yargos-bak /etc/bluetooth/input.conf; systemctl restart bluetooth; fi
     udevadm control --reload ;;
 *) sed -n 2,9p "$0" ;;
 esac
