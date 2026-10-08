@@ -11,6 +11,7 @@
 set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 BIN=$HERE/src/bridge/target/release/yargos-bridge
+need_bin() { [ -x "$BIN" ] || { echo "bridge not built; run (without sudo): tools/dev-test.sh build"; exit 1; }; }
 
 case "${1:-}" in
 build)
@@ -28,13 +29,13 @@ drums)
         [ "$(cat $e/device/id/vendor 2>/dev/null)" = 1bad ] && [ "$(cat $e/device/id/product 2>/dev/null)" = 0130 ] && echo /dev/input/$(basename $e)
     done | head -1)
     [ -n "$DEV" ] || { echo "Ion Drum Rocker (1bad:0130) not found; is xpad loaded and the kit plugged in?"; exit 1; }
-    echo "bridging $DEV"; exec "$BIN" drums "$DEV" ;;
+    need_bin; echo "bridging $DEV"; exec "$BIN" drums "$DEV" ;;
 wii)
     DEV=$(for h in /sys/class/hidraw/hidraw*; do
         grep -qE 'HID_ID=0005:0000057E:0000(0306|0330)' $h/device/uevent 2>/dev/null && echo /dev/$(basename $h)
     done | head -1)
     [ -n "$DEV" ] || { echo "No Wiimote hidraw found. Pair it first; make sure hid_wiimote is not loaded (lsmod | grep wiimote)."; exit 1; }
-    echo "bridging $DEV"; exec "$BIN" wii "$DEV" ;;
+    need_bin; echo "bridging $DEV"; exec "$BIN" wii "$DEV" ;;
 raw)
     DEV=$(for e in /sys/class/input/event*; do
         [ "$(cat $e/device/id/vendor 2>/dev/null)" = 1bad ] && [ "$(cat $e/device/id/product 2>/dev/null)" = 0130 ] && echo /dev/input/$(basename $e)
