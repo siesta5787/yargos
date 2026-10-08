@@ -100,13 +100,14 @@ Verified:
   `player` user), not booted to YARG.
 - Under QEMU, UEFI starts the image's boot entry. Beyond that is unverified.
 - Bridge: 19 unit tests pass. With a real ION Drum Rocker, pad, cymbal, d-pad and kick1 flags
-  decode correctly in the virtual kit's reports, and YARG on a desktop lists the virtual kit as
-  "Harmonix Drum Kit for PlayStation(R)3".
+  decode correctly in the virtual kit's reports. On a desktop with `libhidapi-hidraw0` installed,
+  YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
+  and the menus can be navigated with the pads.
 
 Not verified:
 
-- Whether YARG binds and plays the virtual drums with its proper drum layout (the first attempt hit
-  the missing `libhidapi-hidraw0`; not retested), and kick2.
+- Playing a song on the virtual drums: whether each pad, cymbal and the kick land on the right lane
+  in gameplay, and kick2.
 - Drum velocity for yellow and green (red looks right; the Ion may not encode velocity as documented
   for Rock Band kits). The kit's idle velocity values.
 - Wiimote guitars: protocol details in `wiimote.rs` (button bits, whammy/slider ranges, tilt axis)
