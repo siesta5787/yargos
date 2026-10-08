@@ -108,6 +108,10 @@ Verified:
   Buildroot has no "all linux-firmware" option, so the image uses a broad per-chip firmware list.
 - A full build completes. Image contents were inspected (partitions, bridge, YARG seed, units, rules,
   `player` user), not booted to YARG.
+- Wiimote guitar (real hardware, desktop PC): connects over Bluetooth, the bridge lights LED 1 and the
+  virtual PS3 guitar reports all five frets, strum up/down, whammy (full range), Start/Select and tilt
+  correctly, with no noise at rest; a guitar without a touch bar reports an idle slider. Needs the
+  desktop workarounds described under Runtime design.
 - Under QEMU (software rendering, `HEADLESS=1 tools/qemu-run.sh fresh`): the image boots, first boot seeds
   YARG onto the data partition, rootless Xorg starts on the generic `modesetting` driver, and YARG reaches
   its main menu about 10 s after kernel start. Real AMD hardware (amdgpu, audio, input) is untested.
@@ -123,9 +127,9 @@ Not verified:
 - Drum velocity for yellow and green (red looks right; the Ion may not encode velocity as documented
   for Rock Band kits). YARG only uses velocity for the optional bonus on ghost/accent notes and the
   hit-sound volume; a flagged hit always registers (its layout floors the velocity at 1).
-- Wiimote guitars: protocol details in `wiimote.rs` (button bits, whammy/slider ranges, tilt axis)
-  come from Wii extension documentation, covered only by unit tests. Bluetooth reconnect after
-  1+2 pairing, and whether the Wiimote passes reporting mode 0x35 through hidraw, are unknown.
+- Wiimote guitars: playing in YARG (not yet tried); the World Tour touch bar (only a guitar without
+  one was tested); Bluetooth reconnect on a button press after the first connection; and the whole
+  Bluetooth path on the appliance image (pairing flow, `hid-generic` binding, bridge autostart).
 - Whether `hid-sony` claims the virtual `12BA:0100`/`12BA:0210` devices (uhid is declared as a
   Bluetooth device to avoid it). Fallback: impersonate a Santroller device (`1209:2882`).
 - Whether the virtual guitar navigates YARG's menus.
