@@ -160,8 +160,10 @@ Verified:
   update check against GitHub, song-drive state), keyboard and mouse (hover and click) work, and Shut down
   powers the guest off through the root helper. Wi-Fi and Bluetooth screens only show their "no adapter"
   states (QEMU has neither); the output parsers are tested on sample text, not on real iwd/BlueZ output.
+- Boot flow (QEMU, quiet kernel arguments): the logo splash is on screen at about 3 s, the dashboard takes
+  over at about 5 s with PLAY YARG selected, and Enter starts YARG.
 - Found by the boot tests and fixed: systemd was built without ACL support (so `uaccess` never gave the
-  player user raw-HID access, which instruments need), and the kernel had no fbdev emulation (no `/dev/fb0`).
+  player user raw-HID access, which instruments need), and the kernel had no fbdev emulation (no `/dev/fb0`, so no splash and no on-screen console).
 - Polish (checked in QEMU): `/media/songs` is an automount, so there is no boot wait without the drive;
   wired DHCP works; the WiFi regulatory-database warning is gone; YARG starts about 7 s after power on
   (first boot copies YARG to the data partition, later boots are shorter).
@@ -181,8 +183,8 @@ Verified:
 Not verified:
 
 - Dashboard navigation with real instruments (the button mapping assumes the kernel's standard HID
-  gamepad mapping); the Wi-Fi password flow and Bluetooth pairing on real adapters; the boot splash on screen
-  (needs the fbdev kernel fix, being rebuilt).
+  gamepad mapping); the Wi-Fi password flow and Bluetooth pairing on real adapters; the dashboard's pad mapping on a
+  real guitar (`tools/dev-test.sh pads` shows it).
 - YARG itself did not react to a keyboard or mouse in QEMU on a fresh data partition (it renders fine and
   logs HID errors, now fixed); instruments are the supported input.
 - Playing a song on the virtual drums: whether each pad, cymbal and the kick land on the right lane
