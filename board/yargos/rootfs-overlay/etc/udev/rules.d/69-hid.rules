@@ -1,3 +1,7 @@
-# Give the logged-in seat raw access to HID instruments (YARG reads hidraw directly).
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", TAG+="uaccess"
-KERNEL=="uhid", TAG+="uaccess"
+# YARG reads instruments through raw HID (hidraw) and, for the Xbox 360 wireless receiver, libusb.
+# The player user is in the input group, so grant it directly; the uaccess tag also lets systemd-logind
+# add an ACL for the logged-in seat user when ACL support is available.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", GROUP="input", MODE="0660", TAG+="uaccess"
+KERNEL=="uhid", GROUP="input", MODE="0660", TAG+="uaccess"
+# Xbox 360 wireless receivers (libusb)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="0291|02a9|0719", GROUP="input", MODE="0660", TAG+="uaccess"

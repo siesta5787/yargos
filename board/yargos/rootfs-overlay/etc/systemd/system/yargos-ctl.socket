@@ -1,0 +1,12 @@
+[Unit]
+Description=YARGOS system helper (power actions for the dashboard)
+
+[Socket]
+ListenStream=/run/yargos-ctl.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=player
+Accept=yes
+
+[Install]
+WantedBy=sockets.target

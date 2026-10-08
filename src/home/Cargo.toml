@@ -1,0 +1,17 @@
+[package]
+name = "yargos-home"
+version = "0.1.0"
+edition = "2021"
+description = "YARGOS session: boot splash, YARG launcher and the dashboard shown when YARG is closed"
+license = "MIT"
+
+[dependencies]
+x11rb = "0.14"
+fontdue = "0.9"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

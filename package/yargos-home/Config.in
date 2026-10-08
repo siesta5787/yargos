@@ -1,0 +1,10 @@
+config BR2_PACKAGE_YARGOS_HOME
+	bool "yargos-home"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	select BR2_PACKAGE_HOST_RUSTC
+	select BR2_PACKAGE_DEJAVU
+	select BR2_PACKAGE_DEJAVU_SANS
+	help
+	  The YARGOS session: boot splash, YARG launcher and the dashboard
+	  (Wi-Fi, sound, Bluetooth, updates, songs, system) shown when YARG
+	  is closed.

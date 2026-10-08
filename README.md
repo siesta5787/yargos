@@ -42,7 +42,10 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 - `package/yarg` - pinned YARG release, installed as a seed in `/usr/share/yarg-seed`
 - `package/yargos-bridge` + `src/bridge` - Rust bridges: Wiimote guitar and wired Xbox 360 drums ->
   virtual PS3 instruments (uhid)
-- `tools/` - `br.sh` (build), `dev-test.sh` (try the bridges on a desktop Linux PC), `qemu-run.sh`
+- `package/yargos-home` + `src/home` - Rust session: boot splash, YARG launcher, and the dashboard shown
+  when YARG is closed (needs the network once at build time to fetch its two crates, x11rb and fontdue)
+- `tools/` - `br.sh` (build), `dev-test.sh` (try the bridges on a desktop Linux PC), `test-update.sh`,
+  and QEMU helpers: `qemu-run.sh`, `qemu-key.sh` (send keys), `qemu-shot.sh` (screenshot), `qemu-sh.sh` (run a command in the guest)
 
 ## Runtime design
 
@@ -82,6 +85,27 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
   so `/usr/lib/yargos/xorg` preloads `libgbm` for the X server only. Xorg autodetects its driver
   (amdgpu for AMD via an OutputClass, modesetting otherwise) so the image is not tied to one GPU.
 - `session.sh` writes Xorg's log to `/tmp/Xorg.0.log` and prints it to the journal if Xorg exits.
+
+## Session and dashboard
+
+`yarg.service` starts Xorg with `yargos-home session` as its only client (no window manager). The session
+shows the splash, runs YARG (`/usr/lib/yargos/run-yarg`), and stays out of the way while it runs. When YARG
+exits (Exit in its menu) the **dashboard** appears; PLAY YARG starts YARG again. If YARG dies within 20 s
+without a clean exit, the session ends instead so systemd restarts it and the updater can roll back.
+
+The dashboard is software-rendered (no GPU needed), works with a keyboard, mouse or the instruments, and
+has these screens: Wi-Fi (scan, join, an on-screen keyboard for passwords), Sound (pick the output, volume,
+test tone; writes `/data/asound.conf`), Bluetooth (scan, pair/connect, forget; Wiimotes get their own
+hold-1+2 flow), Updates (check, install, automatic on/off, go back), Songs (is the drive mounted) and
+System (restart, shut down). Instruments navigate like YARG's menus: strum or cymbals move up/down, green
+fret/pad = OK, red = Back, the two outer frets/pads = left/right. Power actions go through a root helper
+(`yargos-ctl.socket`) that accepts only `poweroff` and `reboot`.
+
+`yargos-home screenshot <screen> out.png` renders any screen with demo data (home, wifi, password, sound,
+bluetooth, updates, songs, system, busy, confirm, splash) without a display.
+
+The boot splash (`yargos-home splash`) draws the logo straight onto `/dev/fb0` early in boot; the kernel
+needs `CONFIG_DRM_FBDEV_EMULATION` for that.
 
 ## Updating YARG
 
@@ -131,6 +155,12 @@ Verified:
   `player` user), not booted to YARG.
 - Updater: in QEMU the daily check ran from the image, over HTTPS, and reported "up to date (0.15.0)".
   Staging, switching and rolling back are tested only against the local fake server.
+- Dashboard (QEMU, real image): all screens open and show live data (network, sound card and volume,
+  update check against GitHub, song-drive state), keyboard and mouse (hover and click) work, and Shut down
+  powers the guest off through the root helper. Wi-Fi and Bluetooth screens only show their "no adapter"
+  states (QEMU has neither); the output parsers are tested on sample text, not on real iwd/BlueZ output.
+- Found by the boot tests and fixed: systemd was built without ACL support (so `uaccess` never gave the
+  player user raw-HID access, which instruments need), and the kernel had no fbdev emulation (no `/dev/fb0`).
 - Polish (checked in QEMU): `/media/songs` is an automount, so there is no boot wait without the drive;
   wired DHCP works; the WiFi regulatory-database warning is gone; YARG starts about 7 s after power on
   (first boot copies YARG to the data partition, later boots are shorter).
@@ -149,6 +179,11 @@ Verified:
 
 Not verified:
 
+- Dashboard navigation with real instruments (the button mapping assumes the kernel's standard HID
+  gamepad mapping); the Wi-Fi password flow and Bluetooth pairing on real adapters; the boot splash on screen
+  (needs the fbdev kernel fix, being rebuilt).
+- YARG itself did not react to a keyboard or mouse in QEMU on a fresh data partition (it renders fine and
+  logs HID errors, now fixed); instruments are the supported input.
 - Playing a song on the virtual drums: whether each pad, cymbal and the kick land on the right lane
   in gameplay, and kick2.
 - Drum velocity for yellow and green (red looks right; the Ion may not encode velocity as documented

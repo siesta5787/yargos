@@ -28,6 +28,16 @@ New instrument = new module + mode in `main.rs` + udev rule line + systemd unit.
 Hardware-dependent facts (button bits, ranges) must be tested on the real device with
 `tools/dev-test.sh`; unit tests only cover decoding against the documented layout.
 
+## The session and dashboard (`src/home`)
+
+Rust with two crates (x11rb, fontdue), software rendering. `model.rs` is a pure state machine (inputs ->
+state + `Cmd`s, results -> `apply`) with unit tests; `ui.rs` draws it; `sys.rs` wraps iwctl/amixer/bluetoothctl/
+yargos-update with parsers that are tested on sample output; `session.rs` is the X session loop. Preview any
+screen without a display: `yargos-home screenshot <screen> out.png`. Buildroot builds it offline, so the
+package vendors the crates in a pre-build hook (needs network once). To test on the image:
+`CMDLINE="systemd.setenv=YARGOS_YARG_CMD=/bin/true" HEADLESS=1 tools/qemu-run.sh fresh` shows the dashboard at
+once; `tools/qemu-key.sh`, `qemu-shot.sh` and `qemu-sh.sh` drive and inspect the guest.
+
 ## Style
 
 Match the surrounding code: terse comments that explain why, no TODO banners, small modules.

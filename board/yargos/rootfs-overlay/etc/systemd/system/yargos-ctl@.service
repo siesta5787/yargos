@@ -1,0 +1,7 @@
+[Unit]
+Description=YARGOS system helper
+
+[Service]
+ExecStart=/usr/bin/yargos-home ctl
+StandardInput=socket
+StandardOutput=socket

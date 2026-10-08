@@ -1,2 +1,3 @@
 source "$BR2_EXTERNAL_YARGOS_PATH/package/yarg/Config.in"
 source "$BR2_EXTERNAL_YARGOS_PATH/package/yargos-bridge/Config.in"
+source "$BR2_EXTERNAL_YARGOS_PATH/package/yargos-home/Config.in"

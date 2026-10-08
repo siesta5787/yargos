@@ -1,0 +1,11 @@
+[Unit]
+Description=Boot splash
+DefaultDependencies=no
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yargos-home splash
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,2 @@
+# The framebuffer is recreated when the real GPU driver replaces the firmware one; draw the splash again.
+SUBSYSTEM=="graphics", KERNEL=="fb0", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}+="yargos-splash.service"

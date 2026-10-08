@@ -25,6 +25,8 @@ CONFIG_DRM_XE=m
 CONFIG_DRM_NOUVEAU=m
 CONFIG_DRM_SIMPLEDRM=y
 CONFIG_FB=y
+# Creates /dev/fb0 on top of any DRM driver: the boot splash and the on-screen console need it.
+CONFIG_DRM_FBDEV_EMULATION=y
 CONFIG_FRAMEBUFFER_CONSOLE=y
 
 # Audio: USB audio/MIDI, HDMI/DP audio, and the ALSA sequencer

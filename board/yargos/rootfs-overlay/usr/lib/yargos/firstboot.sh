@@ -39,8 +39,11 @@ AUTO_UPDATE=yes
 CONF
 fi
 
+[ -e "$DATA/asound.conf" ] || : > "$DATA/asound.conf"   # /etc/asound.conf links here; the Sound screen writes it
+
 # Persist Bluetooth pairings/trust across reboots.
 mkdir -p /var/lib/bluetooth
 mount --bind "$DATA/bluetooth" /var/lib/bluetooth
 
+chown player:player "$DATA/asound.conf" "$DATA/yargos.conf"
 chown -R player:player "$DATA/yarg" "$DATA/home/player" "$APPS"

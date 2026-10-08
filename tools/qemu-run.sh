@@ -6,7 +6,11 @@
 #   USB passthrough (needs access to the device, e.g. run with sudo):
 #     USB="1bad:0130" tools/qemu-run.sh        Ion Drum Rocker
 #     USB="1bad:0130 8087:0a2b" ...            several, space separated
-#   HEADLESS=1 tools/qemu-run.sh   no window; serial log -> $WORK/serial.log, monitor socket -> $WORK/monitor.sock
+#   CMDLINE="systemd.setenv=YARGOS_YARG_CMD=/bin/true" tools/qemu-run.sh
+#                                  boot the kernel directly (skipping the boot menu) with these extra kernel
+#                                  arguments; /bin/true stands in for YARG, so the dashboard shows at once
+#   HEADLESS=1 tools/qemu-run.sh   no window; serial log -> $WORK/serial.log, serial console socket -> $WORK/serial.sock (tools/qemu-sh.sh),
+#                                  monitor socket -> $WORK/monitor.sock
 #                                  (tools/qemu-shot.sh saves a screenshot of the guest)
 # Needs: sudo apt install qemu-system-x86 ovmf ; user in the kvm group.
 set -eu
@@ -33,9 +37,16 @@ USBARGS=()
 for id in ${USB:-}; do USBARGS+=(-device "usb-host,vendorid=0x${id%%:*},productid=0x${id##*:}"); done
 
 if [ -n "${HEADLESS:-}" ]; then
-    DISPLAY_ARGS=(-device virtio-vga -display none -serial "file:$WORK/serial.log" -monitor "unix:$WORK/monitor.sock,server,nowait")
+    DISPLAY_ARGS=(-device virtio-vga -display none
+        -chardev "socket,id=ser0,path=$WORK/serial.sock,server=on,wait=off,logfile=$WORK/serial.log" -serial chardev:ser0
+        -monitor "unix:$WORK/monitor.sock,server,nowait")
 else
     DISPLAY_ARGS=(-device virtio-vga -display gtk -serial mon:stdio)
+fi
+
+KERNEL_ARGS=()
+if [ -n "${CMDLINE:-}" ]; then
+    KERNEL_ARGS=(-kernel "$(dirname "$IMG")/bzImage" -append "root=PARTUUID=6d5a1c52-0d4e-4c5b-9a3f-7e3b8a1f0001 rootwait rw console=ttyS0,115200 loglevel=4 $CMDLINE")
 fi
 
 exec qemu-system-x86_64 \
@@ -47,4 +58,5 @@ exec qemu-system-x86_64 \
     -device intel-hda -device hda-duplex \
     -nic user,model=virtio-net-pci \
     "${DISPLAY_ARGS[@]}" \
+    "${KERNEL_ARGS[@]}" \
     "${USBARGS[@]}"
