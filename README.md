@@ -110,7 +110,8 @@ Verified:
   `player` user), not booted to YARG.
 - Wiimote guitar (real hardware, desktop PC): connects over Bluetooth, the bridge lights LED 1 and the
   virtual PS3 guitar reports all five frets, strum up/down, whammy (full range), Start/Select and tilt
-  correctly, with no noise at rest; a guitar without a touch bar reports an idle slider. Needs the
+  correctly, with no noise at rest; a guitar without a touch bar reports an idle slider. YARG on the
+  desktop auto-creates a guitar profile for it and the menus can be navigated with it. Needs the
   desktop workarounds described under Runtime design.
 - Under QEMU (software rendering, `HEADLESS=1 tools/qemu-run.sh fresh`): the image boots, first boot seeds
   YARG onto the data partition, rootless Xorg starts on the generic `modesetting` driver, and YARG reaches
@@ -127,12 +128,11 @@ Not verified:
 - Drum velocity for yellow and green (red looks right; the Ion may not encode velocity as documented
   for Rock Band kits). YARG only uses velocity for the optional bonus on ghost/accent notes and the
   hit-sound volume; a flagged hit always registers (its layout floors the velocity at 1).
-- Wiimote guitars: playing in YARG (not yet tried); the World Tour touch bar (only a guitar without
+- Wiimote guitars: playing a song in YARG (menus work); the World Tour touch bar (only a guitar without
   one was tested); Bluetooth reconnect on a button press after the first connection; and the whole
   Bluetooth path on the appliance image (pairing flow, `hid-generic` binding, bridge autostart).
 - Whether `hid-sony` claims the virtual `12BA:0100`/`12BA:0210` devices (uhid is declared as a
   Bluetooth device to avoid it). Fallback: impersonate a Santroller device (`1209:2882`).
-- Whether the virtual guitar navigates YARG's menus.
 - Anything on real hardware: amdgpu, HDMI audio, Bluetooth, WiFi, USB input, boot time.
 - Bluetooth Polybar guitars (generic Bluetooth HID is enabled; nothing specific was checked).
 
