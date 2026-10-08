@@ -13,7 +13,6 @@ const MODE_CORE: u8 = 0x30;
 // Resting/maximum raw 5-bit whammy values; to be confirmed on real guitars.
 const WHAMMY_REST_DEFAULT: u8 = 0x0F;
 const WHAMMY_MAX: u8 = 0x1D;
-const SLIDER_REST: u8 = 0x0F;
 
 #[derive(PartialEq)]
 enum State {
@@ -30,11 +29,14 @@ pub struct Wiimote {
     state: State,
     whammy_rest: u8,
     last_tilt: u16,
+    // Touch-bar value seen when streaming started (nothing touched). World Tour guitars idle at
+    // 0x0F; guitars without a touch bar (Les Paul) read a constant 0x1F, i.e. "orange" if taken literally.
+    slider_rest: Option<u8>,
 }
 
 impl Wiimote {
     pub fn new(dev: File) -> Self {
-        Self { dev, state: State::WaitStatus, whammy_rest: WHAMMY_REST_DEFAULT, last_tilt: 0x200 }
+        Self { dev, state: State::WaitStatus, whammy_rest: WHAMMY_REST_DEFAULT, last_tilt: 0x200, slider_rest: None }
     }
 
     pub fn start(&mut self, slot: u8) -> io::Result<()> {
@@ -86,6 +88,7 @@ impl Wiimote {
                 let error = buf[3] & 0x0F;
                 if error == 0 && buf[6..12] == GUITAR_IDENT {
                     self.whammy_rest = WHAMMY_REST_DEFAULT;
+                    self.slider_rest = None;
                     self.set_mode(MODE_CORE_ACCEL_EXT16)?;
                     self.state = State::Streaming;
                 } else {
@@ -128,7 +131,8 @@ impl Wiimote {
         let pressed = whammy_raw.saturating_sub(self.whammy_rest).saturating_sub(1) as u16;
         g.whammy = 0x80 + ((pressed.min(span) * 0x7F) / span) as u8;
 
-        if touch != SLIDER_REST {
+        let slider_rest = *self.slider_rest.get_or_insert(touch);
+        if touch != slider_rest {
             g.slider = ((touch as u16 * 0xFF) / 0x1F) as u8;
         }
 
@@ -206,6 +210,27 @@ mod tests {
         assert_eq!(w.handle(&r).unwrap().unwrap().whammy, 0x80);
         r[6 + 3] = WHAMMY_MAX;
         assert_eq!(w.handle(&r).unwrap().unwrap().whammy, 0xFF);
+    }
+
+    #[test]
+    fn guitar_without_touch_bar_never_reports_a_slider_touch() {
+        let mut w = wm();
+        let mut r = report(0xFF, 0xFF);
+        r[6 + 2] = 0x1F; // Les Paul: constant 0x1F
+        for _ in 0..3 {
+            assert_eq!(w.handle(&r).unwrap().unwrap().slider, 0x80);
+        }
+    }
+
+    #[test]
+    fn touch_bar_reports_a_touch_relative_to_its_rest_value() {
+        let mut w = wm();
+        let mut r = report(0xFF, 0xFF);
+        assert_eq!(w.handle(&r).unwrap().unwrap().slider, 0x80); // rest 0x0F
+        r[6 + 2] = 0x04; // green
+        assert_eq!(w.handle(&r).unwrap().unwrap().slider, 0x20);
+        r[6 + 2] = 0x1F; // orange
+        assert_eq!(w.handle(&r).unwrap().unwrap().slider, 0xFF);
     }
 
     #[test]
