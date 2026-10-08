@@ -17,6 +17,7 @@ while [ "$(date +%s)" -lt "$END" ]; do
             *"Name: Nintendo RVL"*)
                 # "Connected" only means the radio link is up; the HID link is what makes a hidraw node.
                 grep -qs 'HID_ID=0005:0000057E' /sys/class/hidraw/hidraw*/device/uevent 2>/dev/null && continue
+                ls /sys/bus/hid/devices/0005:057E:* >/dev/null 2>&1 && { echo "yargos-pair: Wiimote connected"; break 2; }
                 echo "yargos-pair: Wiimote $mac found, connecting"
                 bluetoothctl trust "$mac" >/dev/null
                 bluetoothctl connect "$mac" | grep -E 'Connection successful|Failed' ;;

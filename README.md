@@ -54,7 +54,7 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 - The song drive: label it `YARGSONGS` (ext4, exFAT, NTFS or FAT). It mounts read-only at
   `/media/songs` with `nofail`, so a missing drive never blocks boot. Point YARG's song folder at
   `/media/songs` once; the path never changes after that.
-- Wii guitars: `hid_wiimote` is blacklisted. udev starts `yargos-bridge wii /dev/hidrawN` per Wiimote
+- Wii guitars: the kernel config leaves `CONFIG_HID_WIIMOTE` off (it is only blacklisted in the dev setup). udev starts `yargos-bridge wii /dev/hidrawN` per Wiimote
   (`057E:0306` / `057E:0330`). It initialises the extension, reads the guitar, and creates a uhid
   device impersonating a PS3 Guitar Hero World Tour guitar (`12BA:0100`) using the PlasticBand
   descriptor and report layout.
@@ -71,6 +71,10 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 - USB MIDI drums/keys/mic need no bridge (ALSA sequencer + libRtMidi).
 - Bluetooth pairing: run `yargos-pair [seconds]`. Wiimotes (1+2 held) are connected and trusted;
   HID gaming devices, keyboards and mice are paired and trusted. Pairings persist in `/data/bluetooth`.
+- On a desktop kernel (hid-wiimote built), a Wiimote connects and BlueZ creates its HID device, but
+  hid-generic refuses to claim it (a "special driver" exists), so no hidraw node appears. The image's
+  kernel does not have that driver, so hid-generic binds normally. `tools/dev-test.sh wii` works around it
+  on desktops by briefly setting `hid.ignore_special_drivers` while binding.
 - Future Santroller guitars (USB or Bluetooth HID) need no bridge; YARG reads them over hidraw.
 - Buildroot's own `xorg.service` is masked in the overlay so it does not fight `yarg.service`, and
   `default.target` is `graphical.target` (otherwise `yarg.service` never starts).

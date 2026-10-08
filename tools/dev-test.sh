@@ -66,6 +66,21 @@ drums)
     [ -n "$DEV" ] || { echo "Ion Drum Rocker (1bad:0130) not found; is xpad loaded and the kit plugged in?"; exit 1; }
     need_bin; echo "bridging $DEV"; exec "$BIN" drums "$DEV" ;;
 wii)
+    # Desktop kernels build hid-wiimote, so hid-generic refuses a Wiimote even with the module blocked
+    # (the device then has no driver and no hidraw node). Let hid-generic claim it, only for this bind:
+    # the setting is global, and leaving it on would break e.g. Logitech receivers on the next boot.
+    P=/sys/module/hid/parameters/ignore_special_drivers
+    for d in /sys/bus/hid/devices/0005:057E:0306.* /sys/bus/hid/devices/0005:057E:0330.*; do
+        [ -e "$d" ] && [ ! -e "$d/driver" ] || continue
+        if [ -w "$P" ]; then
+            echo 1 > "$P"
+            basename "$d" > /sys/bus/hid/drivers/hid-generic/bind 2>/dev/null || true
+            echo 0 > "$P"
+            sleep 1
+        else
+            echo "cannot write $P; as root run: echo 1 > $P, rebind, echo 0 > $P"
+        fi
+    done
     DEV=$(for h in /sys/class/hidraw/hidraw*; do
         grep -qE 'HID_ID=0005:0000057E:0000(0306|0330)' $h/device/uevent 2>/dev/null && echo /dev/$(basename $h)
     done | head -1)
