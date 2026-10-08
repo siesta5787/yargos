@@ -124,3 +124,8 @@ the data partition is a fixed 2G.
 Not started: `yargos-update` (GitHub release fetch, checksum/signature verification, symlink swap,
 rollback), splash screen, power-button handling, RAUC/A-B OS updates, ALSA default-device selection
 for HDMI/USB audio.
+
+## License
+
+MIT, see `LICENSE`. It covers the files in this repository only. YARG and the software it bundles
+(BASS, Discord SDK) keep their own licenses, and the built image must not be redistributed.
