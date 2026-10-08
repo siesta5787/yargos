@@ -72,7 +72,12 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 - Bluetooth pairing: run `yargos-pair [seconds]`. Wiimotes (1+2 held) are connected and trusted;
   HID gaming devices, keyboards and mice are paired and trusted. Pairings persist in `/data/bluetooth`.
 - Future Santroller guitars (USB or Bluetooth HID) need no bridge; YARG reads them over hidraw.
-- Buildroot's own `xorg.service` is masked in the overlay so it does not fight `yarg.service`.
+- Buildroot's own `xorg.service` is masked in the overlay so it does not fight `yarg.service`, and
+  `default.target` is `graphical.target` (otherwise `yarg.service` never starts).
+- Buildroot's `modesetting_drv.so` is not linked against libgbm ("undefined symbol: gbm_bo_get_offset"),
+  so `/usr/lib/yargos/xorg` preloads `libgbm` for the X server only. Xorg autodetects its driver
+  (amdgpu for AMD via an OutputClass, modesetting otherwise) so the image is not tied to one GPU.
+- `session.sh` writes Xorg's log to `/tmp/Xorg.0.log` and prints it to the journal if Xorg exits.
 
 ## Boot entries
 
@@ -86,7 +91,8 @@ and `timeout 0` (silent boot).
   `/dev/uhid`. `setup` blocks `hid_wiimote` and installs dev udev rules; `teardown` undoes it;
   `drums`, `wii`, `watch` (shows the virtual instrument's reports), `raw` (shows what the Ion kit
   itself sends) and `yarg` (runs a downloaded YARG as your user).
-- `tools/qemu-run.sh`: boots the image in QEMU using a throwaway overlay (needs
+- `tools/qemu-run.sh`: boots the image in QEMU using a throwaway overlay (`HEADLESS=1` writes the
+  console to `~/yargos-build/qemu/serial.log`, and `tools/qemu-shot.sh` saves a screenshot; needs
   `qemu-system-x86` and `ovmf`, and membership of the `kvm` group). Use `fresh` after rebuilding the
   image, because the overlay is tied to the old image.
 
@@ -98,7 +104,9 @@ Verified:
   Buildroot has no "all linux-firmware" option, so the image uses a broad per-chip firmware list.
 - A full build completes. Image contents were inspected (partitions, bridge, YARG seed, units, rules,
   `player` user), not booted to YARG.
-- Under QEMU, UEFI starts the image's boot entry. Beyond that is unverified.
+- Under QEMU (software rendering, `HEADLESS=1 tools/qemu-run.sh fresh`): the image boots, first boot seeds
+  YARG onto the data partition, rootless Xorg starts on the generic `modesetting` driver, and YARG reaches
+  its main menu about 10 s after kernel start. Real AMD hardware (amdgpu, audio, input) is untested.
 - Bridge: 19 unit tests pass. With a real ION Drum Rocker, pad, cymbal, d-pad and kick1 flags
   decode correctly in the virtual kit's reports. On a desktop with `libhidapi-hidraw0` installed,
   YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
@@ -116,7 +124,7 @@ Not verified:
 - Whether `hid-sony` claims the virtual `12BA:0100`/`12BA:0210` devices (uhid is declared as a
   Bluetooth device to avoid it). Fallback: impersonate a Santroller device (`1209:2882`).
 - Whether the virtual guitar navigates YARG's menus.
-- Xorg rootless startup via logind/PAM under `yarg.service`; `/data` mounting; the YARG launch.
+- Anything on real hardware: amdgpu, HDMI audio, Bluetooth, WiFi, USB input, boot time.
 - Bluetooth Polybar guitars (generic Bluetooth HID is enabled; nothing specific was checked).
 
 Known limits: root filesystem is read-write ext4 for now (read-only root + overlay is a later phase);

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Buildroot's modesetting_drv.so is not linked against libgbm, so it fails to load with
+# "undefined symbol: gbm_bo_get_offset". Preloading libgbm for the X server only works around that.
+LD_PRELOAD=/usr/lib/libgbm.so.1 exec /usr/bin/Xorg "$@"

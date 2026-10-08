@@ -6,6 +6,8 @@
 #   USB passthrough (needs access to the device, e.g. run with sudo):
 #     USB="1bad:0130" tools/qemu-run.sh        Ion Drum Rocker
 #     USB="1bad:0130 8087:0a2b" ...            several, space separated
+#   HEADLESS=1 tools/qemu-run.sh   no window; serial log -> $WORK/serial.log, monitor socket -> $WORK/monitor.sock
+#                                  (tools/qemu-shot.sh saves a screenshot of the guest)
 # Needs: sudo apt install qemu-system-x86 ovmf ; user in the kvm group.
 set -eu
 IMG=${IMG:-$HOME/yargos-build/output/images/yargos.img}
@@ -30,14 +32,19 @@ ACCEL=tcg; [ -w /dev/kvm ] && ACCEL=kvm
 USBARGS=()
 for id in ${USB:-}; do USBARGS+=(-device "usb-host,vendorid=0x${id%%:*},productid=0x${id##*:}"); done
 
+if [ -n "${HEADLESS:-}" ]; then
+    DISPLAY_ARGS=(-device virtio-vga -display none -serial "file:$WORK/serial.log" -monitor "unix:$WORK/monitor.sock,server,nowait")
+else
+    DISPLAY_ARGS=(-device virtio-vga -display gtk -serial mon:stdio)
+fi
+
 exec qemu-system-x86_64 \
     -machine q35,accel=$ACCEL -cpu max -smp 4 -m 4G \
     -drive if=pflash,format=raw,readonly=on,file="$CODE" \
     -drive if=pflash,format=raw,file="$WORK/OVMF_VARS.fd" \
     -drive file="$WORK/overlay.qcow2",format=qcow2,if=virtio \
-    -device virtio-vga -display gtk \
     -device qemu-xhci -device usb-kbd -device usb-mouse \
     -device intel-hda -device hda-duplex \
     -nic user,model=virtio-net-pci \
-    -serial mon:stdio \
+    "${DISPLAY_ARGS[@]}" \
     "${USBARGS[@]}"
