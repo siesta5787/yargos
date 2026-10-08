@@ -156,6 +156,59 @@ pub fn spawn_pads(tx: Sender<Event>, active: Arc<AtomicBool>) {
     });
 }
 
+fn device_name(f: &File) -> String {
+    let mut buf = [0u8; 128];
+    let n = unsafe { ioctl(f.as_raw_fd(), ioc(2, 0x06, buf.len() as c_ulong), buf.as_mut_ptr()) };
+    if n <= 0 {
+        return "?".into();
+    }
+    String::from_utf8_lossy(&buf[..(n as usize).min(buf.len())]).trim_end_matches('\0').to_string()
+}
+
+/// `yargos-home padtest`: list the pads/instruments found and show what each press does in the dashboard.
+pub fn pad_test() -> i32 {
+    let mut found = 0;
+    let mut threads = vec![];
+    if let Ok(dir) = std::fs::read_dir("/dev/input") {
+        for e in dir.filter_map(|e| e.ok()) {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !name.starts_with("event") {
+                continue;
+            }
+            let Ok(f) = File::open(e.path()) else { continue };
+            let Some(info) = probe(&f) else { continue };
+            let label = device_name(&f);
+            let instrument = info.vendor == INSTRUMENT_VENDOR;
+            println!("{name}: \"{label}\" vendor {:04x} -> {} mapping", info.vendor, if instrument { "instrument" } else { "gamepad" });
+            found += 1;
+            threads.push(std::thread::spawn(move || {
+                let mut f = f;
+                let mut buf = [0u8; 24 * 16];
+                while let Ok(n) = f.read(&mut buf) {
+                    for c in buf[..n / 24 * 24].chunks_exact(24) {
+                        let ty = u16::from_le_bytes([c[16], c[17]]);
+                        let code = u16::from_le_bytes([c[18], c[19]]);
+                        let value = i32::from_le_bytes([c[20], c[21], c[22], c[23]]);
+                        if ty == 1 || ty == 3 && (code == ABS_HAT0X || code == ABS_HAT0Y) {
+                            let nav = pad_nav(instrument, ty, code, value);
+                            println!("  {name}: type {ty} code 0x{code:03x} value {value:>2}  ->  {}", nav.map(|n| format!("{n:?}")).unwrap_or_else(|| "(nothing)".into()));
+                        }
+                    }
+                }
+            }));
+        }
+    }
+    if found == 0 {
+        println!("No pads or instruments found (is the bridge running? is your user in the input group?).");
+        return 1;
+    }
+    println!("Press buttons / strum now. Ctrl-C to stop.");
+    for t in threads {
+        let _ = t.join();
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,5 +10,7 @@ pub enum Event {
     /// The X window was uncovered / covered (YARG's window appearing hides the splash).
     Visible(bool),
     Redraw,
+    /// A message to show on the dashboard when it next appears (e.g. an automatic rollback).
+    Notice(String),
     YargExited { code: Option<i32>, secs: u64 },
 }

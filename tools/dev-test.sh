@@ -6,6 +6,7 @@
 #   tools/dev-test.sh pair             connect a Wiimote (hold 1+2); no sudo, close the desktop Bluetooth window first
 #   tools/dev-test.sh probe            talk to a held-1+2 Wiimote directly over L2CAP (diagnostic, no sudo)
 #   sudo tools/dev-test.sh trace       record Bluetooth traffic (btmon) while running the Wiimote probe; saves /tmp/btmon-wii.txt
+#   tools/dev-test.sh pads             show how the dashboard reads your guitar/drums/pads (no sudo; bridge must be running)
 #   sudo tools/dev-test.sh wii         run the bridge for the first connected Wiimote
 #   sudo tools/dev-test.sh watch       print reports from the virtual devices
 #   sudo tools/dev-test.sh raw         print what the Ion Drum Rocker itself sends (before the bridge)
@@ -56,6 +57,9 @@ trace)
     sleep 1; kill $BT 2>/dev/null || true
     chmod a+r /tmp/btmon-wii.txt
     echo "trace saved: /tmp/btmon-wii.txt - tell Claude it is done" ;;
+pads)
+    cargo build --release --manifest-path "$HERE/src/home/Cargo.toml" >/dev/null 2>&1 || { echo "build failed: tools/dev-test.sh needs cargo"; exit 1; }
+    exec "$HERE/src/home/target/release/yargos-home" padtest ;;
 probe)
     [ "$(id -u)" != 0 ] || { echo "run this one without sudo"; exit 1; }
     exec python3 "$HERE/tools/wii-probe.py" "${2:-}" ;;

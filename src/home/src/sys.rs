@@ -234,7 +234,7 @@ pub fn parse_aplay(out: &str) -> Vec<Output> {
             let after = rest.split_once("device ")?.1;
             let (dev, dname) = after.split_once(':')?;
             let dev: u32 = dev.trim().parse().ok()?;
-            let dlabel = dname.split_once('[').map(|(a, b)| b.trim_end_matches(']').trim().to_string()).unwrap_or(dname.trim().to_string());
+            let dlabel = dname.split_once('[').map(|(_, b)| b.trim_end_matches(']').trim().to_string()).unwrap_or(dname.trim().to_string());
             Some(Output { card, dev, label: format!("{dlabel} ({cname})") })
         })
         .collect()

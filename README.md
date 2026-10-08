@@ -88,10 +88,10 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 
 ## Session and dashboard
 
-`yarg.service` starts Xorg with `yargos-home session` as its only client (no window manager). The session
-shows the splash, runs YARG (`/usr/lib/yargos/run-yarg`), and stays out of the way while it runs. When YARG
-exits (Exit in its menu) the **dashboard** appears; PLAY YARG starts YARG again. If YARG dies within 20 s
-without a clean exit, the session ends instead so systemd restarts it and the updater can roll back.
+`yarg.service` starts Xorg with `yargos-home session` as its only client (no window manager). The machine
+boots to the **dashboard**; PLAY YARG (the first entry, so one OK press) runs YARG
+(`/usr/lib/yargos/run-yarg`) and the session stays out of the way while it runs. When YARG exits (Exit in its
+menu, or a crash, which also shows a message) the dashboard appears again.
 
 The dashboard is software-rendered (no GPU needed), works with a keyboard, mouse or the instruments, and
 has these screens: Wi-Fi (scan, join, an on-screen keyboard for passwords), Sound (pick the output, volume,
@@ -117,9 +117,10 @@ needs `CONFIG_DRM_FBDEV_EMULATION` for that.
 - It unpacks to a staging folder, checks that every library's dependencies load, then atomically
   switches `/data/apps/yarg/current` to the new folder and keeps the old one as `previous`.
 - It never touches the running game; the new version starts the next time YARG launches.
-- A new version is "on trial": `yarg.service` runs `yargos-update boot-check` before each start and
-  `yarg-health.service` calls `mark-good` after 60 s of uptime. Three starts without that and the next start
-  rolls back to `previous` and remembers the bad version so it is not offered again.
+- A new version is "on trial": the session runs `yargos-update boot-check` each time PLAY YARG launches YARG,
+  and calls `mark-good` once YARG has stayed up for 60 s. After three launches that did not get that far, the
+  next launch rolls back to `previous` (and tells you on the dashboard) and remembers the bad version so it
+  is not offered again. Booting or using the dashboard does not count.
 - `yargos-update.timer` runs `auto` 3 minutes after boot and daily. Set `AUTO_UPDATE=no` in
   `/data/yargos.conf` to turn that off. Other commands: `status`, `check`, `apply [--restart]`, `rollback`.
 - `tools/test-update.sh [extracted YARG folder]` tests all of this against a local fake release server.

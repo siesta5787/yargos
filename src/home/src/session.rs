@@ -15,23 +15,48 @@ use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// A YARG that dies this quickly without a clean exit is treated as a failed start: the session ends
-/// so systemd restarts it and the updater's boot check can roll back a bad version.
-const QUICK_FAIL_SECS: u64 = 20;
+/// How long YARG must stay up before the version that is "on trial" is marked good.
+const GOOD_AFTER_SECS: u64 = 60;
 
 fn yarg_command() -> String {
     std::env::var("YARGOS_YARG_CMD").unwrap_or_else(|_| "/usr/lib/yargos/run-yarg".into())
 }
 
+fn updater(arg: &str) -> Option<String> {
+    Command::new("yargos-update").arg(arg).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+}
+
+/// Start YARG. Before: let the updater count this launch (after repeated failed launches of a new version
+/// it rolls back first). While running: after GOOD_AFTER_SECS the new version is marked good.
 fn launch_yarg(tx: Sender<Event>) {
     let cmd = yarg_command();
     std::thread::spawn(move || {
+        if let Some(out) = updater("boot-check") {
+            if out.contains("rolling back") {
+                let _ = tx.send(Event::Notice("The last YARG update did not work, so the previous version was restored".into()));
+            }
+        }
         let start = Instant::now();
-        let code = match Command::new(&cmd).status() {
-            Ok(s) => s.code(),
+        let mut child = match Command::new(&cmd).spawn() {
+            Ok(c) => c,
             Err(e) => {
                 eprintln!("yargos-home: cannot start {cmd}: {e}");
-                Some(127)
+                let _ = tx.send(Event::YargExited { code: Some(127), secs: 0 });
+                return;
+            }
+        };
+        let mut marked = false;
+        let code = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status.code(),
+                Ok(None) => {
+                    if !marked && start.elapsed() >= Duration::from_secs(GOOD_AFTER_SECS) {
+                        marked = true;
+                        updater("mark-good");
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                Err(_) => break None,
             }
         };
         let _ = tx.send(Event::YargExited { code, secs: start.elapsed().as_secs() });
@@ -146,34 +171,38 @@ pub fn run() -> i32 {
 
     let mut model = Model::new();
     let mut hits: Vec<Hit> = Vec::new();
-    let mut mode = Mode::Game(Instant::now());
+    let mut mode = Mode::Dash;
     let mut visible = true;
     let mut dirty = true;
     let mut had_toast = false;
+    let mut notice: Option<String> = None;
 
+    // Boot to the dashboard: YARG starts when PLAY YARG is chosen. The cursor only shows once a mouse moves.
+    active.store(true, Ordering::Relaxed);
     disp.show_cursor(false);
-    launch_yarg(tx.clone());
+    disp.focus();
+    exec(vec![Cmd::Refresh(Screen::Home)], &model, &tx);
 
     loop {
         match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(Event::YargExited { code, secs }) => {
-                if code != Some(0) && secs < QUICK_FAIL_SECS {
-                    eprintln!("yargos-home: YARG exited with {code:?} after {secs}s; ending the session so it can be restarted");
-                    return 1;
-                }
+            Ok(Event::YargExited { code, .. }) => {
                 mode = Mode::Dash;
                 active.store(true, Ordering::Relaxed);
                 model = Model::new();
-                if code != Some(0) {
-                    model.toast("YARG closed unexpectedly");
+                if let Some(n) = notice.take() {
+                    model.toast(n);
+                } else if code != Some(0) {
+                    model.toast(format!("YARG closed unexpectedly ({})", code.map(|c| format!("code {c}")).unwrap_or_else(|| "it was stopped".into())));
                 }
-                disp.show_cursor(true);
+                disp.show_cursor(false);
                 disp.focus();
                 visible = true;
                 exec(vec![Cmd::Refresh(Screen::Home)], &model, &tx);
                 dirty = true;
             }
+            Ok(Event::Notice(n)) => notice = Some(n),
             Ok(Event::Nav(n)) if matches!(mode, Mode::Dash) => {
+                disp.show_cursor(false);
                 let cmds = model.handle(n);
                 dirty = true;
                 if cmds.contains(&Cmd::LaunchYarg) {
@@ -200,6 +229,7 @@ pub fn run() -> i32 {
                 }
             }
             Ok(Event::Hover(x, y)) if matches!(mode, Mode::Dash) => {
+                disp.show_cursor(true);
                 if let Some(id) = ui::hit_test(&hits, x, y) {
                     let before = (model.sel, model.confirm_sel, model.osk.row, model.osk.col);
                     model.hover(id);

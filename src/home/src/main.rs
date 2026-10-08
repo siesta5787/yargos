@@ -19,6 +19,7 @@ fn main() {
         Some("session") => session::run(),
         Some("splash") => splash::run(),
         Some("ctl") => ctl::run(),
+        Some("padtest") => input::pad_test(),
         Some("screenshot") => {
             let name = args.get(2).map(String::as_str).unwrap_or("home");
             let out = args.get(3).map(String::as_str).unwrap_or("/tmp/yargos-home.png");
