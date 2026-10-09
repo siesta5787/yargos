@@ -4,7 +4,9 @@
 #   sudo tools/flash.sh /dev/sdX        write to that drive (asks you to retype it first)
 # EVERYTHING on the chosen drive is erased. The image is bootable on its own (UEFI): the stick IS the system.
 set -eu
-IMG=${IMG:-$HOME/yargos-build/output/images/yargos.img}
+# Under sudo $HOME is root's; look in the invoking user's home.
+USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
+IMG=${IMG:-$USER_HOME/yargos-build/output/images/yargos.img}
 [ "$(id -u)" = 0 ] || { echo "run with sudo: sudo tools/flash.sh"; exit 1; }
 [ -f "$IMG" ] || { echo "image not found: $IMG"; exit 1; }
 SIZE=$(stat -c %s "$IMG")
