@@ -33,8 +33,10 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 
 ## Installing / trying it on a PC
 
-`output/images/yargos.img` is a complete UEFI-bootable disk (256M boot, 3G system, 2G data; about 5.6 GB, so
-use a 8 GB or larger USB stick, preferably USB 3). It runs from the drive you write it to.
+`output/images/yargos.img` is a complete UEFI-bootable disk (128M boot, 1.8G system, 700M data; about 2.8 GB,
+so any 4 GB or larger USB stick works, preferably USB 3). It runs from the drive you write it to. On first
+boot `yargos-growdata.service` grows the data partition (and its filesystem) to fill the drive, before `/data`
+is mounted; on a drive exactly the image's size nothing grows and the 700M holds YARG with some room to spare.
 
     sudo tools/flash.sh                 # lists USB drives, asks which, makes you retype it, writes, verifies
 
@@ -51,7 +53,7 @@ run `journalctl -b > /data/boot.log`, then read `boot.log` from the `YARGDATA` p
 
 - `configs/yargos_x86_64_defconfig` - top-level config
 - `board/yargos/linux.fragment` - kernel options (broad driver set, UHID, ALSA sequencer, no hid-wiimote)
-- `board/yargos/genimage.cfg` - GPT: ESP (256M) / rootfs (3G ext4) / YARGDATA (2G ext4)
+- `board/yargos/genimage.cfg` - GPT: ESP (128M) / rootfs (1.8G ext4) / YARGDATA (700M ext4, grows on first boot)
 - `board/yargos/esp/loader/` - systemd-boot config; the verbose `yargos-debug` entry is the default
   for now (see "Boot entries")
 - `board/yargos/rootfs-overlay/` - systemd units, udev rules, bluez config, launch scripts
