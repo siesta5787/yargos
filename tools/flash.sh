@@ -18,7 +18,8 @@ if [ -z "$DEV" ]; then
     echo "Removable / USB drives found:"; list; echo
     read -rp "Write to which drive (e.g. /dev/sdb)? " DEV
 fi
-[ -b "$DEV" ] || { echo "$DEV is not a block device"; exit 1; }
+case "$DEV" in /dev/*) ;; *) DEV=/dev/$DEV ;; esac
+[ -b "$DEV" ] || { echo "$DEV is not a block device. Drives found:"; list; exit 1; }
 NAME=$(basename "$DEV")
 case "$NAME" in *[0-9]) [ -e "/sys/block/$NAME" ] || { echo "$DEV looks like a partition; give the whole drive (e.g. /dev/sdb)"; exit 1; } ;; esac
 RM=$(cat "/sys/block/$NAME/removable" 2>/dev/null || echo 0)
