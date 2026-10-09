@@ -24,6 +24,9 @@ CONFIG_DRM_I915=m
 CONFIG_DRM_XE=m
 CONFIG_DRM_NOUVEAU=m
 CONFIG_DRM_SIMPLEDRM=y
+# Hand the firmware's (UEFI GOP) screen to simpledrm so something is visible from the first kernel message
+# until the real GPU driver loads. Without this a real PC shows nothing if that driver is late or fails.
+CONFIG_SYSFB_SIMPLEFB=y
 CONFIG_FB=y
 # Creates /dev/fb0 on top of any DRM driver: the boot splash and the on-screen console need it.
 CONFIG_DRM_FBDEV_EMULATION=y

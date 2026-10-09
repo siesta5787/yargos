@@ -46,6 +46,10 @@ verbose `YARGOS (debug)` entry, which prints boot messages (useful for diagnosin
 it on an internal SSD instead, write the image to that disk (`FORCE=1 sudo tools/flash.sh /dev/nvme0n1`
 from another computer or a Linux live USB); there is no on-device installer yet.
 
+If a machine boots to a black screen or stops early, the boot log is kept on the drive: plug it into another
+Linux PC, mount the 1.8 GB `rootfs` partition and run `journalctl --directory <mount>/var/log/journal -b -1`
+(or read it from a photo of the screen: the kernel now shows its messages from the first second).
+
 For a diagnostic report on a machine with no network: press Ctrl+Alt+F2, log in as `root` (no password),
 run `journalctl -b > /data/boot.log`, then read `boot.log` from the `YARGDATA` partition on another PC.
 
