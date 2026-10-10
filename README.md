@@ -300,5 +300,8 @@ button (configured, not pressed), VT switching to a maintenance console.
 
 ## License
 
-MIT, see `LICENSE`. It covers the files in this repository only. YARG and the software it bundles
-(BASS, Discord SDK) keep their own licenses, and the built image must not be redistributed.
+MIT, see `LICENSE`. It covers the files in this repository only. YARG's own code is LGPL-3.0, but its release build
+also bundles BASS (proprietary; free for non-commercial use by the developer, and its licence does not cover publishing
+other people's software), the Discord SDK and Unity's runtime, so the built image, which contains YARG, must not be
+published; a device downloads YARG from YARC's own releases. Secure Boot is not supported: turn it off in the firmware.
+Plans for over-the-air system updates are in `docs/OTA-PLAN.md`.

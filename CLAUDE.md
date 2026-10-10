@@ -14,8 +14,10 @@ do not move something to "Verified" unless it was actually run.
   `make yargos_x86_64_defconfig` and confirm each symbol is set in `.config`.
 - Config changes do not rebuild packages automatically: use `tools/br.sh <pkg>-rebuild` or
   `-reconfigure`. Buildroot does not rebuild dependents either.
-- Do not redistribute the built image or YARG itself: the release bundles proprietary BASS and the
-  Discord SDK. The repo only holds the package definition and checksum.
+- Do not publish the built image or YARG's release build. YARG's own code is LGPL-3.0, but its release also contains
+  BASS (whose licence covers only the developer's own software, "not the publishing of other's software"), the Discord
+  SDK and Unity's runtime. The repo only holds the package definition and checksum; devices download YARG from YARC.
+  Details and sources: docs/OTA-PLAN.md. Secure Boot is not planned.
 - `genimage.cfg` boot-entry changes require `fresh` for `tools/qemu-run.sh` (stale qcow2 overlay).
 
 ## The bridge (`src/bridge`)
