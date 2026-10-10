@@ -202,7 +202,11 @@ Verified:
   until a button is selected), and the main menu then follows the arrow keys, Enter and Esc. The cause was
   Unity's built-in SDL: with no window manager it uses "legacy" fullscreen, reparents its window into an
   override-redirect container, loses the X focus that way and then drops all input; `run-yarg` sets
-  `SDL_VIDEO_X11_LEGACY_FULLSCREEN=0`. Not yet re-checked on the HP laptop.
+  `SDL_VIDEO_X11_LEGACY_FULLSCREEN=0`.
+- On a 2020 HP Envy x360 (Ryzen 4000, booted from a USB stick; reported by the owner): the image boots to the
+  launcher and into YARG, the touchpad and the built-in and a USB WiFi adapter work, and YARG takes keyboard
+  and mouse input. Instruments were not tried on it. A USB stick that answers its first read with "Medium not
+  present" can fail to boot (another stick or port worked); `usb-storage.delay_use=5` is set but did not fix that.
 - Bridge: 19 unit tests pass. With a real ION Drum Rocker, pad, cymbal, d-pad and kick1 flags
   decode correctly in the virtual kit's reports. On a desktop with `libhidapi-hidraw0` installed,
   YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
