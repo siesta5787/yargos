@@ -25,6 +25,8 @@ each turning an instrument YARG cannot read on Linux into a virtual PS3 instrume
 `/dev/uhid` (root only). Report layouts come from PlasticBand's docs
 (https://github.com/TheNathannator/PlasticBand), the Xbox side from the kernel's `xpad.c`.
 New instrument = new module + mode in `main.rs` + udev rule line + systemd unit.
+The udev rules match HID devices with `KERNELS=="0005:057E:0306.*"` (bus:vendor:product with 4 hex digits each); the
+8-digit `HID_ID` form never matches there. `tools/fake-wiimote.rs` checks the Wiimote rule in QEMU without hardware.
 Hardware-dependent facts (button bits, ranges) must be tested on the real device with
 `tools/dev-test.sh`; unit tests only cover decoding against the documented layout.
 

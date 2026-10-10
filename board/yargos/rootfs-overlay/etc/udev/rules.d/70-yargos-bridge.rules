@@ -1,5 +1,7 @@
 # One bridge per Wiimote (057E:0306 original, 057E:0330 Wii Remote Plus), via raw hidraw.
-ACTION=="add", SUBSYSTEM=="hidraw", KERNELS=="0005:0000057E:0306.*|0005:0000057E:0330.*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="yargos-bridge-wii@%k.service"
+# The kernel names HID devices bus:vendor:product.n with 4 hex digits each (0005:057E:0306.0001); the 8-digit
+# form (0005:0000057E:00000306) only exists in the HID_ID property, so it must not be used with KERNELS.
+ACTION=="add", SUBSYSTEM=="hidraw", KERNELS=="0005:057E:0306.*|0005:057E:0330.*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="yargos-bridge-wii@%k.service"
 
 # Wired Xbox 360 drum kits, read through the kernel's xpad evdev node.
 # 1bad:0130 = ION Drum Rocker
