@@ -48,8 +48,18 @@ pub fn model(name: &str) -> Model {
         "Memory: 1.8 GB used of 7.2 GB".into(),
         "Data disk: 1.2 GB free of 1.9 GB".into(),
     ];
+    m.disks = vec![
+        Disk { path: "/dev/sda".into(), bytes: 256_060_514_304, model: "WDC WDS250G1B0B".into(), removable: false },
+        Disk { path: "/dev/sdb".into(), bytes: 1_000_204_886_016, model: "Samsung Portable SSD".into(), removable: true },
+    ];
     m.tick = 3;
     match name {
+        "install" => { m.screen = Screen::Install; m.sel = 1; }
+        "install-none" => { m.screen = Screen::Install; m.disks.clear(); }
+        "install-confirm" => { m.screen = Screen::Install; m.sel = 1; m.erase = Some(0); m.confirm_sel = 1; }
+        "install-busy" => { m.screen = Screen::Install; m.busy = Some("Copying the system (a few minutes) (step 3 of 6)".into()); }
+        "install-done" => { m.screen = Screen::Install; m.installed = Some("WDC WDS250G1B0B (256 GB)".into()); }
+        "install-failed" => { m.screen = Screen::Install; m.install_error = Some("Could not partition /dev/sda".into()); }
         "home" => {}
         "home-select" => m.sel = 3,
         "wifi" => { m.screen = Screen::Wifi; m.sel = 2; }
@@ -65,7 +75,7 @@ pub fn model(name: &str) -> Model {
         "bluetooth" => { m.screen = Screen::Bluetooth; m.sel = 1; }
         "updates" => { m.screen = Screen::Updates; m.sel = 1; }
         "songs" => { m.screen = Screen::Songs; }
-        "system" => { m.screen = Screen::System; }
+        "system" => { m.screen = Screen::System; m.sel = 2; }
         "busy" => { m.screen = Screen::Wifi; m.busy = Some("Connecting to Neighbour 5G…".into()); }
         "confirm" => { m.screen = Screen::System; m.sel = 1; m.confirm = Some(Power::Shutdown); m.confirm_sel = 1; }
         "toast" => { m.screen = Screen::Sound; m.toast("Sound output changed to HDMI 0"); }

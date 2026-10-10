@@ -9,6 +9,8 @@
 #   CMDLINE="systemd.setenv=YARGOS_YARG_CMD=/bin/true" tools/qemu-run.sh
 #                                  boot the kernel directly (skipping the boot menu) with these extra kernel
 #                                  arguments; /bin/true stands in for YARG, so the dashboard shows at once
+#   DISK2=~/yargos-build/qemu/target.img tools/qemu-run.sh
+#                                  attach a second (blank, created on first use, DISK2_SIZE=12G) disk to try the installer on
 #   HEADLESS=1 tools/qemu-run.sh   no window; serial log -> $WORK/serial.log, serial console socket -> $WORK/serial.sock (tools/qemu-sh.sh),
 #                                  monitor socket -> $WORK/monitor.sock
 #                                  (tools/qemu-shot.sh saves a screenshot of the guest)
@@ -44,6 +46,12 @@ else
     DISPLAY_ARGS=(-device virtio-vga -display gtk -serial mon:stdio)
 fi
 
+DISK2ARGS=()
+if [ -n "${DISK2:-}" ]; then
+    [ -f "$DISK2" ] || truncate -s "${DISK2_SIZE:-12G}" "$DISK2"
+    DISK2ARGS=(-drive "file=$DISK2,format=raw,if=virtio")
+fi
+
 KERNEL_ARGS=()
 if [ -n "${CMDLINE:-}" ]; then
     KERNEL_ARGS=(-kernel "$(dirname "$IMG")/bzImage" -append "root=PARTUUID=6d5a1c52-0d4e-4c5b-9a3f-7e3b8a1f0001 rootwait rw console=ttyS0,115200 loglevel=4 $CMDLINE")
@@ -59,4 +67,5 @@ exec qemu-system-x86_64 \
     -nic user,model=virtio-net-pci \
     "${DISPLAY_ARGS[@]}" \
     "${KERNEL_ARGS[@]}" \
+    "${DISK2ARGS[@]}" \
     "${USBARGS[@]}"

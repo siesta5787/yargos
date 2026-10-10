@@ -38,6 +38,17 @@ package vendors the crates in a pre-build hook (needs network once). To test on 
 `CMDLINE="systemd.setenv=YARGOS_YARG_CMD=/bin/true" HEADLESS=1 tools/qemu-run.sh fresh` shows the dashboard at
 once; `tools/qemu-key.sh`, `qemu-shot.sh` and `qemu-sh.sh` drive and inspect the guest.
 
+## Disk identity and the installer
+
+Never find a root or data partition by label: the flashed image uses fixed partition GUIDs (`...0001` system,
+`...0002` data) and `yargos-install` gives every installed disk fresh random ones (it rewrites the boot entry
+and `/etc/fstab`). Labels would clash as soon as the stick and an installed disk are plugged in together.
+`usr/bin/yargos-install` is plain sh (busybox ash; this image's jq has no regex), run as root through the
+`install /dev/X` request of `yargos-home ctl`, which only accepts a plain disk path. Test it in QEMU with
+`DISK2=~/yargos-build/qemu/target.img` (blank second disk) and pick "Install" in the boot menu; boot the result
+with `IMG=<that file> WORK=<other dir> tools/qemu-run.sh fresh`. The quiet boot entries have no serial console:
+use the verbose entry (third in the menu) when you need `tools/qemu-sh.sh`.
+
 ## Style
 
 Match the surrounding code: terse comments that explain why, no TODO banners, small modules.

@@ -1,8 +1,10 @@
 [Unit]
 Description=Grow the YARGOS data partition to fill the drive
 DefaultDependencies=no
-After=local-fs-pre.target dev-disk-by\x2dlabel-YARGDATA.device
-Wants=dev-disk-by\x2dlabel-YARGDATA.device
+# Not tied to one device unit: the data partition is named by label on the flashed image and by GUID after
+# an install, so the script waits for it itself once udev has seen the drives.
+After=local-fs-pre.target systemd-udevd.service systemd-udev-trigger.service
+Wants=systemd-udev-trigger.service
 # Rewriting the partition table makes the device disappear for a moment: finish before /data is mounted.
 Before=data.mount local-fs.target yargos-firstboot.service
 

@@ -1,0 +1,165 @@
+#!/bin/sh
+# yargos-install: copy the running system onto another disk so it starts without the USB drive.
+#
+#   yargos-install list         disks that can be installed to, one per line: /dev/NAME|bytes|model|transport|removable
+#   yargos-install run /dev/X   ERASE that disk and install (root only). Prints "STEP n/N text" lines,
+#                               then "DONE", or "ERROR text" if something failed.
+#
+# The new disk is GPT: a 128 MiB EFI partition, a 4 GiB root and a data partition for the rest. Every
+# partition gets a fresh random GUID and the boot entries and fstab are rewritten to match, so the USB
+# drive and the installed disk can be plugged in together without confusing each other.
+# What is on the running drive's data partition (YARG, its settings, Bluetooth pairings) is copied across.
+
+set -u
+
+MIN_BYTES=${YARGOS_INSTALL_MIN_BYTES:-8000000000}
+ROOT_SIZE=4GiB
+ESP_SIZE=128MiB
+W=/run/yargos-install
+STEPS=6
+ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+
+# The disk the running system lives on, e.g. "sda" or "nvme0n1".
+root_disk() {
+    src=$(findmnt -no SOURCE /)
+    case $src in
+        /dev/root | "")
+            uuid=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' /proc/cmdline)
+            src=$(readlink -f "/dev/disk/by-partuuid/$uuid")
+            ;;
+    esac
+    lsblk -no PKNAME "$src" 2>/dev/null | head -n 1
+}
+
+list() {
+    rd=$(root_disk)
+    # No regex in this image's jq: it only picks whole disks, the shell does the rest.
+    lsblk -dJbno NAME,SIZE,TYPE,MODEL,TRAN,RM,RO 2>/dev/null | jq -r --arg rd "$rd" --argjson min "$MIN_BYTES" '
+        .blockdevices[]
+        | select(.type == "disk" and .name != $rd and (.size | tonumber) >= $min)
+        | "\(.name)|\(.size)|\(.model // "Disk")|\(.tran // "")|\(.rm | tostring)|\(.ro | tostring)"' 2>/dev/null |
+    while IFS='|' read -r name size model tran rm ro; do
+        case $name in zram* | ram* | loop* | sr* | fd* | md* | nbd*) continue ;; esac
+        case $ro in true | 1) continue ;; esac
+        # A disk with anything mounted from it is in use: never offer it.
+        findmnt -rno SOURCE | grep -qE "^/dev/${name}(p?[0-9]+)?\$" && continue
+        case $rm in true | 1) rm=1 ;; *) rm=0 ;; esac
+        model=$(echo "$model" | sed 's/^ *//; s/ *$//')
+        echo "/dev/$name|$size|${model:-Disk}|$tran|$rm"
+    done
+}
+
+step() { echo "STEP $1/$STEPS $2"; }
+
+cleanup() {
+    for d in esp data root src sesp; do
+        mountpoint -q "$W/$d" 2>/dev/null && umount "$W/$d" 2>/dev/null
+    done
+    rm -rf "$W"
+}
+
+fail() {
+    echo "ERROR $*"
+    cleanup
+    exit 1
+}
+
+part_path() { # part_path DISK N: /dev/sda -> /dev/sda1, /dev/nvme0n1 -> /dev/nvme0n1p1
+    case $1 in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac
+}
+
+run() {
+    disk=${1:-}
+    [ "$(id -u)" = 0 ] || fail "This needs to run as root"
+    case $disk in /dev/*) ;; *) fail "No disk was given" ;; esac
+    list | cut -d'|' -f1 | grep -qx "$disk" || fail "$disk is not a disk that can be installed to"
+    [ -b "$disk" ] || fail "$disk is not there any more"
+    mkdir "$W" 2>/dev/null || fail "An installation is already running"
+    mkdir "$W/src" "$W/root" "$W/esp" "$W/data" "$W/sesp"
+
+    ESP_UUID=$(cat /proc/sys/kernel/random/uuid)
+    ROOT_UUID=$(cat /proc/sys/kernel/random/uuid)
+    DATA_UUID=$(cat /proc/sys/kernel/random/uuid)
+
+    step 1 "Preparing the disk"
+    for p in $(lsblk -lnpo NAME "$disk" | tail -n +2); do umount "$p" 2>/dev/null; done
+    blockdev --flushbufs "$disk" 2>/dev/null
+    sectors=$(blockdev --getsz "$disk") || fail "Could not read the size of $disk"
+    # Wipe the ends of the disk so no old partition table or filesystem signature survives.
+    dd if=/dev/zero of="$disk" bs=1M count=16 conv=fsync 2>/dev/null || fail "Could not write to $disk"
+    mb=$((sectors / 2048))
+    [ "$mb" -gt 32 ] && dd if=/dev/zero of="$disk" bs=1M seek=$((mb - 16)) count=16 2>/dev/null
+    sfdisk -q "$disk" <<EOF >/dev/null 2>&1 || fail "Could not partition $disk"
+label: gpt
+size=$ESP_SIZE, type=U, uuid=$ESP_UUID, name="YARGOS EFI"
+size=$ROOT_SIZE, type=L, uuid=$ROOT_UUID, name="YARGOS root"
+type=L, uuid=$DATA_UUID, name="YARGOS data"
+EOF
+    partx -u "$disk" 2>/dev/null
+    P1=$(part_path "$disk" 1); P2=$(part_path "$disk" 2); P3=$(part_path "$disk" 3)
+    n=0
+    while [ ! -b "$P3" ] && [ $n -lt 50 ]; do sleep 0.2; n=$((n + 1)); done
+    [ -b "$P3" ] || fail "The new partitions did not appear"
+    udevadm settle 2>/dev/null
+
+    step 2 "Formatting"
+    mkdosfs -F 32 -n YARGOS "$P1" >/dev/null 2>&1 || fail "Could not format the boot partition"
+    mke2fs -q -F -t ext4 -L rootfs "$P2" >/dev/null 2>&1 || fail "Could not format the system partition"
+    mke2fs -q -F -t ext4 -L YARGDATA "$P3" >/dev/null 2>&1 || fail "Could not format the data partition"
+    mount "$P2" "$W/root" || fail "Could not mount the new system partition"
+    mount "$P1" "$W/esp" || fail "Could not mount the new boot partition"
+    mount "$P3" "$W/data" || fail "Could not mount the new data partition"
+
+    step 3 "Copying the system (a few minutes)"
+    # A bind mount shows only the root filesystem, without /data, /boot, /tmp or anything else mounted on it.
+    mount --bind / "$W/src" || fail "Could not read the running system"
+    cp -a "$W/src/." "$W/root/" || fail "Copying the system failed (is the disk big enough?)"
+    umount "$W/src"
+    rm -rf "$W/root/var/log/journal"/* 2>/dev/null
+    : > "$W/root/etc/machine-id"   # a fresh machine id is made on the first boot
+    # The data partition is found by its own GUID now, so a USB drive with the same label cannot get in the way.
+    sed -i "s|^[^#[:space:]]*\([[:space:]][[:space:]]*/data[[:space:]]\)|PARTUUID=$DATA_UUID\1|" "$W/root/etc/fstab"
+    grep -q "^PARTUUID=$DATA_UUID" "$W/root/etc/fstab" || fail "Could not update the new system's disk table"
+
+    step 4 "Copying your YARG and settings"
+    cp -a /data/. "$W/data/" || fail "Copying your data failed (is the disk big enough?)"
+
+    step 5 "Making the disk bootable"
+    # The boot files come from this drive's own EFI partition.
+    rd=$(root_disk)
+    sesp=$(lsblk -lnpo NAME,PARTTYPE "/dev/$rd" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1; exit }')
+    [ -b "$sesp" ] || fail "Could not find this drive's boot partition"
+    # systemd usually has it mounted at /boot already (mounting a FAT partition twice, once read-only, fails).
+    ls /boot >/dev/null 2>&1
+    esp_src=$(findmnt -rno TARGET -S "$sesp" 2>/dev/null | head -n 1)
+    if [ -z "$esp_src" ]; then
+        mount -o ro "$sesp" "$W/sesp" || fail "Could not read this drive's boot partition"
+        esp_src=$W/sesp
+    fi
+    mkdir -p "$W/esp/loader/entries"
+    cp -a "$esp_src/EFI" "$esp_src/bzImage" "$W/esp/" || fail "Could not copy the boot files"
+    for e in yargos.conf yargos-debug.conf; do
+        sed "s|root=PARTUUID=[^ ]*|root=PARTUUID=$ROOT_UUID|" "$esp_src/loader/entries/$e" > "$W/esp/loader/entries/$e" || fail "Could not write the boot entries"
+    done
+    sed -i 's|^title .*|title   YARG OS|' "$W/esp/loader/entries/yargos.conf"
+    # No boot menu on the installed system (hold the space bar while it starts to get one).
+    printf 'default yargos.conf\ntimeout 0\nconsole-mode keep\neditor yes\n' > "$W/esp/loader/loader.conf"
+    mountpoint -q "$W/sesp" && umount "$W/sesp"
+    # Best effort: also register with the firmware. The fallback file (EFI/BOOT/BOOTX64.EFI) boots anyway.
+    bootctl --esp-path="$W/esp" install >/dev/null 2>&1 || true
+    # bootctl may rewrite loader.conf; ours must win.
+    printf 'default yargos.conf\ntimeout 0\nconsole-mode keep\neditor yes\n' > "$W/esp/loader/loader.conf"
+
+    step 6 "Finishing"
+    sync
+    umount "$W/data" "$W/esp" "$W/root" || fail "Could not finish writing the disk"
+    sync
+    cleanup
+    echo DONE
+}
+
+case ${1:-} in
+    list) list ;;
+    run) run "${2:-}" ;;
+    *) sed -n '2,10p' "$0"; exit 2 ;;
+esac

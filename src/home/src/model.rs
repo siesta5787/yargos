@@ -28,6 +28,7 @@ pub enum Screen {
     Updates,
     Songs,
     System,
+    Install,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -60,6 +61,27 @@ impl BtDevice {
     }
 }
 
+/// A disk the system can be installed on (see `yargos-install list`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Disk {
+    pub path: String,
+    pub bytes: u64,
+    pub model: String,
+    pub removable: bool,
+}
+
+impl Disk {
+    /// Drive sizes the way they are sold: decimal gigabytes.
+    pub fn size_label(&self) -> String {
+        let gb = self.bytes as f64 / 1e9;
+        if gb >= 1000.0 { format!("{:.1} TB", gb / 1000.0) } else { format!("{gb:.0} GB") }
+    }
+
+    pub fn label(&self) -> String {
+        format!("{} ({})", self.model, self.size_label())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Power {
     Restart,
@@ -83,6 +105,8 @@ pub enum Cmd {
     UpdRollback,
     UpdAuto(bool),
     SongsRefresh,
+    /// Erase this disk (a /dev path) and install the system on it.
+    Install(String),
     Power(Power),
 }
 
@@ -122,6 +146,10 @@ pub enum Res {
     Upd(UpdInfo),
     Songs(SongsInfo),
     SysInfo(Vec<String>),
+    Disks(Vec<Disk>),
+    /// One progress line from the installer.
+    InstallStep(String),
+    InstallDone(Result<(), String>),
     /// A finished action: clear the busy overlay and show this message.
     Done(String),
     /// A finished action whose screen data should also be reloaded.
@@ -211,6 +239,14 @@ pub struct Model {
     pub sysinfo: Vec<String>,
     pub confirm: Option<Power>,
     pub confirm_sel: usize,
+    pub disks: Vec<Disk>,
+    /// The disk the user is being asked to confirm erasing (index into `disks`).
+    pub erase: Option<usize>,
+    /// Set once the install finished: what it was installed on.
+    pub installed: Option<String>,
+    pub install_error: Option<String>,
+    /// Label of the disk being installed on while the install runs.
+    target: Option<String>,
     pub busy: Option<String>,
     pub toast: Option<(String, Instant)>,
     pub loading: bool,
@@ -236,6 +272,11 @@ impl Model {
             sysinfo: vec![],
             confirm: None,
             confirm_sel: 0,
+            disks: vec![],
+            erase: None,
+            installed: None,
+            install_error: None,
+            target: None,
             busy: None,
             toast: None,
             loading: false,
@@ -260,9 +301,15 @@ impl Model {
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
             Screen::Songs => 1,
-            Screen::System => 2,
+            Screen::System => 3,
+            Screen::Install => if self.installed.is_some() { 2 } else { 1 + self.disks.len() },
             Screen::Password => 0,
         }
+    }
+
+    /// Go straight to a screen (the "Install" boot menu entry opens the installer).
+    pub fn open(&mut self, screen: Screen) -> Vec<Cmd> {
+        self.enter(screen)
     }
 
     fn enter(&mut self, screen: Screen) -> Vec<Cmd> {
@@ -277,7 +324,7 @@ impl Model {
         if self.busy.is_some() {
             return;
         }
-        if self.confirm.is_some() {
+        if self.confirm.is_some() || self.erase.is_some() {
             self.confirm_sel = id.min(1);
         } else if self.screen == Screen::Password {
             let (r, c) = (id / 16, id % 16);
@@ -304,6 +351,9 @@ impl Model {
         if let Some(p) = self.confirm {
             return self.handle_confirm(p, nav);
         }
+        if let Some(i) = self.erase {
+            return self.handle_erase(i, nav);
+        }
         match self.screen {
             Screen::Password => self.handle_password(nav),
             _ => self.handle_list(nav),
@@ -319,6 +369,26 @@ impl Model {
                 if self.confirm_sel == 1 {
                     self.busy = Some(if p == Power::Shutdown { "Shutting down…".into() } else { "Restarting…".into() });
                     return vec![Cmd::Power(p)];
+                }
+            }
+            _ => {}
+        }
+        vec![]
+    }
+
+    /// The "erase this disk?" question: Cancel is the default.
+    fn handle_erase(&mut self, i: usize, nav: Nav) -> Vec<Cmd> {
+        match nav {
+            Nav::Left | Nav::Right | Nav::Up | Nav::Down => self.confirm_sel = 1 - self.confirm_sel,
+            Nav::Back => self.erase = None,
+            Nav::Ok | Nav::Submit => {
+                self.erase = None;
+                if self.confirm_sel == 1 {
+                    let disk = self.disks[i].clone();
+                    self.install_error = None;
+                    self.target = Some(disk.label());
+                    self.busy = Some(format!("Installing on {}\u{2026} do not unplug or switch off", disk.label()));
+                    return vec![Cmd::Install(disk.path)];
                 }
             }
             _ => {}
@@ -491,8 +561,23 @@ impl Model {
                 self.busy = Some("Looking for the song drive…".into());
                 vec![Cmd::SongsRefresh]
             }
+            Screen::System if self.sel == 2 => self.enter(Screen::Install),
             Screen::System => {
                 self.confirm = Some(if self.sel == 0 { Power::Restart } else { Power::Shutdown });
+                self.confirm_sel = 0;
+                vec![]
+            }
+            Screen::Install if self.installed.is_some() => {
+                self.confirm = Some(if self.sel == 0 { Power::Restart } else { Power::Shutdown });
+                self.confirm_sel = 0;
+                vec![]
+            }
+            Screen::Install if self.sel == 0 => {
+                self.busy = Some("Looking for disks\u{2026}".into());
+                vec![Cmd::Refresh(Screen::Install)]
+            }
+            Screen::Install => {
+                self.erase = Some(self.sel - 1);
                 self.confirm_sel = 0;
                 vec![]
             }
@@ -537,6 +622,26 @@ impl Model {
             Res::SysInfo(lines) => {
                 self.sysinfo = lines;
                 self.loading = false;
+            }
+            Res::Disks(d) => {
+                self.disks = d;
+                self.loading = false;
+                self.busy = None;
+                self.sel = self.sel.min(self.row_count().saturating_sub(1));
+            }
+            Res::InstallStep(text) => {
+                if self.busy.is_some() {
+                    self.busy = Some(text);
+                }
+            }
+            Res::InstallDone(Ok(())) => {
+                self.busy = None;
+                self.installed = Some(self.target.take().unwrap_or_else(|| "the disk".into()));
+                self.sel = 0;
+            }
+            Res::InstallDone(Err(e)) => {
+                self.busy = None;
+                self.install_error = Some(e);
             }
             Res::Done(msg) => {
                 self.busy = None;
@@ -785,5 +890,80 @@ mod tests {
         m.apply(Res::Wifi { dev: Some("wlan0".into()), nets: vec![] });
         assert!(m.busy.is_none());
         assert_eq!(m.sel, 0);
+    }
+
+    fn disks() -> Vec<Disk> {
+        vec![
+            Disk { path: "/dev/sda".into(), bytes: 256_000_000_000, model: "Internal SSD".into(), removable: false },
+            Disk { path: "/dev/sdb".into(), bytes: 1_000_000_000_000, model: "Portable".into(), removable: true },
+        ]
+    }
+
+    #[test]
+    fn the_system_screen_leads_to_the_installer() {
+        let mut m = Model::new();
+        m.screen = Screen::System;
+        m.sel = 2;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Install)]);
+        assert_eq!(m.screen, Screen::Install);
+    }
+
+    #[test]
+    fn choosing_a_disk_asks_first_and_cancel_is_the_default() {
+        let mut m = Model::new();
+        m.screen = Screen::Install;
+        m.disks = disks();
+        m.sel = 2; // second disk (row 0 is "look again")
+        assert!(m.handle(Nav::Ok).is_empty());
+        assert_eq!(m.erase, Some(1));
+        assert_eq!(m.confirm_sel, 0);
+        assert!(m.handle(Nav::Ok).is_empty()); // OK on Cancel
+        assert!(m.erase.is_none() && m.busy.is_none());
+    }
+
+    #[test]
+    fn confirming_erase_starts_the_install_and_input_is_locked_until_it_ends() {
+        let mut m = Model::new();
+        m.screen = Screen::Install;
+        m.disks = disks();
+        m.sel = 1;
+        m.handle(Nav::Ok);
+        m.handle(Nav::Right);
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Install("/dev/sda".into())]);
+        assert!(m.busy.is_some());
+        assert!(m.handle(Nav::Back).is_empty()); // cannot back out mid-install
+        assert_eq!(m.screen, Screen::Install);
+        m.apply(Res::InstallStep("Formatting (step 2 of 6)".into()));
+        assert_eq!(m.busy.as_deref(), Some("Formatting (step 2 of 6)"));
+        m.apply(Res::InstallDone(Ok(())));
+        assert!(m.busy.is_none());
+        assert_eq!(m.installed.as_deref(), Some("Internal SSD (256 GB)"));
+        assert_eq!(m.row_count(), 2); // Restart / Shut down
+        assert!(m.handle(Nav::Ok).is_empty());
+        assert_eq!(m.confirm, Some(Power::Restart));
+    }
+
+    #[test]
+    fn a_failed_install_keeps_the_disk_list_and_shows_why() {
+        let mut m = Model::new();
+        m.screen = Screen::Install;
+        m.disks = disks();
+        m.busy = Some("x".into());
+        m.apply(Res::InstallDone(Err("Could not partition /dev/sda".into())));
+        assert!(m.busy.is_none() && m.installed.is_none());
+        assert_eq!(m.install_error.as_deref(), Some("Could not partition /dev/sda"));
+        assert_eq!(m.row_count(), 3);
+    }
+
+    #[test]
+    fn escape_cancels_the_erase_question() {
+        let mut m = Model::new();
+        m.screen = Screen::Install;
+        m.disks = disks();
+        m.sel = 1;
+        m.handle(Nav::Ok);
+        m.handle(Nav::Back);
+        assert!(m.erase.is_none());
+        assert_eq!(m.screen, Screen::Install);
     }
 }

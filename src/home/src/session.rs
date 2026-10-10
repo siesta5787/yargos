@@ -122,6 +122,11 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Upd(sys::upd_info(&upd)));
             }),
             Cmd::UpdAuto(on) => bg(tx, move |tx| done(tx, sys::write_auto_update(on))),
+            Cmd::Refresh(Screen::Install) => bg(tx, |tx| res(tx, Res::Disks(sys::install_disks()))),
+            Cmd::Install(disk) => bg(tx, move |tx| {
+                let r = sys::install_run(&disk, |step| res(tx, Res::InstallStep(step)));
+                res(tx, Res::InstallDone(r));
+            }),
             Cmd::Refresh(Screen::Songs) | Cmd::SongsRefresh => bg(tx, |tx| res(tx, Res::Songs(sys::songs_refresh()))),
             Cmd::Refresh(Screen::System) => bg(tx, |tx| res(tx, Res::SysInfo(sys::sys_info()))),
             Cmd::Refresh(_) => {}
@@ -181,7 +186,12 @@ pub fn run() -> i32 {
     active.store(true, Ordering::Relaxed);
     disp.show_cursor(false);
     disp.focus();
-    exec(vec![Cmd::Refresh(Screen::Home)], &model, &tx);
+    if sys::install_requested() {
+        let cmds = model.open(Screen::Install);
+        exec(cmds, &model, &tx);
+    } else {
+        exec(vec![Cmd::Refresh(Screen::Home)], &model, &tx);
+    }
 
     loop {
         match rx.recv_timeout(Duration::from_millis(100)) {

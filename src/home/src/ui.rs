@@ -89,7 +89,18 @@ fn rows(m: &Model) -> Vec<Row> {
             Row { enabled: m.upd.previous.is_some(), value: m.upd.previous.clone().unwrap_or_default(), ..row("Go back to the previous version") },
         ],
         Screen::Songs => vec![row("Look for the song drive again")],
-        Screen::System => vec![row("Restart"), row("Shut down")],
+        Screen::System => vec![row("Restart"), row("Shut down"), row("Install on this computer's disk")],
+        Screen::Install if m.installed.is_some() => vec![row("Restart"), row("Shut down")],
+        Screen::Install => {
+            let mut v = vec![row("Look for disks again")];
+            for d in &m.disks {
+                let mut r = row(d.model.clone());
+                r.value = d.size_label();
+                r.tag = Some(if d.removable { ("USB", BLUE) } else { ("INTERNAL", GREEN) });
+                v.push(r);
+            }
+            v
+        }
         _ => vec![],
     }
 }
@@ -145,6 +156,27 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             v
         }),
         Screen::System => ("SYSTEM", m.sysinfo.clone()),
+        Screen::Install if m.installed.is_some() => (
+            "INSTALLED",
+            vec![
+                format!("YARG OS is installed on {}.", m.installed.clone().unwrap_or_default()),
+                "Choose Restart, and unplug the USB drive when the screen goes dark. From now on the computer starts YARG OS from its own disk.".into(),
+                "Your YARG, its settings and your paired Bluetooth devices were copied across.".into(),
+            ],
+        ),
+        Screen::Install => {
+            let mut v = vec![
+                "Install YARG OS on this computer's own disk, so it starts without the USB drive.".to_string(),
+                "Everything on the disk you choose is erased.".to_string(),
+            ];
+            if m.disks.is_empty() && !m.loading {
+                v.push("No other disk was found. The disk must be at least 8 GB and not be in use.".into());
+            }
+            if let Some(e) = &m.install_error {
+                v.push(format!("The install did not finish: {e}"));
+            }
+            ("INSTALL", v)
+        }
         _ => ("", vec![]),
     }
 }
@@ -158,6 +190,7 @@ fn title_of(s: Screen) -> &'static str {
         Screen::Updates => "UPDATES",
         Screen::Songs => "SONGS",
         Screen::System => "SYSTEM",
+        Screen::Install => "INSTALL",
     }
 }
 
@@ -208,7 +241,12 @@ pub fn draw(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) 
     }
     if let Some(p) = m.confirm {
         hits.clear();
-        draw_confirm(cv, fonts, m, p, u, hits);
+        let (q, go) = if p == Power::Shutdown { ("Shut down now?", "Shut down") } else { ("Restart now?", "Restart") };
+        draw_confirm(cv, fonts, m, q, "", go, u, hits);
+    }
+    if let Some(d) = m.erase.and_then(|i| m.disks.get(i)) {
+        hits.clear();
+        draw_confirm(cv, fonts, m, "Erase this disk and install?", &format!("{}\nEverything on it will be lost.", d.label()), "Erase and install", u, hits);
     }
     if let Some(msg) = &m.busy {
         hits.clear();
@@ -424,21 +462,25 @@ fn draw_password(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &m
     }
 }
 
-fn draw_confirm(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, p: Power, u: f32, hits: &mut Vec<Hit>) {
+fn draw_confirm(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, question: &str, note: &str, go: &str, u: f32, hits: &mut Vec<Hit>) {
     let (w, h) = (cv.w as f32, cv.h as f32);
     cv.rect(0, 0, cv.w as i32, cv.h as i32, rgb(0, 0, 0), 0.6);
-    let (cw, ch) = (560.0 * u, 250.0 * u);
+    let (cw, ch) = (640.0 * u, 290.0 * u);
     let (cx, cy) = ((w - cw) / 2.0, (h - ch) / 2.0);
     cv.rrect(cx as i32, cy as i32, cw as i32, ch as i32, 22.0 * u, rgb(12, 20, 38), 0.98);
-    let q = if p == Power::Shutdown { "Shut down now?" } else { "Restart now?" };
-    fonts.draw_centered(cv, q, w / 2.0, cy + 40.0 * u, 34.0 * u, true, TEXT, 1.0);
-    for (i, label) in ["Cancel", if p == Power::Shutdown { "Shut down" } else { "Restart" }].iter().enumerate() {
-        let (bw, bh) = (220.0 * u, 62.0 * u);
+    let q = fit(fonts, question, 32.0 * u, cw - 60.0 * u);
+    fonts.draw_centered(cv, &q, w / 2.0, cy + 48.0 * u, 32.0 * u, true, TEXT, 1.0);
+    for (i, line) in note.lines().enumerate() {
+        let line = fit(fonts, line, 20.0 * u, cw - 60.0 * u);
+        fonts.draw_centered(cv, &line, w / 2.0, cy + 92.0 * u + i as f32 * 26.0 * u, 20.0 * u, false, if i == 0 { TEXT } else { DIM }, 1.0);
+    }
+    for (i, label) in ["Cancel", go].iter().enumerate() {
+        let (bw, bh) = (270.0 * u, 62.0 * u);
         let bx = cx + 40.0 * u + i as f32 * (bw + 20.0 * u);
         let sel = m.confirm_sel == i;
-        cv.rrect(bx as i32, (cy + 140.0 * u) as i32, bw as i32, bh as i32, 14.0 * u, if i == 1 { rgb(220, 60, 60) } else { rgb(255, 255, 255) }, if sel { 0.95 } else { 0.14 });
-        fonts.draw_centered(cv, label, bx + bw / 2.0, cy + 140.0 * u + 16.0 * u, 26.0 * u, true, if sel { rgb(10, 16, 30) } else { TEXT }, 1.0);
-        hits.push(Hit { x: bx as i32, y: (cy + 140.0 * u) as i32, w: bw as i32, h: bh as i32, row: i });
+        cv.rrect(bx as i32, (cy + 170.0 * u) as i32, bw as i32, bh as i32, 14.0 * u, if i == 1 { rgb(220, 60, 60) } else { rgb(255, 255, 255) }, if sel { 0.95 } else { 0.14 });
+        fonts.draw_centered(cv, label, bx + bw / 2.0, cy + 170.0 * u + 16.0 * u, 26.0 * u, true, if sel { rgb(10, 16, 30) } else { TEXT }, 1.0);
+        hits.push(Hit { x: bx as i32, y: (cy + 170.0 * u) as i32, w: bw as i32, h: bh as i32, row: i });
     }
 }
 

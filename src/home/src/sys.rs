@@ -3,7 +3,7 @@
 // unit tested on sample output; the wrappers themselves only run on the appliance.
 
 use crate::model::*;
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -587,6 +587,72 @@ pub fn power(p: Power) -> Result<(), String> {
     if reply.starts_with("ok") { Ok(()) } else { Err(reply.trim().to_string()) }
 }
 
+// ---- installing to a disk --------------------------------------------------------------------
+
+/// `yargos-install list` output: `/dev/NAME|bytes|model|transport|removable` per line.
+pub fn parse_disks(out: &str) -> Vec<Disk> {
+    out.lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.trim().split('|').collect();
+            if f.len() < 5 || !f[0].starts_with("/dev/") {
+                return None;
+            }
+            Some(Disk { path: f[0].to_string(), bytes: f[1].parse().ok()?, model: f[2].to_string(), removable: f[3] == "usb" || f[4] == "1" })
+        })
+        .collect()
+}
+
+pub fn install_disks() -> Vec<Disk> {
+    run("yargos-install", &["list"]).map(|o| parse_disks(&o)).unwrap_or_default()
+}
+
+/// Was the boot menu's "Install" entry chosen?
+pub fn install_requested() -> bool {
+    std::fs::read_to_string("/proc/cmdline").map(|c| c.split_whitespace().any(|w| w == "yargos.install=1")).unwrap_or(false)
+}
+
+#[derive(Debug, PartialEq)]
+pub enum InstallLine {
+    Step(String),
+    Done,
+    Error(String),
+    Other,
+}
+
+/// One line of the installer's output: `STEP 3/6 Copying the system`, `DONE` or `ERROR text`.
+pub fn parse_install_line(line: &str) -> InstallLine {
+    let line = line.trim();
+    if line == "DONE" {
+        InstallLine::Done
+    } else if let Some(e) = line.strip_prefix("ERROR ") {
+        InstallLine::Error(e.to_string())
+    } else if let Some(rest) = line.strip_prefix("STEP ") {
+        match rest.split_once(' ') {
+            Some((n, text)) => InstallLine::Step(format!("{text} (step {})", n.replace('/', " of "))),
+            None => InstallLine::Other,
+        }
+    } else {
+        InstallLine::Other
+    }
+}
+
+/// Ask the root helper to erase `disk` and install on it, reporting each step as it happens.
+pub fn install_run(disk: &str, mut on_step: impl FnMut(String)) -> Result<(), String> {
+    let mut s = std::os::unix::net::UnixStream::connect(CTL_SOCKET).map_err(|e| format!("cannot reach the system helper: {e}"))?;
+    s.write_all(format!("install {disk}\n").as_bytes()).map_err(|e| e.to_string())?;
+    let mut finished = None;
+    for line in std::io::BufReader::new(s).lines() {
+        let Ok(line) = line else { break };
+        match parse_install_line(&line) {
+            InstallLine::Step(t) => on_step(t),
+            InstallLine::Done => finished = Some(Ok(())),
+            InstallLine::Error(e) => finished = Some(Err(e)),
+            InstallLine::Other => {}
+        }
+    }
+    finished.unwrap_or_else(|| Err("The installer stopped without finishing".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,5 +766,25 @@ mod tests {
         let off = "AUTO_UPDATE=no\n";
         assert!(!off.lines().all(|l| l.trim() != "AUTO_UPDATE=no"));
         assert!(on.lines().all(|l| l.trim() != "AUTO_UPDATE=no"));
+    }
+
+    #[test]
+    fn disk_list_lines_are_parsed() {
+        let out = "/dev/sdb|256060514304|WDC WDS250G1B0B|sata|0\n/dev/sdc|126437212160|USB 3.0 FD|usb|1\n/dev/nvme0n1|512110190592|Samsung SSD|nvme|0\ngarbage\n";
+        let d = parse_disks(out);
+        assert_eq!(d.len(), 3);
+        assert_eq!(d[0], Disk { path: "/dev/sdb".into(), bytes: 256060514304, model: "WDC WDS250G1B0B".into(), removable: false });
+        assert!(d[1].removable);
+        assert_eq!(d[0].size_label(), "256 GB");
+        assert_eq!(d[2].label(), "Samsung SSD (512 GB)");
+        assert_eq!(Disk { path: "/dev/sda".into(), bytes: 2_000_398_934_016, model: "X".into(), removable: false }.size_label(), "2.0 TB");
+    }
+
+    #[test]
+    fn installer_output_lines_are_understood() {
+        assert_eq!(parse_install_line("STEP 3/6 Copying the system (a few minutes)"), InstallLine::Step("Copying the system (a few minutes) (step 3 of 6)".into()));
+        assert_eq!(parse_install_line("DONE\n"), InstallLine::Done);
+        assert_eq!(parse_install_line("ERROR Could not partition /dev/sdb"), InstallLine::Error("Could not partition /dev/sdb".into()));
+        assert_eq!(parse_install_line("cp: something"), InstallLine::Other);
     }
 }

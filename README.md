@@ -41,10 +41,24 @@ is mounted; on a drive exactly the image's size nothing grows and the 700M holds
     sudo tools/flash.sh                 # lists USB drives, asks which, makes you retype it, writes, verifies
 
 On the target PC: turn Secure Boot off in the firmware settings (the boot loader is unsigned) and boot from
-the USB drive (usually F7, F11, F12 or Del at power-on). The boot menu shows for 3 s; the default is the
-verbose `YARGOS (debug)` entry, which prints boot messages (useful for diagnosing a new machine). To put
-it on an internal SSD instead, write the image to that disk (`FORCE=1 sudo tools/flash.sh /dev/nvme0n1`
-from another computer or a Linux live USB); there is no on-device installer yet.
+the USB drive (usually F7, F11, F12 or Del at power-on). A small menu shows for 5 s:
+
+- **Start YARG OS from this drive** (default): runs from the stick.
+- **Install YARG OS on this computer**: opens the launcher on its Install screen (see below).
+- **Start YARG OS (verbose, for troubleshooting)**: prints boot messages, and has a serial console.
+
+### Installing to the computer's own disk
+
+Choose the install entry (or SYSTEM > Install on this computer's disk in the launcher). It lists the other
+disks (at least 8 GB, nothing mounted from them; never the drive it is running from), asks you to confirm which
+one gets erased, then runs `yargos-install` through the root helper and shows its steps: GPT with a 128 MiB
+EFI partition, a 4 GiB system and the rest as data; it copies the running system and the whole data
+partition (YARG, its settings and updates, Bluetooth pairings, Wi-Fi passwords), writes boot entries and
+registers with the firmware (the fallback `EFI/BOOT/BOOTX64.EFI` boots it anyway). The installed system has no
+boot menu (hold the space bar during startup to get one). Every partition on the new disk gets a fresh random
+GUID that the boot entry and `/etc/fstab` use, so the USB drive and the installed disk can be plugged in
+together; the flashed image uses fixed GUIDs (`...0001` system, `...0002` data) for the same reason. Never
+look a root or data partition up by label.
 
 If a machine boots to a black screen or stops early, the boot log is kept on the drive: plug it into another
 Linux PC, mount the 1.8 GB `rootfs` partition and run `journalctl --directory <mount>/var/log/journal -b -1`
@@ -153,9 +167,10 @@ press Ctrl+Alt+F2, log in as root (empty password; there is no network login), a
 
 ## Boot entries
 
-`loader.conf` defaults to `yargos-debug` (verbose kernel and systemd output, also on the serial
-console) with a 3 second menu. For the finished console experience, change it to `default yargos.conf`
-and `timeout 0` (silent boot).
+On the flashed stick, `loader.conf` defaults to `yargos.conf` (quiet) with a 5 second menu that also offers
+`yargos-install.conf` (the same kernel with `yargos.install=1`, which makes the launcher open on its Install
+screen) and `yargos-debug.conf` (verbose output, also on the serial console). The installer writes its own
+`loader.conf` with `timeout 0` and only the first and last entries, pointing at the new disk's GUID.
 
 ## Trying it without the appliance
 
@@ -212,7 +227,15 @@ Verified:
   YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
   and the menus can be navigated with the pads.
 
+- Installing to a disk (QEMU, a blank 12 GB virtio disk beside the boot stick): the boot menu's install entry
+  opens the Install screen, which lists only the other disk; the install ran to the end, and the installed
+  disk by itself booted straight to the launcher (no menu) with YARG 0.15.0. Its partitions, boot entry,
+  `fstab`, data copy and blank machine id were checked. An earlier version failed on a leftover install with
+  the same `YARGDATA` label because the stick looked its data up by label; both now use GUIDs.
 Not verified:
+- The installer on real hardware: a real internal SATA/NVMe disk, firmware that ignores the fallback boot
+  file or has many stale entries, Secure Boot machines, and disks with other systems on them (it erases all
+  of the chosen disk).
 
 - Dashboard navigation with real instruments (the button mapping assumes the kernel's standard HID
   gamepad mapping); the Wi-Fi password flow and Bluetooth pairing on real adapters; the dashboard's pad mapping on a
