@@ -222,6 +222,9 @@ Verified:
   launcher and into YARG, the touchpad and the built-in and a USB WiFi adapter work, and YARG takes keyboard
   and mouse input. Instruments were not tried on it. A USB stick that answers its first read with "Medium not
   present" can fail to boot (another stick or port worked); `usb-storage.delay_use=5` is set but did not fix that.
+- Latest image on the same laptop (reported by the owner): Wi-Fi, sound, YARG starting, the NTFS song drive, the Wii
+  guitar and the launcher's controls all work. Not yet tried on real hardware: the installer, the microphone
+  picking up a voice, drums in actual gameplay, and an over-the-air YARG update.
 - Bridge: 19 unit tests pass. With a real ION Drum Rocker, pad, cymbal, d-pad and kick1 flags
   decode correctly in the virtual kit's reports. On a desktop with `libhidapi-hidraw0` installed,
   YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
