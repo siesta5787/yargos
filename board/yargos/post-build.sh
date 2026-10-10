@@ -32,3 +32,12 @@ fi
 # Modules are not compressed (the build's depmod cannot read compressed ones). Drop stale compressed copies
 # left by an earlier build so depmod indexes each module once.
 find "$TARGET_DIR/usr/lib/modules" -name '*.ko.gz' -delete 2>/dev/null || true
+
+# alsa-plugins is here only for the high-quality sample-rate converter (libsamplerate). Its other plugins (upmix,
+# vdownmix, OSS emulation, the Arcam control) would each show up as another output device in YARG's list.
+A=$TARGET_DIR/usr/lib/alsa-lib
+rm -f "$A"/libasound_module_pcm_upmix.so "$A"/libasound_module_pcm_vdownmix.so "$A"/libasound_module_pcm_oss.so \
+      "$A"/libasound_module_ctl_oss.so "$A"/libasound_module_ctl_arcam_av.so
+for f in 10-samplerate.conf 50-oss.conf 50-arcam-av-ctl.conf 60-upmix.conf 60-vdownmix.conf; do
+    rm -f "$TARGET_DIR/etc/alsa/conf.d/$f" "$TARGET_DIR/usr/share/alsa/alsa.conf.d/$f"
+done

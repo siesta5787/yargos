@@ -73,6 +73,13 @@ test with a big overlay (`qemu-img create -q -f qcow2 -b ~/yargos-build/output/i
 ~/yargos-build/qemu/overlay.qcow2 256G`, then `tools/qemu-run.sh` without `fresh`) and check that `/data/apps/yarg/current`
 exists and `/data` belongs to `player`.
 
+## Audio
+
+`alsa-plugins` is installed only for libsamplerate (`samplerate_best` is the system default via
+`etc/alsa/conf.d/50-yargos-rate.conf`); post-build.sh deletes its other plugins and its `10-samplerate.conf` because each
+shows up as an extra output device in YARG's list (BASS lists every ALSA PCM). Never fall back to ALSA's built-in
+converter: it is audibly harsh. Method for testing audio quality: tools/audio-test/README.
+
 ## Boot-disk drivers must be built in
 
 There is no initramfs, so the drivers for whatever the boot disk sits on (SATA/AHCI, NVMe, eMMC/SD, Intel VMD) are

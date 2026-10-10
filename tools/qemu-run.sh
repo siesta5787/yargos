@@ -21,6 +21,8 @@
 #   BOOT_NVME=1 IMG=/path/nvme.img WORK=<other dir> tools/qemu-run.sh fresh
 #                                  boot from that image attached as NVMe (tests an installed disk with no USB stick around)
 #   MAX_OUTPUTS=2 tools/qemu-run.sh   a second virtual screen (with HEADLESS=1) to try the mirroring
+#   USB_AUDIO=1 tools/qemu-run.sh   a USB sound card (48 kHz only, like many real ones) whose output is recorded to
+#                                  $WORK/usb-audio.wav, to look at what the system does to the sound
 #   HEADLESS=1 tools/qemu-run.sh   no window; serial log -> $WORK/serial.log, serial console socket -> $WORK/serial.sock (tools/qemu-sh.sh),
 #                                  monitor socket -> $WORK/monitor.sock
 #                                  (tools/qemu-shot.sh saves a screenshot of the guest)
@@ -59,6 +61,9 @@ fi
 SONGSARGS=()
 [ -n "${SONGS_IMG:-}" ] && SONGSARGS=(-drive "if=none,id=songs,file=$SONGS_IMG,format=raw" -device usb-storage,drive=songs)
 
+USBAUDIOARGS=()
+[ -n "${USB_AUDIO:-}" ] && USBAUDIOARGS=(-audiodev "wav,id=usbwav,path=$WORK/usb-audio.wav,out.frequency=48000,out.channels=2,out.format=s16" -device usb-audio,audiodev=usbwav)
+
 NVMEARGS=()
 if [ -n "${NVME_IMG:-}" ]; then
     [ -f "$NVME_IMG" ] || truncate -s "${NVME_SIZE:-12G}" "$NVME_IMG"
@@ -84,7 +89,8 @@ exec qemu-system-x86_64 \
     -drive if=pflash,format=raw,file="$WORK/OVMF_VARS.fd" \
     "${BOOTDISK[@]}" \
     -device qemu-xhci -device usb-kbd -device usb-mouse \
-    -device intel-hda -device hda-duplex \
+    -audiodev none,id=hda -device intel-hda -device hda-duplex,audiodev=hda \
+    "${USBAUDIOARGS[@]}" \
     -nic user,model=virtio-net-pci \
     "${DISPLAY_ARGS[@]}" \
     "${KERNEL_ARGS[@]}" \

@@ -273,6 +273,14 @@ Verified:
 - SYSTEM > Connected devices lists USB devices, MIDI ports, sound cards and controllers (QEMU: keyboard, mouse, sound
   card). The "Midi Through" loopback port is no longer created (modprobe `install snd-seq-dummy /bin/true`) so YARG's
   device list only shows real devices. A USB piano (Yamaha P-143) works; it shows as two ports, MIDI 1 is the keys.
+- Sound quality: when a program's sample rate is not one the sound card does (44.1 kHz music on a USB card that only
+  does 48 kHz), ALSA converts it, and the converter this image had (the built-in one, no ALSA plugins) turned a
+  clean 10 kHz test tone into one with a false tone only 23 dB below it: harsh, tinny. `alsa-plugins` + `libsamplerate`
+  are now in the image and `etc/alsa/conf.d/50-yargos-rate.conf` makes `samplerate_best` the default: the same test
+  now leaves nothing above -94 dB. Measured in the guest with ALSA writing to a file (`tools/audio-test/`); the QEMU
+  USB sound card only does 48 kHz so it is a faithful stand-in for the conversion case. Not yet heard on the real
+  piano: if the P-143 (or whatever the output is) accepts 44.1 kHz itself, no conversion happens and the harshness has
+  another cause (check what rates it offers: it is on the to-do list for the Connected devices screen).
 - Installing to a disk (QEMU, a blank 12 GB virtio disk beside the boot stick): the boot menu's install entry
   opens the Install screen, which lists only the other disk; the install ran to the end, and the installed
   disk by itself booted straight to the launcher (no menu) with YARG 0.15.0. Its partitions, boot entry,

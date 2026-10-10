@@ -1,0 +1,15 @@
+Measures what ALSA's sample-rate conversion does to a clean test tone (found: the built-in converter adds a false
+tone only 23 dB below a 10 kHz tone; libsamplerate's best converter leaves nothing above -94 dB).
+
+1. make tone44s.wav: 3 s, 44.1 kHz stereo 16-bit, 1 kHz + 10 kHz sines at 0.25 amplitude each (python wave module).
+2. python3 -m http.server 8001 (folder with the wav) and python3 upload.py (receives uploads on 8002) on this PC.
+3. In the guest (debug boot entry, root shell over the serial console), write /data/asound.conf with a PCM that converts
+   to 48 kHz and writes a file:
+     pcm.testout { type plug slave { pcm { type file slave.pcm "null" file "/tmp/out.raw" format "raw" }
+                                     rate 48000 format S16_LE channels 2 } }
+   then: curl -o /tmp/t.wav http://10.0.2.2:8001/tone44s.wav; aplay -D testout /tmp/t.wav;
+         curl -T /tmp/out.raw http://10.0.2.2:8002/result.raw
+   (the serial shell does history expansion: write ! as \041 in printf.)
+4. python3 -I analyze_raw.py /tmp/aud/up/result.raw
+Recording QEMU's own emulated USB sound card (USB_AUDIO=1 tools/qemu-run.sh) did not work out: its wav recorder
+resamples to 44.1 kHz itself and stayed empty with a fixed frequency.
