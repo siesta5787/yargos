@@ -1,5 +1,10 @@
 #!/bin/sh
 xset s off -dpms
+# Unity's built-in SDL sees no window manager and falls back to "legacy" fullscreen: it reparents its window
+# into an override-redirect container, which drops the X focus the session gave it. SDL then thinks the game
+# is in the background and swallows every key and click. The non-legacy path keeps the window top-level
+# (it is already screen-sized) so the focus sticks.
+export SDL_VIDEO_X11_LEGACY_FULLSCREEN=0
 exec /data/apps/yarg/current/YARG \
     -screen-fullscreen 1 \
     -offline \

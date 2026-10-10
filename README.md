@@ -197,6 +197,12 @@ Verified:
 - Under QEMU (software rendering, `HEADLESS=1 tools/qemu-run.sh fresh`): the image boots, first boot seeds
   YARG onto the data partition, rootless Xorg starts on the generic `modesetting` driver, and YARG reaches
   its main menu about 10 s after kernel start. Real AMD hardware (amdgpu, audio, input) is untested.
+- YARG keyboard and mouse input (QEMU, fresh data partition): the anti-piracy dialog is dismissed by a click
+  on I UNDERSTAND (pointer moved and clicked through XTEST) or by Down then Enter (Enter alone does nothing
+  until a button is selected), and the main menu then follows the arrow keys, Enter and Esc. The cause was
+  Unity's built-in SDL: with no window manager it uses "legacy" fullscreen, reparents its window into an
+  override-redirect container, loses the X focus that way and then drops all input; `run-yarg` sets
+  `SDL_VIDEO_X11_LEGACY_FULLSCREEN=0`. Not yet re-checked on the HP laptop.
 - Bridge: 19 unit tests pass. With a real ION Drum Rocker, pad, cymbal, d-pad and kick1 flags
   decode correctly in the virtual kit's reports. On a desktop with `libhidapi-hidraw0` installed,
   YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
@@ -207,8 +213,6 @@ Not verified:
 - Dashboard navigation with real instruments (the button mapping assumes the kernel's standard HID
   gamepad mapping); the Wi-Fi password flow and Bluetooth pairing on real adapters; the dashboard's pad mapping on a
   real guitar (`tools/dev-test.sh pads` shows it).
-- YARG itself did not react to a keyboard or mouse in QEMU on a fresh data partition (it renders fine and
-  logs HID errors, now fixed); instruments are the supported input.
 - Playing a song on the virtual drums: whether each pad, cymbal and the kick land on the right lane
   in gameplay, and kick2.
 - Drum velocity for yellow and green (red looks right; the Ion may not encode velocity as documented

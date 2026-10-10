@@ -9,7 +9,6 @@
 #   CMDLINE="systemd.setenv=YARGOS_YARG_CMD=/bin/true" tools/qemu-run.sh
 #                                  boot the kernel directly (skipping the boot menu) with these extra kernel
 #                                  arguments; /bin/true stands in for YARG, so the dashboard shows at once
-#   POINTER=usb-tablet tools/qemu-run.sh   absolute pointer, so a scripted click lands where you aim (monitor: mouse_move X Y, 0..32767)
 #   HEADLESS=1 tools/qemu-run.sh   no window; serial log -> $WORK/serial.log, serial console socket -> $WORK/serial.sock (tools/qemu-sh.sh),
 #                                  monitor socket -> $WORK/monitor.sock
 #                                  (tools/qemu-shot.sh saves a screenshot of the guest)
@@ -55,7 +54,7 @@ exec qemu-system-x86_64 \
     -drive if=pflash,format=raw,readonly=on,file="$CODE" \
     -drive if=pflash,format=raw,file="$WORK/OVMF_VARS.fd" \
     -drive file="$WORK/overlay.qcow2",format=qcow2,if=virtio \
-    -device qemu-xhci -device usb-kbd -device "${POINTER:-usb-mouse}" \
+    -device qemu-xhci -device usb-kbd -device usb-mouse \
     -device intel-hda -device hda-duplex \
     -nic user,model=virtio-net-pci \
     "${DISPLAY_ARGS[@]}" \
