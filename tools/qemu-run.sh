@@ -13,6 +13,9 @@
 #                                  attach a second (blank, created on first use, DISK2_SIZE=12G) disk to try the installer on
 #   SONGS_IMG=/path/songs.img tools/qemu-run.sh
 #                                  attach that raw image as a USB drive (label it YARGSONGS to test the song drive)
+#   DISK_OPTS=throttling.bps-total=15000000 tools/qemu-run.sh
+#                                  extra options for the boot disk (here: a slow, USB-stick-like 15 MB/s). To try a big
+#                                  stick: qemu-img create -f qcow2 -b <image> -F raw $WORK/overlay.qcow2 126G first.
 #   HEADLESS=1 tools/qemu-run.sh   no window; serial log -> $WORK/serial.log, serial console socket -> $WORK/serial.sock (tools/qemu-sh.sh),
 #                                  monitor socket -> $WORK/monitor.sock
 #                                  (tools/qemu-shot.sh saves a screenshot of the guest)
@@ -66,7 +69,7 @@ exec qemu-system-x86_64 \
     -machine q35,accel=$ACCEL -cpu max -smp 4 -m 4G \
     -drive if=pflash,format=raw,readonly=on,file="$CODE" \
     -drive if=pflash,format=raw,file="$WORK/OVMF_VARS.fd" \
-    -drive file="$WORK/overlay.qcow2",format=qcow2,if=virtio \
+    -drive file="$WORK/overlay.qcow2",format=qcow2,if=virtio${DISK_OPTS:+,$DISK_OPTS} \
     -device qemu-xhci -device usb-kbd -device usb-mouse \
     -device intel-hda -device hda-duplex \
     -nic user,model=virtio-net-pci \

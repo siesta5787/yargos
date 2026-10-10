@@ -10,6 +10,18 @@ APPS=$DATA/apps/yarg
 SEED=/usr/share/yarg-seed
 SEED_VERSION=$(cat "$SEED/VERSION")
 
+# Wait for the data partition to be mounted (it comes a moment after this service may start); ask for it if it is late.
+n=0
+while ! mountpoint -q "$DATA" && [ $n -lt 240 ]; do
+    [ $n -eq 20 ] && mount "$DATA" 2>/dev/null
+    sleep 0.5
+    n=$((n + 1))
+done
+if ! mountpoint -q "$DATA"; then
+    echo "yargos-firstboot: $DATA was never mounted; YARG cannot be set up" >&2
+    exit 1
+fi
+
 mkdir -p "$APPS" "$DATA/yarg" "$DATA/home/player" "$DATA/bluetooth"
 
 if [ ! -f "$DATA/yargos.conf" ]; then

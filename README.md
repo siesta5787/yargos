@@ -247,6 +247,10 @@ Verified:
   longer errors. A real USB microphone has not been tried since. One `NullReferenceException` in
   `BassMicDevice.ProcessRecordData` still appears in YARG's log at startup in QEMU (never on the dev PC);
   nothing visibly breaks.
+- First boot on a big drive (QEMU, a 256 GB overlay of the image): earlier images never ran the first-boot service
+  there (so YARG was "not installed" and the Sound screen got "Permission denied"); fixed, and with the fix
+  `/data/apps/yarg/current` exists, `/data` belongs to `player` and YARG starts. Also reproduced and fixed only
+  in QEMU; the real laptop has not run this image yet.
 - Installing to a disk (QEMU, a blank 12 GB virtio disk beside the boot stick): the boot menu's install entry
   opens the Install screen, which lists only the other disk; the install ran to the end, and the installed
   disk by itself booted straight to the launcher (no menu) with YARG 0.15.0. Its partitions, boot entry,

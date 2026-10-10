@@ -59,6 +59,16 @@ target the post-build step stops on purpose: delete them and run `tools/br.sh li
 Changing `BR2_TARGET_ROOTFS_EXT2_SIZE` needs `tools/br.sh yargos_x86_64_defconfig`, then deleting
 `images/rootfs.ext2`, `rootfs.ext4` and `yargos.img`, then `tools/br.sh`; keep it well above `du -sm output/target`.
 
+## First boot on a drive bigger than the image
+
+Every real stick is bigger than the image, so growdata always rewrites the partition table at boot; the data device
+then briefly disappears and systemd silently drops any unit that `RequiresMountsFor=/data` (it never started: YARG
+"not installed", exit code 127, Sound "Permission denied"). `yargos-firstboot` therefore has no mount requirement and
+its script waits for `/data` itself; /data is `nofail` and not fsck'd. QEMU's default 2.6 GB disk hides all of this:
+test with a big overlay (`qemu-img create -q -f qcow2 -b ~/yargos-build/output/images/yargos.img -F raw
+~/yargos-build/qemu/overlay.qcow2 256G`, then `tools/qemu-run.sh` without `fresh`) and check that `/data/apps/yarg/current`
+exists and `/data` belongs to `player`.
+
 ## Disk identity and the installer
 
 Never find a root or data partition by label: the flashed image uses fixed partition GUIDs (`...0001` system,
