@@ -228,7 +228,9 @@ Verified:
 - Playing (reported by the owner, HP laptop, songs from the NTFS song drive on a USB flash drive): several full songs
   with drums, guitar and vocals all at the same time. A USB piano (Yamaha P-143) connects and its speaker works; a
   song on piano has not been played yet. The newest image's sound-quality fix has not been heard yet. The HDMI
-  mirroring / lid behaviour was tried by the owner (result not recorded here yet).
+  mirroring and lid-close work on the laptop with an HDMI TV; the TV shows torn, corrupted pictures for a few seconds
+  after a change (lid shut) and then clears. Cause: every output was switched off and on again; the newest image only
+  touches outputs whose mode changes (not yet tried on the TV).
 - Bridge: 19 unit tests pass. With a real ION Drum Rocker, pad, cymbal, d-pad and kick1 flags
   decode correctly in the virtual kit's reports. On a desktop with `libhidapi-hidraw0` installed,
   YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
@@ -273,7 +275,8 @@ Verified:
   external screen connected the laptop panel is turned off (`src/home/src/screens.rs`, polled
   every 2 s, lid read from /proc/acpi/button/lid). A lone screen uses its preferred mode. The planner has unit tests;
   in QEMU a forced resolution change is restored by the watcher and the launcher resizes. A real second screen and
-  the lid have not been tried (QEMU has one connected output). `yargos-home screens` prints what it sees and plans.
+  the lid work on the laptop (QEMU has one connected output). Outputs that already show the right mode are left
+  alone: re-programming an HDMI TV's link makes it glitch for seconds. `yargos-home screens` prints what it sees and plans.
 - SYSTEM > Connected devices lists USB devices, MIDI ports, sound cards and controllers (QEMU: keyboard, mouse, sound
   card). The "Midi Through" loopback port is no longer created (modprobe `install snd-seq-dummy /bin/true`) so YARG's
   device list only shows real devices. A USB piano (Yamaha P-143) works; it shows as two ports, MIDI 1 is the keys.

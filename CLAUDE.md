@@ -53,6 +53,10 @@ The song drive mounts through `/etc/fstab` (`LABEL=YARGSONGS`, automount) and NT
 plus `CONFIG_FUSE_FS`; the kernel's ntfs3 refuses some Windows-made drives. To click inside YARG under QEMU,
 build a static x11rb program that calls XTEST (`xtest_fake_input`) and fetch it into the guest with curl.
 
+`screens.rs` `apply` must never switch off and re-enable an output that already shows the planned mode (an HDMI TV
+loses sync and shows torn, corrupted pictures for seconds); it only disables what changes, and resizes the screen only
+when the size differs.
+
 ## Size
 
 `board/yargos/post-build.sh` removes the Clang/SPIR-V leftovers of Mesa's build. Do NOT compress firmware to `.xz` or

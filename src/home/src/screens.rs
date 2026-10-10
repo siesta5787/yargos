@@ -11,7 +11,7 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::{self, ConnectionExt as _};
-use x11rb::protocol::xproto::Window;
+use x11rb::protocol::xproto::{ConnectionExt as _, Window};
 use x11rb::rust_connection::RustConnection;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -166,12 +166,22 @@ fn apply(conn: &RustConnection, root: Window, outs: &[Out], cfg_ts: u32, plan: &
         used.push(crtc);
         assign.push((crtc, oid, mode));
     }
-    // Everything off first (the screen cannot shrink under an active CRTC), then the new size, then the screens.
+    // An output that already shows exactly this must not be touched: switching it off and on again makes an HDMI
+    // TV lose the signal and re-sync, which shows as torn, corrupted pictures for a few seconds.
+    let geo = conn.get_geometry(root).map_err(|e| e.to_string())?.reply().map_err(|e| e.to_string())?;
+    let same_size = (geo.width, geo.height) == (plan.w, plan.h);
+    let keep = |crtc: u32, out: u32, mode: u32| same_size && cur.iter().any(|c| c.0 == crtc && c.1 == mode && c.2 == 0 && c.3 == 0 && c.4 == [out]);
+    let todo: Vec<(u32, u32, u32)> = assign.iter().copied().filter(|&(c, o, m)| !keep(c, o, m)).collect();
+    // Everything else off first (the screen cannot shrink under an active CRTC), then the new size, then the screens.
     for c in &res.crtcs {
-        let _ = conn.randr_set_crtc_config(*c, x11rb::CURRENT_TIME, cfg_ts, 0, 0, 0, randr::Rotation::ROTATE0, &[]);
+        if !assign.iter().any(|&(k, o, m)| k == *c && keep(k, o, m)) {
+            let _ = conn.randr_set_crtc_config(*c, x11rb::CURRENT_TIME, cfg_ts, 0, 0, 0, randr::Rotation::ROTATE0, &[]);
+        }
     }
-    conn.randr_set_screen_size(root, plan.w, plan.h, plan.w as u32 * 254 / 960, plan.h as u32 * 254 / 960).map_err(|e| e.to_string())?;
-    for (crtc, out, mode) in &assign {
+    if !same_size {
+        conn.randr_set_screen_size(root, plan.w, plan.h, plan.w as u32 * 254 / 960, plan.h as u32 * 254 / 960).map_err(|e| e.to_string())?;
+    }
+    for (crtc, out, mode) in &todo {
         let r = conn
             .randr_set_crtc_config(*crtc, x11rb::CURRENT_TIME, cfg_ts, 0, 0, *mode, randr::Rotation::ROTATE0, &[*out])
             .map_err(|e| e.to_string())?
