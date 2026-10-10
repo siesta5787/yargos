@@ -225,6 +225,10 @@ Verified:
 - Latest image on the same laptop (reported by the owner): Wi-Fi, sound, YARG starting, the NTFS song drive, the Wii
   guitar and the launcher's controls all work. Not yet tried on real hardware: the installer, the microphone
   picking up a voice, drums in actual gameplay, and an over-the-air YARG update.
+- Playing (reported by the owner, HP laptop, songs from the NTFS song drive on a USB flash drive): several full songs
+  with drums, guitar and vocals all at the same time. A USB piano (Yamaha P-143) connects and its speaker works; a
+  song on piano has not been played yet. The newest image's sound-quality fix has not been heard yet. The HDMI
+  mirroring / lid behaviour was tried by the owner (result not recorded here yet).
 - Bridge: 19 unit tests pass. With a real ION Drum Rocker, pad, cymbal, d-pad and kick1 flags
   decode correctly in the virtual kit's reports. On a desktop with `libhidapi-hidraw0` installed,
   YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
