@@ -5,6 +5,22 @@ xset s off -dpms
 # is in the background and swallows every key and click. The non-legacy path keeps the window top-level
 # (it is already screen-sized) so the focus sticks.
 export SDL_VIDEO_X11_LEGACY_FULLSCREEN=0
+
+# The song drive (any drive labelled YARGSONGS) mounts at /media/songs; make sure YARG scans it, without anyone
+# having to add the folder by hand. Existing folders are kept; a settings file YARG cannot read is left alone.
+SETTINGS=/data/yarg/settings.json
+if [ -f "$SETTINGS" ]; then
+    if jq -e . "$SETTINGS" >/dev/null 2>&1; then
+        jq 'if ((.SongFolders // []) | index("/media/songs")) then . else .SongFolders = ((.SongFolders // []) + ["/media/songs"]) end' \
+            "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
+    fi
+else
+    printf '{"SongFolders":["/media/songs"]}\n' > "$SETTINGS"
+fi
+# YARG's audio library (BASS) loads its add-ons (Opus decoding, the effects used for the microphone) by bare
+# name, which only works if the plugins folder is on the library path. Without it every .opus sound effect,
+# every Opus song and the microphone silently fail ("Failed to load ...: OK!", "Failed to initialize microphone").
+export LD_LIBRARY_PATH=/data/apps/yarg/current/YARG_Data/Plugins${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 exec /data/apps/yarg/current/YARG \
     -screen-fullscreen 1 \
     -offline \

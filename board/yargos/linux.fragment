@@ -101,6 +101,10 @@ CONFIG_RMI4_F30=y
 # hid-wiimote is intentionally absent: yargos-bridge needs the raw reports.
 # CONFIG_HID_WIIMOTE is not set
 
+# FUSE: ntfs-3g mounts Windows (NTFS) song drives; the kernel's own ntfs3 refuses drives Windows left
+# slightly untidy, ntfs-3g reads them. exFAT, FAT and ext4 are built in.
+CONFIG_FUSE_FS=y
+
 # USB
 CONFIG_USB=y
 CONFIG_USB_XHCI_HCD=y

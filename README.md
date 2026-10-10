@@ -232,12 +232,25 @@ Verified:
   boots, YARG reaches its menu, and the kernel loads an xz-compressed `regulatory.db` (a corrupt copy fails
   with the expected error, so the check can tell). Real firmware (amdgpu, Wi-Fi, Bluetooth) loading from `.xz`
   is not yet confirmed on hardware.
+- Song drive: an NTFS drive labelled YARGSONGS (QEMU, as a USB drive) mounts read-only at `/media/songs` through
+  ntfs-3g and its files can be read; `run-yarg` makes sure YARG's `settings.json` lists `/media/songs`
+  (existing folders are kept). The Linux kernel's own NTFS driver refused a real Windows-formatted drive
+  ("Failed to load $BadClus", "volume is dirty"); ntfs-3g mounted that same drive read-only on the dev PC.
+  The kernel now has FUSE and `mount.ntfs` points at ntfs-3g. exFAT, FAT and ext4 are built into the kernel.
+- YARG's audio add-ons: with no `LD_LIBRARY_PATH`, YARG could not load Opus sound effects or songs (23 sound
+  effects, 90 "Failed to load ... .opus: OK!" errors) and failed to initialise any microphone ("Failed to
+  initialize microphone", "Failed to create effects handle for Freeverb"). `run-yarg` now puts YARG's Plugins
+  folder on the library path: 0 failures, and connecting a (simulated QEMU) sound card as a microphone no
+  longer errors. A real USB microphone has not been tried since. One `NullReferenceException` in
+  `BassMicDevice.ProcessRecordData` still appears in YARG's log at startup in QEMU (never on the dev PC);
+  nothing visibly breaks.
 - Installing to a disk (QEMU, a blank 12 GB virtio disk beside the boot stick): the boot menu's install entry
   opens the Install screen, which lists only the other disk; the install ran to the end, and the installed
   disk by itself booted straight to the launcher (no menu) with YARG 0.15.0. Its partitions, boot entry,
   `fstab`, data copy and blank machine id were checked. An earlier version failed on a leftover install with
   the same `YARGDATA` label because the stick looked its data up by label; both now use GUIDs.
 Not verified:
+- Pitch detection from a real USB microphone, and playing songs stored as Opus or from a real song drive.
 - The installer on real hardware: a real internal SATA/NVMe disk, firmware that ignores the fallback boot
   file or has many stale entries, Secure Boot machines, and disks with other systems on them (it erases all
   of the chosen disk).

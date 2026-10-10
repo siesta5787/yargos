@@ -11,6 +11,8 @@
 #                                  arguments; /bin/true stands in for YARG, so the dashboard shows at once
 #   DISK2=~/yargos-build/qemu/target.img tools/qemu-run.sh
 #                                  attach a second (blank, created on first use, DISK2_SIZE=12G) disk to try the installer on
+#   SONGS_IMG=/path/songs.img tools/qemu-run.sh
+#                                  attach that raw image as a USB drive (label it YARGSONGS to test the song drive)
 #   HEADLESS=1 tools/qemu-run.sh   no window; serial log -> $WORK/serial.log, serial console socket -> $WORK/serial.sock (tools/qemu-sh.sh),
 #                                  monitor socket -> $WORK/monitor.sock
 #                                  (tools/qemu-shot.sh saves a screenshot of the guest)
@@ -46,6 +48,9 @@ else
     DISPLAY_ARGS=(-device virtio-vga -display gtk -serial mon:stdio)
 fi
 
+SONGSARGS=()
+[ -n "${SONGS_IMG:-}" ] && SONGSARGS=(-drive "if=none,id=songs,file=$SONGS_IMG,format=raw" -device usb-storage,drive=songs)
+
 DISK2ARGS=()
 if [ -n "${DISK2:-}" ]; then
     [ -f "$DISK2" ] || truncate -s "${DISK2_SIZE:-12G}" "$DISK2"
@@ -68,4 +73,5 @@ exec qemu-system-x86_64 \
     "${DISPLAY_ARGS[@]}" \
     "${KERNEL_ARGS[@]}" \
     "${DISK2ARGS[@]}" \
+    "${SONGSARGS[@]}" \
     "${USBARGS[@]}"

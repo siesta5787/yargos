@@ -40,6 +40,15 @@ package vendors the crates in a pre-build hook (needs network once). To test on 
 `CMDLINE="systemd.setenv=YARGOS_YARG_CMD=/bin/true" HEADLESS=1 tools/qemu-run.sh fresh` shows the dashboard at
 once; `tools/qemu-key.sh`, `qemu-shot.sh` and `qemu-sh.sh` drive and inspect the guest.
 
+## YARG's runtime
+
+`usr/lib/yargos/run-yarg` must keep `LD_LIBRARY_PATH` pointing at `YARG_Data/Plugins`: BASS loads its add-ons (Opus,
+FX) by bare name, and without it Opus audio and the microphone fail with misleading messages ("...: OK!").
+The overlay must not contain `usr/sbin` (Buildroot checks for a merged /usr: put helpers in `usr/bin`).
+The song drive mounts through `/etc/fstab` (`LABEL=YARGSONGS`, automount) and NTFS needs `mount.ntfs` -> ntfs-3g
+plus `CONFIG_FUSE_FS`; the kernel's ntfs3 refuses some Windows-made drives. To click inside YARG under QEMU,
+build a static x11rb program that calls XTEST (`xtest_fake_input`) and fetch it into the guest with curl.
+
 ## Size
 
 `board/yargos/post-build.sh` trims the target: it removes the Clang/SPIR-V leftovers and compresses firmware with

@@ -152,7 +152,7 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
         }
         Screen::Songs => ("SONGS", {
             let mut v = vec![m.songs.detail.clone()];
-            v.push("Name your song drive YARGSONGS (ext4, exFAT, NTFS or FAT) and plug it in. In YARG, add /media/songs as a song folder once.".into());
+            v.push("Name your song drive YARGSONGS (ext4, exFAT, NTFS or FAT) and plug it in. YARG scans it each time it starts.".into());
             v
         }),
         Screen::System => ("SYSTEM", m.sysinfo.clone()),
