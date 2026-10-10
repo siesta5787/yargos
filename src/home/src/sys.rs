@@ -380,7 +380,11 @@ pub fn bt_list() -> Res {
     Res::Bt { present: true, devs: out }
 }
 
+/// One Bluetooth job at a time: the automatic Wiimote connect and the Bluetooth screen must not fight over the adapter.
+static BT_BUSY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn bt_scan() -> Res {
+    let _busy = BT_BUSY.lock().unwrap_or_else(|e| e.into_inner());
     if bt_present() {
         let _ = btctl(&["power", "on"], 6);
         let _ = btctl(&["--timeout", "12", "scan", "on"], 20);
@@ -407,8 +411,11 @@ fn wiimote_hidraws() -> Vec<(String, String)> {
         .collect()
 }
 
+/// The bridge runs AND its guitar answered (the bridge drops /run/yargos-bridge/ready-<node> once it streams): a bridge
+/// that is merely up while the Wiimote never replied is not a working guitar.
 fn bridge_active(node: &str) -> bool {
-    Command::new("systemctl").args(["is-active", "--quiet", &format!("yargos-bridge-wii@{node}.service")]).status().map(|s| s.success()).unwrap_or(false)
+    std::path::Path::new(&format!("/run/yargos-bridge/ready-{node}")).exists()
+        && Command::new("systemctl").args(["is-active", "--quiet", &format!("yargos-bridge-wii@{node}.service")]).status().map(|s| s.success()).unwrap_or(false)
 }
 
 /// Is the guitar bridge running for the Wiimote with this address? (If the kernel does not say which Wiimote a
@@ -433,28 +440,44 @@ pub fn wiicheck(mac: Option<&str>) -> i32 {
     0
 }
 
-fn wiimote_hid_present() -> bool {
-    std::fs::read_dir("/sys/bus/hid/devices")
-        .map(|d| d.filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().starts_with("0005:057E:")))
-        .unwrap_or(false)
+/// Has the Wiimote with this address shown up as a HID device? `before` is how many Wiimote HID devices there were
+/// when we started: if the kernel does not name the Wiimote, one more than that counts. (Any Wiimote at all is not
+/// enough: with one guitar already connected the second would be declared connected at once.)
+fn wiimote_hid_present(mac: &str, before: usize) -> bool {
+    let mac = mac.to_lowercase();
+    let nodes = wiimote_hidraws();
+    nodes.iter().any(|(_, uniq)| *uniq == mac) || (nodes.iter().any(|(_, uniq)| uniq.is_empty()) && nodes.len() > before)
 }
 
 pub fn bt_connect(d: &BtDevice) -> Result<String, String> {
+    let _busy = BT_BUSY.lock().unwrap_or_else(|e| e.into_inner());
     let _ = btctl(&["power", "on"], 6);
     if d.is_wiimote() {
+        return wiimote_connect(d);
+    }
+    let _ = btctl(&["pair", &d.mac], 25);
+    let _ = btctl(&["trust", &d.mac], 6);
+    btctl(&["connect", &d.mac], 20)
+        .map(|_| format!("{} connected", d.name))
+        .map_err(|_| format!("Could not connect {}. Put it in pairing mode and try again", d.name))
+}
+
+fn wiimote_connect(d: &BtDevice) -> Result<String, String> {
+    {
         // A Wiimote in 1+2 mode is connectable for a short time and never bonds: trust, then keep
         // trying to connect until its HID device appears.
         let _ = btctl(&["trust", &d.mac], 6);
+        let before = wiimote_hidraws().len();
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(30) {
             let _ = btctl(&["connect", &d.mac], 8);
             std::thread::sleep(Duration::from_secs(1));
-            if wiimote_hid_present() {
+            if wiimote_hid_present(&d.mac, before) {
                 break;
             }
         }
-        if !wiimote_hid_present() {
-            return Err("The Wiimote did not connect. Hold 1+2 on it until its lights flash, then choose it again.".into());
+        if !wiimote_hid_present(&d.mac, before) {
+            return Err("The Wiimote did not connect. Hold 1+2 on it until its lights flash: it connects by itself.".into());
         }
         // The HID device appearing is not enough: the bridge that turns it into a guitar has to be running, and
         // to stay up. Bluetooth alone happily reports "connected" for a Wiimote that is not really usable.
@@ -471,13 +494,64 @@ pub fn bt_connect(d: &BtDevice) -> Result<String, String> {
             std::thread::sleep(Duration::from_millis(500));
         }
         let _ = btctl(&["disconnect", &d.mac], 6);
-        return Err("The Wiimote connected, but it is NOT ready: the guitar bridge did not start. Hold 1+2 on the Wiimote until its lights flash and keep holding while it connects, then choose it again.".into());
+        Err("The Wiimote connected, but it is NOT ready: the guitar did not answer. Press 1+2 on it again: it connects by itself.".into())
     }
-    let _ = btctl(&["pair", &d.mac], 25);
-    let _ = btctl(&["trust", &d.mac], 6);
-    btctl(&["connect", &d.mac], 20)
-        .map(|_| format!("{} connected", d.name))
-        .map_err(|_| format!("Could not connect {}. Put it in pairing mode and try again", d.name))
+}
+
+/// What `bluetoothctl scan on` printed -> the addresses of the Nintendo controllers that answered. `known` is
+/// (address, name) of the devices BlueZ already has: a repeat sighting prints only the address.
+pub fn parse_scan_wiimotes(scan: &str, known: &[(String, String)]) -> Vec<String> {
+    let mut names: std::collections::HashMap<String, String> = known.iter().map(|(m, n)| (m.to_uppercase(), n.clone())).collect();
+    let mut seen: Vec<String> = vec![];
+    for line in strip_ansi(scan).lines() {
+        let Some(at) = line.find("[NEW]").or_else(|| line.find("[CHG]")) else { continue };
+        let line = &line[at..];
+        let new = line.starts_with("[NEW]");
+        let Some(rest) = line.split_once("Device ").map(|x| x.1) else { continue };
+        let (mac, tail) = rest.split_once(' ').unwrap_or((rest, ""));
+        if !mac.contains(':') {
+            continue;
+        }
+        let mac = mac.to_uppercase();
+        let name = tail.strip_prefix("Name: ").or_else(|| tail.strip_prefix("Alias: ")).or(if new { Some(tail) } else { None });
+        if let Some(n) = name {
+            names.insert(mac.clone(), n.trim().to_string());
+        }
+        if !seen.contains(&mac) {
+            seen.push(mac);
+        }
+    }
+    seen.into_iter().filter(|m| names.get(m).is_some_and(|n| n.starts_with("Nintendo RVL-CNT"))).collect()
+}
+
+pub enum WiiAuto {
+    Nothing,
+    Connected(String),
+    Failed(String),
+}
+
+/// One round of the automatic Wiimote connect: listen for a few seconds, and connect any Nintendo controller that is
+/// calling (1+2 held) and is not connected yet. Skips the round if the Bluetooth screen is using the adapter.
+pub fn wii_auto_step() -> WiiAuto {
+    let Ok(_busy) = BT_BUSY.try_lock() else { return WiiAuto::Nothing };
+    let _ = btctl(&["power", "on"], 6);
+    let known = btctl(&["devices"], 6).map(|o| parse_bt_devices(&o)).unwrap_or_default();
+    let scan = match btctl(&["--timeout", "5", "scan", "on"], 12) {
+        Ok(t) | Err(t) => t,
+    };
+    for mac in parse_scan_wiimotes(&scan, &known) {
+        let connected = btctl(&["info", &mac], 6).map(|o| parse_bt_info(&o).1).unwrap_or(false);
+        if connected {
+            continue;
+        }
+        let name = known.iter().find(|(m, _)| m.eq_ignore_ascii_case(&mac)).map(|(_, n)| n.clone()).unwrap_or_else(|| "Nintendo RVL-CNT-01".into());
+        let d = BtDevice { mac, name, paired: false, connected: false, ready: false };
+        return match wiimote_connect(&d) {
+            Ok(m) => WiiAuto::Connected(m),
+            Err(e) => WiiAuto::Failed(e),
+        };
+    }
+    WiiAuto::Nothing
 }
 
 pub fn bt_forget(mac: &str) -> Result<String, String> {
@@ -736,6 +810,60 @@ pub fn parse_pads(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// `/proc/bus/input/devices` -> names of keyboards that are not USB ones (laptop keyboard, Bluetooth keyboards; USB
+/// ones are listed with their USB device). A real keyboard handles key auto-repeat (EV bit 20); power buttons do not.
+pub fn parse_keyboards(text: &str) -> Vec<String> {
+    text.split("\n\n")
+        .filter(|b| {
+            let has = |p: &str| b.lines().any(|l| l.starts_with(p));
+            let usb = b.lines().any(|l| l.starts_with("I:") && l.contains("Bus=0003"));
+            let kbd = b.lines().any(|l| l.starts_with("H:") && l.split_whitespace().any(|w| w == "kbd"));
+            let rep = b.lines().find_map(|l| l.strip_prefix("B: EV=")).and_then(|h| u64::from_str_radix(h.trim(), 16).ok()).is_some_and(|ev| ev & (1 << 20) != 0);
+            has("N:") && kbd && rep && !usb
+        })
+        .filter_map(|b| b.lines().find(|l| l.starts_with("N:")).and_then(|l| l.split('"').nth(1)).map(str::to_string))
+        .collect()
+}
+
+/// What a USB device says it is, from its HID interfaces: boot protocol 1 = keyboard, 2 = mouse. The second value is
+/// whether the kernel made an input device for it (if not, the device is there but nothing it sends reaches YARG).
+fn usb_input_kind(dev: &std::path::Path) -> Option<(&'static str, bool)> {
+    let name = dev.file_name()?.to_string_lossy().to_string();
+    let mut ifaces: Vec<(&'static str, bool)> = vec![];
+    for e in std::fs::read_dir(dev).ok()?.filter_map(|e| e.ok()) {
+        let n = e.file_name().to_string_lossy().to_string();
+        if !n.starts_with(&format!("{name}:")) || sysfs(&e.path(), "bInterfaceClass") != "03" {
+            continue;
+        }
+        let kind = match sysfs(&e.path(), "bInterfaceProtocol").as_str() {
+            "01" => "KEYBOARD",
+            "02" => "MOUSE",
+            _ => continue,
+        };
+        // interface -> HID device (0003:VVVV:PPPP.000N) -> input/inputN
+        let has_input = std::fs::read_dir(e.path()).map(|d| d.filter_map(|x| x.ok()).any(|h| h.path().join("input").is_dir())).unwrap_or(false);
+        ifaces.push((kind, has_input));
+    }
+    // A receiver with a keyboard and a mouse interface is a keyboard.
+    let kind = if ifaces.iter().any(|i| i.0 == "KEYBOARD") { "KEYBOARD" } else { ifaces.first()?.0 };
+    Some((kind, ifaces.iter().any(|i| i.0 == kind && i.1)))
+}
+
+/// Did the kernel turn this USB device into something that has its own row (a sound card, a game pad, a keyboard)?
+/// Those rows say it better than the raw USB one, which is only shown for a device that became nothing.
+fn usb_has_function(dev: &std::path::Path) -> bool {
+    let name = dev.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let Ok(dir) = std::fs::read_dir(dev) else { return false };
+    dir.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().starts_with(&format!("{name}:"))).any(|e| {
+        let driver = std::fs::read_link(e.path().join("driver")).ok().and_then(|d| d.file_name().map(|n| n.to_string_lossy().to_string())).unwrap_or_default();
+        match driver.as_str() {
+            "snd-usb-audio" | "xpad" => true,
+            "usbhid" => std::fs::read_dir(e.path()).map(|d| d.filter_map(|x| x.ok()).any(|h| h.path().join("input").is_dir())).unwrap_or(false),
+            _ => false,
+        }
+    })
+}
+
 fn sysfs(dir: &std::path::Path, f: &str) -> String {
     std::fs::read_to_string(dir.join(f)).map(|s| s.trim().to_string()).unwrap_or_default()
 }
@@ -750,12 +878,19 @@ pub fn devices_list() -> Vec<DeviceEntry> {
                 !n.contains(':') && !n.starts_with("usb") // devices only: not interfaces, not root hubs
             })
             .filter(|e| sysfs(&e.path(), "bDeviceClass") != "09") // not hubs
-            .map(|e| {
+            .flat_map(|e| {
                 let p = e.path();
                 let (vid, pid) = (sysfs(&p, "idVendor"), sysfs(&p, "idProduct"));
                 let (prod, man) = (sysfs(&p, "product"), sysfs(&p, "manufacturer"));
                 let name = if !prod.is_empty() { prod } else if !man.is_empty() { man.clone() } else { format!("USB device {vid}:{pid}") };
-                DeviceEntry { kind: "USB", name, detail: format!("{vid}:{pid}") }
+                let id = format!("{vid}:{pid}");
+                match usb_input_kind(&p) {
+                    Some((kind, true)) => vec![DeviceEntry { kind, name, detail: id }],
+                    // Recognised as a keyboard or mouse but the kernel made no input device: say so, and keep the USB id.
+                    Some((kind, false)) => vec![DeviceEntry { kind, name: name.clone(), detail: "NO INPUT".into() }, DeviceEntry { kind: "USB", name, detail: id }],
+                    None if usb_has_function(&p) => vec![],
+                    None => vec![DeviceEntry { kind: "USB", name, detail: id }],
+                }
             })
             .collect();
         usb.sort_by(|a, b| a.name.cmp(&b.name));
@@ -767,8 +902,14 @@ pub fn devices_list() -> Vec<DeviceEntry> {
     for name in parse_cards(&std::fs::read_to_string("/proc/asound/cards").unwrap_or_default()) {
         v.push(DeviceEntry { kind: "SOUND", name, detail: String::new() });
     }
-    for name in parse_pads(&std::fs::read_to_string("/proc/bus/input/devices").unwrap_or_default()) {
-        v.push(DeviceEntry { kind: "PAD", name, detail: String::new() });
+    let input = std::fs::read_to_string("/proc/bus/input/devices").unwrap_or_default();
+    for name in parse_keyboards(&input) {
+        v.push(DeviceEntry { kind: "KEYBOARD", name, detail: String::new() });
+    }
+    for name in parse_pads(&input) {
+        // The bridges present Wii guitars and Xbox drums as PlayStation instruments: that is the one YARG lists.
+        let detail = if name.contains("PlayStation") { "what YARG sees".into() } else { String::new() };
+        v.push(DeviceEntry { kind: "PAD", name, detail });
     }
     v
 }
@@ -873,6 +1014,28 @@ mod tests {
         assert_eq!(parse_ip_addr(out), vec![("enp0s1".into(), "10.0.2.15".into()), ("wlan0".into(), "192.168.1.42".into())]);
         let show = "                           Station: wlan0\n  State                connected\n  Connected network    Living Room\n  IPv4 address         192.168.1.42\n";
         assert_eq!(parse_connected_ssid(show).as_deref(), Some("Living Room"));
+    }
+
+    #[test]
+    fn keyboards_are_found_by_key_repeat_and_usb_ones_are_left_to_the_usb_list() {
+        let input = "I: Bus=0011 Vendor=0001 Product=0001 Version=ab41\nN: Name=\"AT Translated Set 2 keyboard\"\nH: Handlers=sysrq kbd event1 leds\nB: EV=120013\n\n\
+I: Bus=0019 Vendor=0000 Product=0001 Version=0000\nN: Name=\"Power Button\"\nH: Handlers=kbd event0\nB: EV=3\n\n\
+I: Bus=0003 Vendor=1a81 Product=1004 Version=0110\nN: Name=\"Rii Keyboard\"\nH: Handlers=sysrq kbd event5 leds\nB: EV=120013\n\n\
+I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handlers=sysrq kbd event6 leds\nB: EV=120013\n";
+        assert_eq!(parse_keyboards(input), vec!["AT Translated Set 2 keyboard", "BT Keys"]);
+    }
+
+    #[test]
+    fn scan_output_gives_the_wiimotes_that_answered() {
+        let known = vec![("00:1E:35:AA:00:01".to_string(), "Nintendo RVL-CNT-01".to_string()), ("11:22:33:44:55:66".to_string(), "Some Speaker".to_string())];
+        let scan = "Discovery started\n[\x1b[0;92mCHG\x1b[0m] Controller 8C:B8 Discovering: yes\n\
+[bluetooth]# [CHG] Device 00:1E:35:AA:00:01 RSSI: 0xffffffc8 (-56)\n\
+[NEW] Device 00:1E:35:BB:00:02 00-1E-35-BB-00-02\n\
+[CHG] Device 00:1E:35:BB:00:02 Name: Nintendo RVL-CNT-01-TR\n\
+[CHG] Device 11:22:33:44:55:66 RSSI: 0xffffffc8 (-56)\n\
+[NEW] Device 77:77:77:77:77:77 Nintendo RVL-WBC-01\n[DEL] Device 00:1E:35:CC:00:03 Nintendo RVL-CNT-01\n";
+        assert_eq!(parse_scan_wiimotes(scan, &known), vec!["00:1E:35:AA:00:01", "00:1E:35:BB:00:02"]);
+        assert!(parse_scan_wiimotes("Discovery started\n", &known).is_empty());
     }
 
     #[test]

@@ -114,7 +114,7 @@ fn rows(m: &Model) -> Vec<Row> {
             for d in &m.devices {
                 let mut r = row(d.name.clone());
                 r.value = d.detail.clone();
-                r.tag = Some((d.kind, match d.kind { "MIDI" => GREEN, "USB" => BLUE, "SOUND" => AMBER, _ => GREEN }));
+                r.tag = Some((d.kind, match d.kind { "MIDI" => GREEN, "USB" | "KEYBOARD" | "MOUSE" => BLUE, "SOUND" => AMBER, _ => GREEN }));
                 v.push(r);
             }
             v
@@ -163,7 +163,7 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             "BLUETOOTH",
             vec![
                 "Connect Wii guitars, controllers, keyboards and mice.".into(),
-                "Wii guitar: choose Scan, then hold 1+2 on the Wiimote until the lights flash.".into(),
+                "Wii guitar: hold 1+2 on the Wiimote until the lights flash. It connects by itself within a few seconds.".into(),
                 "Left forgets a paired device.".into(),
             ],
         ),
@@ -197,8 +197,8 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
         Screen::Devices => (
             "DEVICES",
             vec![
-                "Everything the system can see plugged in right now: USB devices, MIDI ports (pianos and keyboards), sound cards and game controllers.".to_string(),
-                "If an instrument is missing here, YARG cannot see it either: check its cable and power, or tell the maintainer what is listed.".to_string(),
+                "What is plugged in and usable right now. A plain USB row means the system could not make anything of that device.".to_string(),
+                "Wii guitars and Xbox drums show as PlayStation instruments: that is what YARG lists.".to_string(),
             ],
         ),
         Screen::Install if m.installed.is_some() => (

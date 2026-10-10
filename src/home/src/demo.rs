@@ -60,6 +60,8 @@ pub fn model(name: &str) -> Model {
             m.devices = vec![
                 DeviceEntry { kind: "USB", name: "P-143".into(), detail: "0499:171d".into() },
                 DeviceEntry { kind: "USB", name: "Logitech USB Microphone".into(), detail: "046d:0a03".into() },
+                DeviceEntry { kind: "KEYBOARD", name: "2.4G Wireless Receiver".into(), detail: "NO INPUT".into() },
+                DeviceEntry { kind: "USB", name: "2.4G Wireless Receiver".into(), detail: "1a81:1004".into() },
                 DeviceEntry { kind: "MIDI", name: "P-143".into(), detail: "P-143 MIDI 1".into() },
                 DeviceEntry { kind: "SOUND", name: "HDA Intel".into(), detail: String::new() },
                 DeviceEntry { kind: "PAD", name: "Guitar Hero4 for PlayStation (R) 3".into(), detail: String::new() },
@@ -96,7 +98,7 @@ pub fn model(name: &str) -> Model {
         }
         "alert" => {
             m.screen = Screen::Bluetooth;
-            m.alert = Some("The Wiimote connected, but it is NOT ready: the guitar bridge did not start. Hold 1+2 on the Wiimote until its lights flash and keep holding while it connects, then choose it again.".into());
+            m.alert = Some("The Wiimote connected, but it is NOT ready: the guitar did not answer. Press 1+2 on it again: it connects by itself.".into());
         }
         "toast" => { m.screen = Screen::Sound; m.toast("Sound output changed to HDMI 0"); }
         _ => {}

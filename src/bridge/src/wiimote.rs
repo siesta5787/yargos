@@ -49,6 +49,11 @@ impl Wiimote {
         self.dev.write_all(&[0x15, 0x00])
     }
 
+    /// Has the guitar been identified and its reports are flowing?
+    pub fn streaming(&self) -> bool {
+        self.state == State::Streaming
+    }
+
     fn set_mode(&mut self, mode: u8) -> io::Result<()> {
         self.dev.write_all(&[0x12, 0x00, mode])
     }

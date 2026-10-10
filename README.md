@@ -264,6 +264,21 @@ Verified:
   up for two seconds) and otherwise disconnects it and shows an ATTENTION box that waits for OK; a connected Wiimote
   shows READY or NOT READY on its row. Checked in QEMU with the fake Wiimote (`yargos-home wiicheck`: bridge running,
   bridge stopped, no device). Not tried with real Bluetooth.
+- Wii guitars reconnecting (reported by the owner: a guitar that "syncs wrong" stays dead, after a reboot only one of
+  two connects, a timed-out bridge never retries). Fixed in the newest image, checked in QEMU with the fake Wiimote
+  (`tools/fake-wiimote.rs`, which now answers like a guitar, and can drop its first status requests): (1) the bridge asks
+  for the guitar's status every 3 s until it answers, instead of once, and writes `/run/yargos-bridge/ready-hidrawN` when
+  the guitar streams: the launcher's READY means that, not just "bridge running"; (2) the bridge unit has no start limit;
+  (3) player-LED slots are tied to the bridge's pid, so ones left by killed bridges are reused (they used to run out);
+  (4) the connect check looked for ANY Wiimote HID device, so with one guitar up the second was "connected" after a single
+  try: it now looks for that Wiimote's address; (5) while the dashboard is up (not while YARG runs) the launcher listens
+  for 5 s at a time and connects any Nintendo RVL-CNT controller that is calling (1+2 held), so no trip to the Bluetooth
+  screen is needed; a failed attempt is retried the next time 1+2 is pressed. The BlueZ half (a real Wiimote, `bluetoothctl
+  scan on` output parsed by `parse_scan_wiimotes`) is unit-tested on sample output only: not tried on real hardware.
+- Devices screen: one row per thing YARG can use (keyboards and mice with their USB id, sound cards, MIDI ports, pads);
+  a raw USB row only for a device the kernel made nothing of; a keyboard whose receiver has no input device says NO INPUT.
+  The owner's Rii 2.4G keyboard receiver was listed by the old screen but typed nothing: not diagnosed yet (needs the
+  vendor:product id and a check that the keyboard itself is switched on; a standard USB keyboard hot-plugs fine in QEMU).
 - Wii bridge lifetime (QEMU, fake Wiimote): the bridge starts when a Wiimote's HID device appears, is restarted
   two seconds after it dies while the Wiimote is still there, and stops when the Wiimote disconnects
   (`BindsTo` its hidraw device, `Restart=on-failure`). The drum bridge was left as it was.

@@ -63,6 +63,31 @@ fn launch_yarg(tx: Sender<Event>) {
     });
 }
 
+/// Connect Wii guitars without the Bluetooth screen: while the dashboard is up, anything that calls (1+2 held) is
+/// connected, and a failed attempt is simply tried again the next time it calls. Idle while YARG runs: scanning would
+/// add latency to the controllers that are playing.
+fn spawn_wii_auto(tx: Sender<Event>, active: Arc<AtomicBool>) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        if !active.load(Ordering::Relaxed) || !sys::bt_present() {
+            std::thread::sleep(Duration::from_secs(2));
+            continue;
+        }
+        match sys::wii_auto_step() {
+            sys::WiiAuto::Nothing => {}
+            sys::WiiAuto::Connected(m) => {
+                res(&tx, Res::Done(m));
+                res(&tx, sys::bt_list());
+            }
+            sys::WiiAuto::Failed(e) => {
+                res(&tx, Res::Done(e));
+                res(&tx, sys::bt_list());
+                std::thread::sleep(Duration::from_secs(3));
+            }
+        }
+    });
+}
+
 fn bg(tx: &Sender<Event>, job: impl FnOnce(&Sender<Event>) + Send + 'static) {
     let tx = tx.clone();
     std::thread::spawn(move || job(&tx));
@@ -182,6 +207,7 @@ pub fn run() -> i32 {
     crate::screens::spawn_watcher(tx.clone());
     let active = Arc::new(AtomicBool::new(false));
     input::spawn_pads(tx.clone(), active.clone());
+    spawn_wii_auto(tx.clone(), active.clone());
 
     let mut model = Model::new();
     let mut hits: Vec<Hit> = Vec::new();

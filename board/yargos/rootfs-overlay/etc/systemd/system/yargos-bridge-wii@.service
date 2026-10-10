@@ -4,8 +4,9 @@ Description=Wiimote guitar bridge for %I
 # still there (a connected Wiimote should always end up with a running bridge).
 BindsTo=dev-%i.device
 After=dev-%i.device
-StartLimitIntervalSec=60
-StartLimitBurst=10
+# No start limit: a bridge that gave up for good ("start request repeated too quickly") would leave a connected
+# Wiimote dead until the next reboot. BindsTo already ends it when the Wiimote goes away.
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/usr/bin/yargos-bridge wii /dev/%I

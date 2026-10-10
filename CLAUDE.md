@@ -31,6 +31,10 @@ The udev rules match HID devices with `KERNELS=="0005:057E:0306.*"` (bus:vendor:
 8-digit `HID_ID` form never matches there. `tools/fake-wiimote.rs` checks the Wiimote rule in QEMU without hardware.
 The launcher treats a Wiimote as usable only when `yargos-bridge-wii@hidrawN` is active (`yargos-home wiicheck [addr]`
 shows what it sees); "connected" in BlueZ alone is not enough.
+A Wiimote is ready only when `/run/yargos-bridge/ready-hidrawN` exists (the bridge streams) and its unit is active; the bridge
+keeps asking the Wiimote for its status until it answers. `tools/fake-wiimote.rs [address] [ignore] [seconds]` imitates a
+Wiimote with a guitar for QEMU (build with `rustc --edition 2021`, fetch with curl, run in the verbose boot).
+Never test "is a Wiimote there" without its address: one connected guitar made the second look connected.
 Hardware-dependent facts (button bits, ranges) must be tested on the real device with
 `tools/dev-test.sh`; unit tests only cover decoding against the documented layout.
 
