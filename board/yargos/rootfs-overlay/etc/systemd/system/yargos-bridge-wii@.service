@@ -1,7 +1,14 @@
 [Unit]
 Description=Wiimote guitar bridge for %I
+# Tied to the Wiimote's hidraw device: stopped when it disconnects, and restarted if it fails while the Wiimote is
+# still there (a connected Wiimote should always end up with a running bridge).
+BindsTo=dev-%i.device
+After=dev-%i.device
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
 ExecStart=/usr/bin/yargos-bridge wii /dev/%I
-Restart=no
+Restart=on-failure
+RestartSec=2
 User=root

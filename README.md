@@ -255,6 +255,9 @@ Verified:
   up for two seconds) and otherwise disconnects it and shows an ATTENTION box that waits for OK; a connected Wiimote
   shows READY or NOT READY on its row. Checked in QEMU with the fake Wiimote (`yargos-home wiicheck`: bridge running,
   bridge stopped, no device). Not tried with real Bluetooth.
+- Wii bridge lifetime (QEMU, fake Wiimote): the bridge starts when a Wiimote's HID device appears, is restarted
+  two seconds after it dies while the Wiimote is still there, and stops when the Wiimote disconnects
+  (`BindsTo` its hidraw device, `Restart=on-failure`). The drum bridge was left as it was.
 - Installing to a disk (QEMU, a blank 12 GB virtio disk beside the boot stick): the boot menu's install entry
   opens the Install screen, which lists only the other disk; the install ran to the end, and the installed
   disk by itself booted straight to the launcher (no menu) with YARG 0.15.0. Its partitions, boot entry,
