@@ -106,6 +106,19 @@ and `/etc/fstab`). Labels would clash as soon as the stick and an installed disk
 with `IMG=<that file> WORK=<other dir> tools/qemu-run.sh fresh`. The quiet boot entries have no serial console:
 use the verbose entry (third in the menu) when you need `tools/qemu-sh.sh`.
 
+## Who owns what on /data (security)
+
+The device has no root login and no ssh; the remaining risk is code running as `player` (YARG with a bad song or mod)
+reaching root. So: root never sources, runs, or `chown -R`s anything the player can write, and never follows a path
+through a player-writable folder. `/data` and its first-level folders (`apps`, `home`, `bluetooth`, `iwd`, `alsa`) are
+root-owned (the player cannot swap them for links); only `apps/yarg`, `yarg`, `home/player` and the file `yargos.conf`
+belong to the player. `firstboot.sh` (root) chowns only those leaves themselves and replaces links with real folders;
+the seeded YARG is installed by the player (`yargos-seed.service`); the daily `yargos-update.service` runs as `player`
+and `yargos.conf` is read with `grep -x` for exact lines, never sourced (do the same in any new root code, e.g. the OS
+updater). `asound.conf` is root-owned because `alsactl` (root) parses it and an ALSA config can load a program: the
+Sound screen writes it through the helper (`sound CARD DEV`). Anything new that root reads from /data must be root-owned.
+Test: as root plant links (`ln -s /etc /data/apps/yarg`), run `/usr/lib/yargos/firstboot.sh`, check /etc is untouched.
+
 ## Style
 
 Match the surrounding code: terse comments that explain why, no TODO banners, small modules.

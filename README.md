@@ -264,6 +264,12 @@ Verified:
   up for two seconds) and otherwise disconnects it and shows an ATTENTION box that waits for OK; a connected Wiimote
   shows READY or NOT READY on its row. Checked in QEMU with the fake Wiimote (`yargos-home wiicheck`: bridge running,
   bridge stopped, no device). Not tried with real Bluetooth.
+- Security hardening (Phase 0 of docs/OTA-PLAN.md), checked in QEMU on a 256 GB drive: the player cannot rename,
+  replace or add anything in /data's first level or write asound.conf; links planted where root works (apps/yarg, yarg,
+  yargos.conf) are replaced and what they pointed at is untouched; the YARG seed is installed by the player; the daily
+  update runs as the player (sandboxed) and still reaches GitHub; the Sound screen saves through the root helper; iwd
+  (Wi-Fi passwords), ALSA state and Bluetooth live on /data. Not tried: the carry-over of an older system's iwd/ALSA
+  state, and the installer with this layout (its copy code is unchanged).
 - Wii guitars reconnecting (reported by the owner: a guitar that "syncs wrong" stays dead, after a reboot only one of
   two connects, a timed-out bridge never retries). Fixed in the newest image, checked in QEMU with the fake Wiimote
   (`tools/fake-wiimote.rs`, which now answers like a guitar, and can drop its first status requests): (1) the bridge asks

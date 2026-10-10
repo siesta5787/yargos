@@ -1,0 +1,16 @@
+[Unit]
+Description=Install the YARG that came with this image
+# Runs as the player, in the player's own folder: root never writes into anything the player controls.
+Requires=yargos-firstboot.service
+After=yargos-firstboot.service
+Before=yarg.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=player
+Group=player
+ExecStart=/usr/lib/yargos/seed-yarg.sh
+
+[Install]
+WantedBy=multi-user.target

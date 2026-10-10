@@ -1,6 +1,6 @@
 [Unit]
 Description=Check for a newer YARG release and stage it
-After=network-online.target yargos-firstboot.service
+After=network-online.target yargos-firstboot.service yargos-seed.service
 Wants=network-online.target
 ConditionPathExists=/data/apps/yarg/current
 
@@ -8,3 +8,12 @@ ConditionPathExists=/data/apps/yarg/current
 Type=oneshot
 ExecStart=/usr/bin/yargos-update auto
 TimeoutStartSec=2h
+# Everything it touches belongs to the player, so it runs as the player: a bad download or a planted file in
+# /data cannot reach anything that is root's.
+User=player
+Group=player
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/data/apps/yarg
+PrivateTmp=yes
+ProtectHome=yes

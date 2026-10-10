@@ -13,7 +13,8 @@
 #
 # Layout under $DATA/apps/yarg:  <version>/  current -> <version>  previous -> <version>
 #   .pending (new version on trial: "<version> <failed starts>")   .rejected (versions rolled back)
-# Settings in $DATA/yargos.conf (shell syntax): AUTO_UPDATE=yes|no
+# Settings in $DATA/yargos.conf: AUTO_UPDATE=yes|no. The file belongs to the player account, so it is only ever read as
+# text for the exact lines below, never run: this script may run as root.
 #
 # Integrity: the download is checked against the SHA-256 digest GitHub publishes in the release
 # metadata (both fetched over HTTPS). YARG's own .sig is not checked, its public key is not known.
@@ -27,8 +28,8 @@ ASSET_SUFFIX=${YARGOS_ASSET_SUFFIX:-Linux-x86_64.zip}
 MAX_ATTEMPTS=${YARGOS_MAX_ATTEMPTS:-3}
 OWNER=${YARGOS_OWNER:-player}
 CONF=$DATA/yargos.conf
-[ -f "$CONF" ] && . "$CONF"
-AUTO_UPDATE=${AUTO_UPDATE:-yes}
+AUTO_UPDATE=yes
+[ -f "$CONF" ] && grep -qx 'AUTO_UPDATE=no' "$CONF" && AUTO_UPDATE=no
 
 log() { echo "yargos-update: $*"; }
 die() { log "$*" >&2; exit 1; }
@@ -48,7 +49,8 @@ set_link() { # set_link NAME TARGET: atomic symlink replace
     ln -sfn "$2" "$APPS/$1.new" && mv -T "$APPS/$1.new" "$APPS/$1"
 }
 
-fix_owner() { id "$OWNER" >/dev/null 2>&1 && chown -R "$OWNER:$OWNER" "$@" 2>/dev/null; return 0; }
+# Only root has anything to fix, and -h: never follow a link somebody left in the tree.
+fix_owner() { [ "$(id -u)" = 0 ] && id "$OWNER" >/dev/null 2>&1 && chown -hR "$OWNER:$OWNER" "$@" 2>/dev/null; return 0; }
 
 is_rejected() { [ -f "$APPS/.rejected" ] && grep -qx "$1" "$APPS/.rejected"; }
 

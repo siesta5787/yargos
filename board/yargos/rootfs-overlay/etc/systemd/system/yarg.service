@@ -1,7 +1,7 @@
 [Unit]
 Description=YARG
-After=yargos-firstboot.service systemd-user-sessions.service systemd-logind.service
-Wants=yargos-firstboot.service
+After=yargos-firstboot.service yargos-seed.service systemd-user-sessions.service systemd-logind.service
+Wants=yargos-firstboot.service yargos-seed.service
 Conflicts=getty@tty1.service
 After=getty@tty1.service
 StartLimitIntervalSec=0

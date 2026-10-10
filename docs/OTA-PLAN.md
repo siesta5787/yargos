@@ -60,11 +60,15 @@ below. Verify the items marked *verify* before relying on them.
   `OS_UPDATE_URL` in /data/yargos.conf), which alone ends the re-flashing.
 
 ## Problems found in today's tree (fix first, "Phase 0")
-1. **Root runs a file the player can write**: `yargos-update.service` runs as root and `yargos-update` does
-   `. /data/yargos.conf`, which (like /data) belongs to `player`. Read the settings with sed/grep instead; never source
-   anything from /data as root.
-2. Wi-Fi passwords live on the rootfs (`/var/lib/iwd`, no override in /etc/iwd/main.conf): a new slot would lose them.
-   Move iwd's state to /data (bind mount, migrated once).
+1. **Root runs a file the player can write** (DONE 2026-10-10): `yargos-update` sourced `/data/yargos.conf`. It now
+   reads the settings with grep and the daily timer runs it as `player`. Same class, also fixed: `firstboot.sh` did
+   `chown -R` on player-owned trees (a planted link hands over any file) and `alsactl` (root) parsed the
+   player-writable `asound.conf`, which can load a program. Rule now: /data and its first level folders belong to
+   root; only the leaves the player's programs write (apps/yarg, yarg, home/player) and `yargos.conf` belong to the
+   player; root never recurses into or follows paths in those; the seed is installed by the player
+   (`yargos-seed.service`); `asound.conf` is root-owned and written through the helper (`sound CARD DEV`).
+2. Wi-Fi passwords lived on the rootfs (`/var/lib/iwd`) (DONE 2026-10-10: iwd, ALSA state and Bluetooth are bind
+   mounted from /data/iwd, /data/alsa, /data/bluetooth, carried over once).
 3. The data partition's GUID is hard-coded in the rootfs fstab (the installer seds it): move it to the boot entry.
 4. No `panic=` / watchdog: a kernel panic hangs instead of rebooting into the fallback.
 

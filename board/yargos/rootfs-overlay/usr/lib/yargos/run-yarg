@@ -12,7 +12,7 @@ export SDL_VIDEO_X11_LEGACY_FULLSCREEN=0
 # drive connected the list is left alone. AUTO_SONG_SOURCES=no in /data/yargos.conf turns this off.
 SETTINGS=/data/yarg/settings.json
 AUTO_SONG_SOURCES=yes
-[ -f /data/yargos.conf ] && . /data/yargos.conf
+[ -f /data/yargos.conf ] && grep -qx 'AUTO_SONG_SOURCES=no' /data/yargos.conf && AUTO_SONG_SOURCES=no
 if [ "$AUTO_SONG_SOURCES" != no ]; then
     SOURCES=$(/usr/lib/yargos/song-sources)
     NEW=$(printf '%s\n' "$SOURCES" | jq -R . | jq -s 'map(select(. != ""))')

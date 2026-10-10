@@ -288,7 +288,7 @@ pub fn sound_refresh() -> Res {
 }
 
 pub fn sound_select(card: u32, dev: u32) -> Result<String, String> {
-    std::fs::write(ASOUND, asound_text(card, dev)).map_err(|e| format!("Could not save the choice: {e}"))?;
+    ctl_request(&format!("sound {card} {dev}")).map_err(|e| format!("Could not save the choice: {e}"))?;
     Ok("Sound output changed".into())
 }
 
@@ -758,13 +758,18 @@ pub fn sys_info() -> Vec<String> {
     v
 }
 
-pub fn power(p: Power) -> Result<(), String> {
+/// One request to the root helper (see ctl.rs); Ok if it answered "ok".
+fn ctl_request(line: &str) -> Result<(), String> {
     let mut s = std::os::unix::net::UnixStream::connect(CTL_SOCKET).map_err(|e| format!("cannot reach the system helper: {e}"))?;
     s.set_read_timeout(Some(Duration::from_secs(5))).ok();
-    s.write_all(if p == Power::Shutdown { b"poweroff\n" } else { b"reboot\n" }).map_err(|e| e.to_string())?;
+    s.write_all(format!("{line}\n").as_bytes()).map_err(|e| e.to_string())?;
     let mut reply = String::new();
     let _ = s.read_to_string(&mut reply);
     if reply.starts_with("ok") { Ok(()) } else { Err(reply.trim().to_string()) }
+}
+
+pub fn power(p: Power) -> Result<(), String> {
+    ctl_request(if p == Power::Shutdown { "poweroff" } else { "reboot" })
 }
 
 // ---- connected devices ---------------------------------------------------------------------------

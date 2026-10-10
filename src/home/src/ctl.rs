@@ -11,6 +11,8 @@ pub enum Request {
     Fixed(&'static str, &'static [&'static str]),
     /// `install /dev/NAME`: erase that disk and install the system on it.
     Install(String),
+    /// `sound CARD DEV`: write /data/asound.conf (root-owned: root's own audio tools read it).
+    Sound(u32, u32),
 }
 
 /// A whole-disk device path: /dev/ and then letters and digits only (sda, vdb, nvme0n1, mmcblk0).
@@ -19,13 +21,31 @@ fn disk_path(s: &str) -> Option<&str> {
     (!name.is_empty() && name.len() <= 20 && name.chars().all(|c| c.is_ascii_alphanumeric())).then_some(s)
 }
 
+/// A small number, digits only (a card or device index).
+fn index(s: &str, max: u32) -> Option<u32> {
+    (!s.is_empty() && s.len() <= 3 && s.chars().all(|c| c.is_ascii_digit())).then(|| s.parse().ok()).flatten().filter(|&n| n <= max)
+}
+
 pub fn parse(line: &str) -> Option<Request> {
     let line = line.trim();
     match line {
         "poweroff" => Some(Request::Fixed("systemctl", &["poweroff"])),
         "reboot" => Some(Request::Fixed("systemctl", &["reboot"])),
-        _ => line.strip_prefix("install ").and_then(disk_path).map(|d| Request::Install(d.to_string())),
+        _ => {
+            if let Some(rest) = line.strip_prefix("sound ") {
+                let (c, d) = rest.split_once(' ')?;
+                return Some(Request::Sound(index(c, 31)?, index(d, 255)?));
+            }
+            line.strip_prefix("install ").and_then(disk_path).map(|d| Request::Install(d.to_string()))
+        }
     }
+}
+
+fn write_sound(card: u32, dev: u32) -> std::io::Result<()> {
+    // Written beside the target and renamed over it: /data is root's, so nothing can be swapped under us.
+    let tmp = format!("{}.new", crate::sys::ASOUND);
+    std::fs::write(&tmp, crate::sys::asound_text(card, dev))?;
+    std::fs::rename(&tmp, crate::sys::ASOUND)
 }
 
 pub fn run() -> i32 {
@@ -47,6 +67,16 @@ pub fn run() -> i32 {
             Ok(s) if s.success() => 0,
             _ => 1,
         },
+        Some(Request::Sound(card, dev)) => match write_sound(card, dev) {
+            Ok(()) => {
+                println!("ok");
+                0
+            }
+            Err(e) => {
+                println!("error: {e}");
+                1
+            }
+        },
         None => {
             println!("error: unknown request");
             1
@@ -65,6 +95,19 @@ mod tests {
         assert_eq!(parse("poweroff; rm -rf /"), None);
         assert_eq!(parse("systemctl poweroff"), None);
         assert_eq!(parse(""), None);
+    }
+
+    #[test]
+    fn sound_takes_two_small_numbers_and_nothing_else() {
+        assert_eq!(parse("sound 1 0\n"), Some(Request::Sound(1, 0)));
+        assert_eq!(parse("sound 31 255"), Some(Request::Sound(31, 255)));
+        assert_eq!(parse("sound 32 0"), None);
+        assert_eq!(parse("sound 1"), None);
+        assert_eq!(parse("sound -1 0"), None);
+        assert_eq!(parse("sound 1 0 2"), None);
+        assert_eq!(parse("sound 1; reboot 0"), None);
+        assert_eq!(parse("sound 0x1 0"), None);
+        assert_eq!(parse("sound  1 0"), None);
     }
 
     #[test]

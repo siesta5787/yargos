@@ -3,7 +3,7 @@ Description=Prepare YARGOS data partition
 # No RequiresMountsFor=: growdata rewrites the partition table, the data device briefly disappears, and systemd
 # then silently drops a unit that requires its mount (the service never started on any drive bigger than the
 # image). The script waits for /data itself.
-Before=yarg.service bluetooth.service
+Before=yarg.service bluetooth.service iwd.service alsa-restore.service alsa-state.service
 After=yargos-growdata.service
 DefaultDependencies=no
 After=local-fs.target
