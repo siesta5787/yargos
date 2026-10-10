@@ -33,7 +33,7 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 
 ## Installing / trying it on a PC
 
-`output/images/yargos.img` is a complete UEFI-bootable disk (128M boot, 1.8G system, 700M data; about 2.8 GB,
+`output/images/yargos.img` is a complete UEFI-bootable disk (128M boot, 1.25G system, 700M data; about 2.2 GB,
 so any 4 GB or larger USB stick works, preferably USB 3). It runs from the drive you write it to. On first
 boot `yargos-growdata.service` grows the data partition (and its filesystem) to fill the drive, before `/data`
 is mounted; on a drive exactly the image's size nothing grows and the 700M holds YARG with some room to spare.
@@ -61,7 +61,7 @@ together; the flashed image uses fixed GUIDs (`...0001` system, `...0002` data) 
 look a root or data partition up by label.
 
 If a machine boots to a black screen or stops early, the boot log is kept on the drive: plug it into another
-Linux PC, mount the 1.8 GB `rootfs` partition and run `journalctl --directory <mount>/var/log/journal -b -1`
+Linux PC, mount the `rootfs` partition and run `journalctl --directory <mount>/var/log/journal -b -1`
 (or read it from a photo of the screen: the kernel now shows its messages from the first second).
 
 For a diagnostic report on a machine with no network: press Ctrl+Alt+F2, log in as `root` (no password),
@@ -227,6 +227,11 @@ Verified:
   YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
   and the menus can be navigated with the pads.
 
+- Trimmed image (2.76 GB -> 2.2 GB): `post-build.sh` drops the Clang/libclc/SPIR-V tools Mesa's build leaves
+  behind (nothing links them) and compresses the firmware to `.xz` (404 -> 160 MB). In QEMU the trimmed image
+  boots, YARG reaches its menu, and the kernel loads an xz-compressed `regulatory.db` (a corrupt copy fails
+  with the expected error, so the check can tell). Real firmware (amdgpu, Wi-Fi, Bluetooth) loading from `.xz`
+  is not yet confirmed on hardware.
 - Installing to a disk (QEMU, a blank 12 GB virtio disk beside the boot stick): the boot menu's install entry
   opens the Install screen, which lists only the other disk; the install ran to the end, and the installed
   disk by itself booted straight to the launcher (no menu) with YARG 0.15.0. Its partitions, boot entry,

@@ -38,6 +38,15 @@ package vendors the crates in a pre-build hook (needs network once). To test on 
 `CMDLINE="systemd.setenv=YARGOS_YARG_CMD=/bin/true" HEADLESS=1 tools/qemu-run.sh fresh` shows the dashboard at
 once; `tools/qemu-key.sh`, `qemu-shot.sh` and `qemu-sh.sh` drive and inspect the guest.
 
+## Size
+
+`board/yargos/post-build.sh` trims the target: it removes the Clang/SPIR-V leftovers and compresses firmware with
+`xz --check=crc32 --lzma2=dict=512KiB` (the kernel's `FW_LOADER_COMPRESS_XZ`; `regulatory.db*` must stay plain).
+Do NOT compress kernel modules: the build's host `depmod` has no zlib/xz/zstd and silently writes an empty
+`modules.dep`, so no driver would load (verify any change with `wc -l .../modules.dep`). Changing
+`BR2_TARGET_ROOTFS_EXT2_SIZE` only takes effect after deleting `images/rootfs.ext2` (and the `.ext4` link and
+`yargos.img`) and running `tools/br.sh`; keep it a little above `du -sm output/target`.
+
 ## Disk identity and the installer
 
 Never find a root or data partition by label: the flashed image uses fixed partition GUIDs (`...0001` system,
