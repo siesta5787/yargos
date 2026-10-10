@@ -29,6 +29,7 @@ pub enum Screen {
     Songs,
     System,
     Install,
+    Devices,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +62,14 @@ impl BtDevice {
     pub fn is_wiimote(&self) -> bool {
         self.name.starts_with("Nintendo RVL")
     }
+}
+
+/// One thing the kernel sees plugged in or built in (USB device, MIDI port, sound card, controller).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeviceEntry {
+    pub kind: &'static str,
+    pub name: String,
+    pub detail: String,
 }
 
 /// A disk the system can be installed on (see `yargos-install list`).
@@ -158,6 +167,7 @@ pub enum Res {
     Songs(SongsInfo),
     SysInfo(Vec<String>),
     Disks(Vec<Disk>),
+    Devices(Vec<DeviceEntry>),
     /// One progress line from the installer.
     InstallStep(String),
     InstallDone(Result<(), String>),
@@ -253,6 +263,7 @@ pub struct Model {
     pub confirm: Option<Power>,
     pub confirm_sel: usize,
     pub disks: Vec<Disk>,
+    pub devices: Vec<DeviceEntry>,
     /// The disk the user is being asked to confirm erasing (index into `disks`).
     pub erase: Option<usize>,
     /// Set once the install finished: what it was installed on.
@@ -287,6 +298,7 @@ impl Model {
             confirm: None,
             confirm_sel: 0,
             disks: vec![],
+            devices: vec![],
             erase: None,
             installed: None,
             install_error: None,
@@ -316,7 +328,8 @@ impl Model {
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
             Screen::Songs => 2 + usize::from(self.songs.mounted),
-            Screen::System => 3,
+            Screen::System => 4,
+            Screen::Devices => 1 + self.devices.len(),
             Screen::Install => if self.installed.is_some() { 2 } else { 1 + self.disks.len() },
             Screen::Password => 0,
         }
@@ -591,6 +604,16 @@ impl Model {
                 vec![Cmd::SongsAuto(self.songs.auto)]
             }
             Screen::System if self.sel == 2 => self.enter(Screen::Install),
+            Screen::System if self.sel == 3 => self.enter(Screen::Devices),
+            Screen::Devices if self.sel == 0 => {
+                self.busy = Some("Looking at what is plugged in\u{2026}".into());
+                vec![Cmd::Refresh(Screen::Devices)]
+            }
+            Screen::Devices => {
+                let d = self.devices[self.sel - 1].clone();
+                self.toast(format!("{}: {}", d.name, d.detail));
+                vec![]
+            }
             Screen::System => {
                 self.confirm = Some(if self.sel == 0 { Power::Restart } else { Power::Shutdown });
                 self.confirm_sel = 0;
@@ -654,6 +677,12 @@ impl Model {
             }
             Res::Disks(d) => {
                 self.disks = d;
+                self.loading = false;
+                self.busy = None;
+                self.sel = self.sel.min(self.row_count().saturating_sub(1));
+            }
+            Res::Devices(d) => {
+                self.devices = d;
                 self.loading = false;
                 self.busy = None;
                 self.sel = self.sel.min(self.row_count().saturating_sub(1));
@@ -1036,5 +1065,21 @@ mod tests {
         m.apply(Res::Alert("again".into()));
         m.click(0); // the OK button
         assert!(m.alert.is_none());
+    }
+
+    #[test]
+    fn the_devices_screen_is_reached_from_system_and_lists_what_is_plugged_in() {
+        let mut m = Model::new();
+        m.screen = Screen::System;
+        m.sel = 3;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Devices)]);
+        assert_eq!(m.screen, Screen::Devices);
+        m.apply(Res::Devices(vec![DeviceEntry { kind: "MIDI", name: "P-143".into(), detail: "P-143 MIDI 1".into() }]));
+        assert_eq!(m.row_count(), 2);
+        m.sel = 1;
+        assert!(m.handle(Nav::Ok).is_empty());
+        assert!(m.live_toast().unwrap().contains("P-143"));
+        m.sel = 0;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Devices)]);
     }
 }

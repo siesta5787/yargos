@@ -127,6 +127,7 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
             }),
             Cmd::UpdAuto(on) => bg(tx, move |tx| done(tx, sys::write_auto_update(on))),
             Cmd::SongsAuto(on) => bg(tx, move |tx| done(tx, sys::write_auto_songs(on))),
+            Cmd::Refresh(Screen::Devices) => bg(tx, |tx| res(tx, Res::Devices(sys::devices_list()))),
             Cmd::Refresh(Screen::Install) => bg(tx, |tx| res(tx, Res::Disks(sys::install_disks()))),
             Cmd::Install(disk) => bg(tx, move |tx| {
                 let r = sys::install_run(&disk, |step| res(tx, Res::InstallStep(step)));
@@ -166,7 +167,9 @@ pub fn run() -> i32 {
         eprintln!("yargos-home: fonts not found, starting YARG without the dashboard");
         return run_plain();
     };
-    let disp = match Display::open() {
+    // Mirror the screens and honour the lid before the window exists, so the first picture is already right.
+    crate::screens::configure_now();
+    let mut disp = match Display::open() {
         Ok(d) => d,
         Err(e) => {
             eprintln!("yargos-home: {e}");
@@ -176,6 +179,7 @@ pub fn run() -> i32 {
     let mut cv = Canvas::new(disp.w, disp.h);
     let (tx, rx) = channel::<Event>();
     disp.spawn_events(tx.clone());
+    crate::screens::spawn_watcher(tx.clone());
     let active = Arc::new(AtomicBool::new(false));
     input::spawn_pads(tx.clone(), active.clone());
 
@@ -260,6 +264,12 @@ pub fn run() -> i32 {
                 dirty |= v;
             }
             Ok(Event::Redraw) => dirty = true,
+            Ok(Event::ScreenChanged) => {
+                disp.resize();
+                cv = Canvas::new(disp.w, disp.h);
+                hits.clear();
+                dirty = true;
+            }
             Ok(_) => {}
             Err(RecvTimeoutError::Timeout) => {
                 model.tick += 1;

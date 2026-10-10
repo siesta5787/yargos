@@ -73,6 +73,13 @@ test with a big overlay (`qemu-img create -q -f qcow2 -b ~/yargos-build/output/i
 ~/yargos-build/qemu/overlay.qcow2 256G`, then `tools/qemu-run.sh` without `fresh`) and check that `/data/apps/yarg/current`
 exists and `/data` belongs to `player`.
 
+## Boot-disk drivers must be built in
+
+There is no initramfs, so the drivers for whatever the boot disk sits on (SATA/AHCI, NVMe, eMMC/SD, Intel VMD) are
+`=y`, never modules. Test with QEMU: `NVME_IMG=~/yargos-build/qemu/nvme.img HEADLESS=1 tools/qemu-run.sh fresh` (blank
+NVMe disk, pick Install), then `BOOT_NVME=1 IMG=<that file> WORK=<other dir> HEADLESS=1 tools/qemu-run.sh fresh`
+to boot the installed disk alone. `MAX_OUTPUTS=2` adds a second virtual screen but headless QEMU does not connect it.
+
 ## Disk identity and the installer
 
 Never find a root or data partition by label: the flashed image uses fixed partition GUIDs (`...0001` system,

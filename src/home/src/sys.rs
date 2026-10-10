@@ -693,6 +693,86 @@ pub fn power(p: Power) -> Result<(), String> {
     if reply.starts_with("ok") { Ok(()) } else { Err(reply.trim().to_string()) }
 }
 
+// ---- connected devices ---------------------------------------------------------------------------
+
+/// `/proc/asound/seq/clients` -> (client name, its port names) for real MIDI clients, i.e. not the sequencer's own
+/// "System" and "Midi Through".
+pub fn parse_seq_clients(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, Vec<String>)> = vec![];
+    let mut skip = false;
+    for line in text.lines() {
+        let t = line.trim();
+        let quoted = |s: &str| s.split('"').nth(1).map(str::to_string);
+        if t.starts_with("Client") {
+            let name = quoted(t).unwrap_or_default();
+            skip = name.is_empty() || name == "System" || name == "Midi Through";
+            if !skip {
+                out.push((name, vec![]));
+            }
+        } else if t.starts_with("Port") && !skip {
+            if let (Some(p), Some(last)) = (quoted(t), out.last_mut()) {
+                last.1.push(p);
+            }
+        }
+    }
+    out.into_iter().map(|(n, p)| (n, p.join(", "))).collect()
+}
+
+/// `/proc/asound/cards` -> card names ("HDA Intel", "Logitech USB Microphone").
+pub fn parse_cards(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| l.contains('[') && l.contains("]:"))
+        .filter_map(|l| l.split("]:").nth(1))
+        .filter_map(|r| r.split(" - ").nth(1))
+        .map(|n| n.trim().to_string())
+        .collect()
+}
+
+/// `/proc/bus/input/devices` -> names of devices that are game controllers (they have a js handler).
+pub fn parse_pads(text: &str) -> Vec<String> {
+    text.split("\n\n")
+        .filter(|b| b.lines().any(|l| l.starts_with("H:") && l.trim_start_matches("H:").trim().trim_start_matches("Handlers=").split_whitespace().any(|w| w.starts_with("js"))))
+        .filter_map(|b| b.lines().find(|l| l.starts_with("N:")).and_then(|l| l.split('"').nth(1)).map(str::to_string))
+        .collect()
+}
+
+fn sysfs(dir: &std::path::Path, f: &str) -> String {
+    std::fs::read_to_string(dir.join(f)).map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
+pub fn devices_list() -> Vec<DeviceEntry> {
+    let mut v = vec![];
+    if let Ok(dir) = std::fs::read_dir("/sys/bus/usb/devices") {
+        let mut usb: Vec<DeviceEntry> = dir
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                !n.contains(':') && !n.starts_with("usb") // devices only: not interfaces, not root hubs
+            })
+            .filter(|e| sysfs(&e.path(), "bDeviceClass") != "09") // not hubs
+            .map(|e| {
+                let p = e.path();
+                let (vid, pid) = (sysfs(&p, "idVendor"), sysfs(&p, "idProduct"));
+                let (prod, man) = (sysfs(&p, "product"), sysfs(&p, "manufacturer"));
+                let name = if !prod.is_empty() { prod } else if !man.is_empty() { man.clone() } else { format!("USB device {vid}:{pid}") };
+                DeviceEntry { kind: "USB", name, detail: format!("{vid}:{pid}") }
+            })
+            .collect();
+        usb.sort_by(|a, b| a.name.cmp(&b.name));
+        v.extend(usb);
+    }
+    for (name, ports) in parse_seq_clients(&std::fs::read_to_string("/proc/asound/seq/clients").unwrap_or_default()) {
+        v.push(DeviceEntry { kind: "MIDI", name, detail: ports });
+    }
+    for name in parse_cards(&std::fs::read_to_string("/proc/asound/cards").unwrap_or_default()) {
+        v.push(DeviceEntry { kind: "SOUND", name, detail: String::new() });
+    }
+    for name in parse_pads(&std::fs::read_to_string("/proc/bus/input/devices").unwrap_or_default()) {
+        v.push(DeviceEntry { kind: "PAD", name, detail: String::new() });
+    }
+    v
+}
+
 // ---- installing to a disk --------------------------------------------------------------------
 
 /// `yargos-install list` output: `/dev/NAME|bytes|model|transport|removable` per line.
@@ -908,5 +988,16 @@ mod tests {
         assert_eq!(parse_wiimote_uevent("HID_ID=0005:0000057E:00000330\n"), Some(String::new()));
         assert_eq!(parse_wiimote_uevent("HID_ID=0003:0000046D:0000C534\nHID_UNIQ=\n"), None);
         assert_eq!(parse_wiimote_uevent("HID_ID=0005:000012BA:00000100\n"), None); // our own virtual guitar
+    }
+
+    #[test]
+    fn midi_clients_cards_and_pads_are_read_from_proc() {
+        let seq = "Client info\n  cur  clients : 3\nClient   0 : \"System\" [Kernel]\n  Port   0 : \"Timer\" (Rwe-)\nClient  14 : \"Midi Through\" [Kernel]\n  Port   0 : \"Midi Through Port-0\" (RWe-)\nClient  20 : \"P-143\" [Kernel]\n  Port   0 : \"P-143 MIDI 1\" (RWeX)\n";
+        assert_eq!(parse_seq_clients(seq), vec![("P-143".to_string(), "P-143 MIDI 1".to_string())]);
+        assert!(parse_seq_clients("Client info\n  cur  clients : 1\nClient   0 : \"System\" [Kernel]\n").is_empty());
+        let cards = " 0 [Intel          ]: HDA-Intel - HDA Intel\n                      HDA Intel at 0xfebf0000 irq 28\n 1 [Microphone     ]: USB-Audio - Logitech USB Microphone\n                      Logitech Logitech USB Microphone at usb-0000:00:14.0-1, full speed\n";
+        assert_eq!(parse_cards(cards), vec!["HDA Intel", "Logitech USB Microphone"]);
+        let input = "I: Bus=0003 Vendor=12ba Product=0100 Version=0110\nN: Name=\"Guitar Hero4 for PlayStation (R) 3\"\nH: Handlers=js0 event5 \n\nI: Bus=0011 Vendor=0001 Product=0001\nN: Name=\"AT Translated Set 2 keyboard\"\nH: Handlers=sysrq kbd event1 leds \n";
+        assert_eq!(parse_pads(input), vec!["Guitar Hero4 for PlayStation (R) 3"]);
     }
 }

@@ -54,6 +54,17 @@ pub fn model(name: &str) -> Model {
     ];
     m.tick = 3;
     match name {
+        "devices" => {
+            m.screen = Screen::Devices;
+            m.sel = 3;
+            m.devices = vec![
+                DeviceEntry { kind: "USB", name: "P-143".into(), detail: "0499:171d".into() },
+                DeviceEntry { kind: "USB", name: "Logitech USB Microphone".into(), detail: "046d:0a03".into() },
+                DeviceEntry { kind: "MIDI", name: "P-143".into(), detail: "P-143 MIDI 1".into() },
+                DeviceEntry { kind: "SOUND", name: "HDA Intel".into(), detail: String::new() },
+                DeviceEntry { kind: "PAD", name: "Guitar Hero4 for PlayStation (R) 3".into(), detail: String::new() },
+            ];
+        }
         "install" => { m.screen = Screen::Install; m.sel = 1; }
         "install-none" => { m.screen = Screen::Install; m.disks.clear(); }
         "install-confirm" => { m.screen = Screen::Install; m.sel = 1; m.erase = Some(0); m.confirm_sel = 1; }

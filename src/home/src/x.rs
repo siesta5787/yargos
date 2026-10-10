@@ -15,6 +15,7 @@ use x11rb::COPY_DEPTH_FROM_PARENT;
 
 pub struct Display {
     conn: Arc<RustConnection>,
+    root: Window,
     win: Window,
     gc: Gcontext,
     depth: u8,
@@ -70,7 +71,16 @@ impl Display {
             .map_err(|e| e.to_string())?;
         conn.map_window(win).map_err(|e| e.to_string())?;
         conn.flush().map_err(|e| e.to_string())?;
-        Ok(Self { conn: Arc::new(conn), win, gc, depth: screen.root_depth, w: w as usize, h: h as usize, cursor_arrow, cursor_blank })
+        Ok(Self { conn: Arc::new(conn), root: screen.root, win, gc, depth: screen.root_depth, w: w as usize, h: h as usize, cursor_arrow, cursor_blank })
+    }
+
+    /// The screen changed size (a screen plugged in, the lid shut): follow it.
+    pub fn resize(&mut self) {
+        let Some(g) = self.conn.get_geometry(self.root).ok().and_then(|c| c.reply().ok()) else { return };
+        self.w = g.width as usize;
+        self.h = g.height as usize;
+        let _ = self.conn.configure_window(self.win, &ConfigureWindowAux::new().x(0).y(0).width(g.width as u32).height(g.height as u32));
+        let _ = self.conn.flush();
     }
 
     pub fn show_cursor(&self, visible: bool) {

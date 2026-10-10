@@ -261,6 +261,18 @@ Verified:
 - Wii bridge lifetime (QEMU, fake Wiimote): the bridge starts when a Wiimote's HID device appears, is restarted
   two seconds after it dies while the Wiimote is still there, and stops when the Wiimote disconnects
   (`BindsTo` its hidraw device, `Restart=on-failure`). The drum bridge was left as it was.
+- NVMe and other internal storage (QEMU, a virtual NVMe disk): the kernel had no NVMe/MMC/VMD driver, so a laptop's
+  internal SSD was invisible and an installed system could not have booted from it (no initramfs, so they are built
+  in). Fixed: the installer lists the NVMe disk, installs, and the installed disk boots alone to the launcher.
+  eMMC, SD readers and Intel VMD were added the same way but are not tested.
+- Screens: every connected screen mirrors at the biggest resolution all of them share; with the lid shut and an
+  external screen connected the laptop panel is turned off (`src/home/src/screens.rs`, polled
+  every 2 s, lid read from /proc/acpi/button/lid). A lone screen uses its preferred mode. The planner has unit tests;
+  in QEMU a forced resolution change is restored by the watcher and the launcher resizes. A real second screen and
+  the lid have not been tried (QEMU has one connected output). `yargos-home screens` prints what it sees and plans.
+- SYSTEM > Connected devices lists USB devices, MIDI ports, sound cards and controllers (QEMU: keyboard, mouse, sound
+  card). The "Midi Through" loopback port is no longer created (modprobe `install snd-seq-dummy /bin/true`) so YARG's
+  device list only shows real devices. A USB piano (Yamaha P-143) works; it shows as two ports, MIDI 1 is the keys.
 - Installing to a disk (QEMU, a blank 12 GB virtio disk beside the boot stick): the boot menu's install entry
   opens the Install screen, which lists only the other disk; the install ran to the end, and the installed
   disk by itself booted straight to the launcher (no menu) with YARG 0.15.0. Its partitions, boot entry,

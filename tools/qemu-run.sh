@@ -16,6 +16,11 @@
 #   DISK_OPTS=throttling.bps-total=15000000 tools/qemu-run.sh
 #                                  extra options for the boot disk (here: a slow, USB-stick-like 15 MB/s). To try a big
 #                                  stick: qemu-img create -f qcow2 -b <image> -F raw $WORK/overlay.qcow2 126G first.
+#   NVME_IMG=/path/nvme.img tools/qemu-run.sh
+#                                  attach a blank (created on first use, NVME_SIZE=12G) NVMe disk, like a laptop's internal SSD
+#   BOOT_NVME=1 IMG=/path/nvme.img WORK=<other dir> tools/qemu-run.sh fresh
+#                                  boot from that image attached as NVMe (tests an installed disk with no USB stick around)
+#   MAX_OUTPUTS=2 tools/qemu-run.sh   a second virtual screen (with HEADLESS=1) to try the mirroring
 #   HEADLESS=1 tools/qemu-run.sh   no window; serial log -> $WORK/serial.log, serial console socket -> $WORK/serial.sock (tools/qemu-sh.sh),
 #                                  monitor socket -> $WORK/monitor.sock
 #                                  (tools/qemu-shot.sh saves a screenshot of the guest)
@@ -44,7 +49,7 @@ USBARGS=()
 for id in ${USB:-}; do USBARGS+=(-device "usb-host,vendorid=0x${id%%:*},productid=0x${id##*:}"); done
 
 if [ -n "${HEADLESS:-}" ]; then
-    DISPLAY_ARGS=(-device virtio-vga -display none
+    DISPLAY_ARGS=(-device "virtio-vga${MAX_OUTPUTS:+,max_outputs=$MAX_OUTPUTS}" -display none
         -chardev "socket,id=ser0,path=$WORK/serial.sock,server=on,wait=off,logfile=$WORK/serial.log" -serial chardev:ser0
         -monitor "unix:$WORK/monitor.sock,server,nowait")
 else
@@ -53,6 +58,14 @@ fi
 
 SONGSARGS=()
 [ -n "${SONGS_IMG:-}" ] && SONGSARGS=(-drive "if=none,id=songs,file=$SONGS_IMG,format=raw" -device usb-storage,drive=songs)
+
+NVMEARGS=()
+if [ -n "${NVME_IMG:-}" ]; then
+    [ -f "$NVME_IMG" ] || truncate -s "${NVME_SIZE:-12G}" "$NVME_IMG"
+    NVMEARGS=(-drive "file=$NVME_IMG,format=raw,if=none,id=nvm0" -device nvme,serial=yargos-nvme0,drive=nvm0)
+fi
+BOOTDISK=(-drive "file=$WORK/overlay.qcow2,format=qcow2,if=virtio${DISK_OPTS:+,$DISK_OPTS}")
+[ -n "${BOOT_NVME:-}" ] && BOOTDISK=(-drive "file=$WORK/overlay.qcow2,format=qcow2,if=none,id=bootnvm${DISK_OPTS:+,$DISK_OPTS}" -device nvme,serial=yargos-boot,drive=bootnvm,bootindex=0)
 
 DISK2ARGS=()
 if [ -n "${DISK2:-}" ]; then
@@ -69,12 +82,13 @@ exec qemu-system-x86_64 \
     -machine q35,accel=$ACCEL -cpu max -smp 4 -m 4G \
     -drive if=pflash,format=raw,readonly=on,file="$CODE" \
     -drive if=pflash,format=raw,file="$WORK/OVMF_VARS.fd" \
-    -drive file="$WORK/overlay.qcow2",format=qcow2,if=virtio${DISK_OPTS:+,$DISK_OPTS} \
+    "${BOOTDISK[@]}" \
     -device qemu-xhci -device usb-kbd -device usb-mouse \
     -device intel-hda -device hda-duplex \
     -nic user,model=virtio-net-pci \
     "${DISPLAY_ARGS[@]}" \
     "${KERNEL_ARGS[@]}" \
     "${DISK2ARGS[@]}" \
+    "${NVMEARGS[@]}" \
     "${SONGSARGS[@]}" \
     "${USBARGS[@]}"

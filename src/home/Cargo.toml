@@ -6,7 +6,7 @@ description = "YARGOS session: boot splash, YARG launcher and the dashboard show
 license = "MIT"
 
 [dependencies]
-x11rb = "0.14"
+x11rb = { version = "0.14", features = ["randr"] }
 fontdue = "0.9"
 
 [profile.release]

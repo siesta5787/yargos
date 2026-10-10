@@ -108,7 +108,17 @@ fn rows(m: &Model) -> Vec<Row> {
             v.push(Row { value: if m.songs.auto { "ON".into() } else { "OFF".into() }, ..row("Add song folders to YARG") });
             v
         }
-        Screen::System => vec![row("Restart"), row("Shut down"), row("Install on this computer's disk")],
+        Screen::System => vec![row("Restart"), row("Shut down"), row("Install on this computer's disk"), row("Connected devices")],
+        Screen::Devices => {
+            let mut v = vec![row("Look again")];
+            for d in &m.devices {
+                let mut r = row(d.name.clone());
+                r.value = d.detail.clone();
+                r.tag = Some((d.kind, match d.kind { "MIDI" => GREEN, "USB" => BLUE, "SOUND" => AMBER, _ => GREEN }));
+                v.push(r);
+            }
+            v
+        }
         Screen::Install if m.installed.is_some() => vec![row("Restart"), row("Shut down")],
         Screen::Install => {
             let mut v = vec![row("Look for disks again")];
@@ -184,6 +194,13 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             v
         }),
         Screen::System => ("SYSTEM", m.sysinfo.clone()),
+        Screen::Devices => (
+            "DEVICES",
+            vec![
+                "Everything the system can see plugged in right now: USB devices, MIDI ports (pianos and keyboards), sound cards and game controllers.".to_string(),
+                "If an instrument is missing here, YARG cannot see it either: check its cable and power, or tell the maintainer what is listed.".to_string(),
+            ],
+        ),
         Screen::Install if m.installed.is_some() => (
             "INSTALLED",
             vec![
@@ -218,6 +235,7 @@ fn title_of(s: Screen) -> &'static str {
         Screen::Updates => "UPDATES",
         Screen::Songs => "SONGS",
         Screen::System => "SYSTEM",
+        Screen::Devices => "DEVICES",
         Screen::Install => "INSTALL",
     }
 }

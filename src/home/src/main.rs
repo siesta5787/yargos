@@ -7,6 +7,7 @@ mod logo;
 mod model;
 mod session;
 mod splash;
+mod screens;
 mod sys;
 mod ui;
 mod x;
@@ -21,6 +22,8 @@ fn main() {
         Some("ctl") => ctl::run(),
         Some("padtest") => input::pad_test(),
         Some("xinfo") => x::xinfo(),
+        Some("screens") if args.get(2).map(String::as_str) == Some("set") => screens::force(args.get(3).map(String::as_str).unwrap_or("")),
+        Some("screens") => screens::report(),
         Some("wiicheck") => sys::wiicheck(args.get(2).map(String::as_str)),
         Some("xfocus") => x::xfocus(),
         Some("screenshot") => {

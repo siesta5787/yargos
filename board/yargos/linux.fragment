@@ -117,6 +117,21 @@ CONFIG_TYPEC=y
 CONFIG_TYPEC_UCSI=y
 CONFIG_UCSI_ACPI=y
 
+# Internal storage. The root partition is found by PARTUUID with no initramfs, so whatever the boot disk sits on
+# must be built in: NVMe (most laptops and mini PCs), Intel VMD (NVMe hidden behind the RAID/RST mode), eMMC and SD
+# card readers. SATA (AHCI) is above.
+CONFIG_BLK_DEV_NVME=y
+CONFIG_VMD=y
+CONFIG_MMC=y
+CONFIG_MMC_BLOCK=y
+CONFIG_MMC_SDHCI=y
+CONFIG_MMC_SDHCI_PCI=y
+CONFIG_MMC_SDHCI_ACPI=y
+CONFIG_MISC_RTSX_PCI=y
+CONFIG_MMC_REALTEK_PCI=y
+CONFIG_MISC_RTSX_USB=y
+CONFIG_MMC_REALTEK_USB=y
+
 # Bluetooth (classic + LE HID, HOGP via bluez/uhid)
 CONFIG_BT=y
 CONFIG_BT_BREDR=y
