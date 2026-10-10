@@ -53,6 +53,8 @@ pub struct BtDevice {
     pub name: String,
     pub paired: bool,
     pub connected: bool,
+    /// A connected Wiimote is only usable once the guitar bridge runs for it; everything else is ready when connected.
+    pub ready: bool,
 }
 
 impl BtDevice {
@@ -159,6 +161,8 @@ pub enum Res {
     /// One progress line from the installer.
     InstallStep(String),
     InstallDone(Result<(), String>),
+    /// Something failed in a way the user must not miss: shown as a message that waits for OK.
+    Alert(String),
     /// A finished action: clear the busy overlay and show this message.
     Done(String),
     /// A finished action whose screen data should also be reloaded.
@@ -254,6 +258,7 @@ pub struct Model {
     /// Set once the install finished: what it was installed on.
     pub installed: Option<String>,
     pub install_error: Option<String>,
+    pub alert: Option<String>,
     /// Label of the disk being installed on while the install runs.
     target: Option<String>,
     pub busy: Option<String>,
@@ -285,6 +290,7 @@ impl Model {
             erase: None,
             installed: None,
             install_error: None,
+            alert: None,
             target: None,
             busy: None,
             toast: None,
@@ -330,7 +336,7 @@ impl Model {
 
     /// Move the highlight to a row without activating it (mouse hover).
     pub fn hover(&mut self, id: usize) {
-        if self.busy.is_some() {
+        if self.busy.is_some() || self.alert.is_some() {
             return;
         }
         if self.confirm.is_some() || self.erase.is_some() {
@@ -354,6 +360,12 @@ impl Model {
     }
 
     pub fn handle(&mut self, nav: Nav) -> Vec<Cmd> {
+        if self.alert.is_some() {
+            if matches!(nav, Nav::Ok | Nav::Submit | Nav::Back) {
+                self.alert = None;
+            }
+            return vec![];
+        }
         if self.busy.is_some() {
             return vec![]; // ignore input while an action runs
         }
@@ -660,6 +672,10 @@ impl Model {
                 self.busy = None;
                 self.install_error = Some(e);
             }
+            Res::Alert(msg) => {
+                self.busy = None;
+                self.alert = Some(msg);
+            }
             Res::Done(msg) => {
                 self.busy = None;
                 self.toast(msg);
@@ -868,8 +884,8 @@ mod tests {
         let mut m = Model::new();
         m.screen = Screen::Bluetooth;
         m.bt = vec![
-            BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false },
-            BtDevice { mac: "AA".into(), name: "Keyboard".into(), paired: true, connected: true },
+            BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true },
+            BtDevice { mac: "AA".into(), name: "Keyboard".into(), paired: true, connected: true, ready: true },
         ];
         m.sel = 1;
         assert!(matches!(m.handle(Nav::Ok)[0], Cmd::BtConnect(_)));
@@ -1001,5 +1017,24 @@ mod tests {
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::SongsAuto(false)]);
         assert!(!m.songs.auto);
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::SongsAuto(true)]);
+    }
+
+    #[test]
+    fn an_alert_blocks_everything_until_ok_and_a_failed_connect_raises_one() {
+        let mut m = Model::new();
+        m.screen = Screen::Bluetooth;
+        m.busy = Some("Connecting".into());
+        m.apply(Res::Alert("Not ready".into()));
+        assert!(m.busy.is_none());
+        assert_eq!(m.alert.as_deref(), Some("Not ready"));
+        assert!(m.handle(Nav::Down).is_empty());
+        assert!(m.alert.is_some()); // arrows do not dismiss it
+        m.hover(0);
+        assert!(m.alert.is_some());
+        assert!(m.handle(Nav::Ok).is_empty());
+        assert!(m.alert.is_none());
+        m.apply(Res::Alert("again".into()));
+        m.click(0); // the OK button
+        assert!(m.alert.is_none());
     }
 }

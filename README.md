@@ -251,6 +251,10 @@ Verified:
   there (so YARG was "not installed" and the Sound screen got "Permission denied"); fixed, and with the fix
   `/data/apps/yarg/current` exists, `/data` belongs to `player` and YARG starts. Also reproduced and fixed only
   in QEMU; the real laptop has not run this image yet.
+- Wiimote readiness: connecting a Wiimote from the Bluetooth screen now waits for its guitar bridge to run (and stay
+  up for two seconds) and otherwise disconnects it and shows an ATTENTION box that waits for OK; a connected Wiimote
+  shows READY or NOT READY on its row. Checked in QEMU with the fake Wiimote (`yargos-home wiicheck`: bridge running,
+  bridge stopped, no device). Not tried with real Bluetooth.
 - Installing to a disk (QEMU, a blank 12 GB virtio disk beside the boot stick): the boot menu's install entry
   opens the Install screen, which lists only the other disk; the install ran to the end, and the installed
   disk by itself booted straight to the launcher (no menu) with YARG 0.15.0. Its partitions, boot entry,

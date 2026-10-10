@@ -21,6 +21,7 @@ fn main() {
         Some("ctl") => ctl::run(),
         Some("padtest") => input::pad_test(),
         Some("xinfo") => x::xinfo(),
+        Some("wiicheck") => sys::wiicheck(args.get(2).map(String::as_str)),
         Some("xfocus") => x::xfocus(),
         Some("screenshot") => {
             let name = args.get(2).map(String::as_str).unwrap_or("home");

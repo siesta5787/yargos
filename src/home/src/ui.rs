@@ -8,6 +8,7 @@ const TEXT: Rgb = rgb(232, 236, 244);
 const DIM: Rgb = rgb(160, 172, 190);
 const GREEN: Rgb = rgb(23, 230, 140);
 const BLUE: Rgb = rgb(90, 150, 220);
+const AMBER: Rgb = rgb(245, 175, 50);
 
 /// A clickable area and the list row it stands for.
 #[derive(Clone, Copy, Debug)]
@@ -77,7 +78,15 @@ fn rows(m: &Model) -> Vec<Row> {
             let mut v = vec![row("Scan for devices")];
             for d in &m.bt {
                 let mut r = row(if d.name.is_empty() { d.mac.clone() } else { d.name.clone() });
-                r.tag = if d.connected { Some(("CONNECTED", GREEN)) } else if d.paired { Some(("PAIRED", BLUE)) } else { None };
+                r.tag = if d.connected && d.is_wiimote() {
+                    Some(if d.ready { ("READY", GREEN) } else { ("NOT READY", AMBER) })
+                } else if d.connected {
+                    Some(("CONNECTED", GREEN))
+                } else if d.paired {
+                    Some(("PAIRED", BLUE))
+                } else {
+                    None
+                };
                 v.push(r);
             }
             v
@@ -270,6 +279,10 @@ pub fn draw(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) 
     if let Some(msg) = &m.busy {
         hits.clear();
         draw_busy(cv, fonts, msg, m.tick, u);
+    }
+    if let Some(msg) = &m.alert {
+        hits.clear();
+        draw_alert(cv, fonts, msg, u, hits);
     }
 }
 
@@ -514,6 +527,26 @@ fn draw_confirm(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, question: &str, n
         fonts.draw_centered(cv, label, bx + bw / 2.0, cy + 170.0 * u + 16.0 * u, 26.0 * u, true, if sel { rgb(10, 16, 30) } else { TEXT }, 1.0);
         hits.push(Hit { x: bx as i32, y: (cy + 170.0 * u) as i32, w: bw as i32, h: bh as i32, row: i });
     }
+}
+
+/// A message that stays until OK is pressed: for failures that must not be mistaken for success.
+fn draw_alert(cv: &mut Canvas, fonts: &mut Fonts, msg: &str, u: f32, hits: &mut Vec<Hit>) {
+    let (w, h) = (cv.w as f32, cv.h as f32);
+    cv.rect(0, 0, cv.w as i32, cv.h as i32, rgb(0, 0, 0), 0.7);
+    let lines = wrap(fonts, msg, 24.0 * u, 640.0 * u);
+    let (cw, ch) = (720.0 * u, (190.0 + lines.len().min(7) as f32 * 32.0) * u);
+    let (cx, cy) = ((w - cw) / 2.0, (h - ch) / 2.0);
+    cv.rrect(cx as i32, cy as i32, cw as i32, ch as i32, 22.0 * u, rgb(12, 20, 38), 0.98);
+    cv.rect((cx + 24.0 * u) as i32, (cy + 24.0 * u) as i32, (8.0 * u) as i32, (34.0 * u) as i32, AMBER, 1.0);
+    fonts.draw(cv, "ATTENTION", cx + 46.0 * u, cy + 26.0 * u, 26.0 * u, true, AMBER, 1.0);
+    for (i, l) in lines.iter().take(7).enumerate() {
+        fonts.draw(cv, l, cx + 40.0 * u, cy + 78.0 * u + i as f32 * 32.0 * u, 24.0 * u, false, TEXT, 1.0);
+    }
+    let (bw, bh) = (200.0 * u, 58.0 * u);
+    let (bx, by) = (cx + (cw - bw) / 2.0, cy + ch - bh - 22.0 * u);
+    cv.rrect(bx as i32, by as i32, bw as i32, bh as i32, 14.0 * u, rgb(255, 255, 255), 0.95);
+    fonts.draw_centered(cv, "OK", bx + bw / 2.0, by + 14.0 * u, 26.0 * u, true, rgb(10, 16, 30), 1.0);
+    hits.push(Hit { x: bx as i32, y: by as i32, w: bw as i32, h: bh as i32, row: 0 });
 }
 
 fn draw_busy(cv: &mut Canvas, fonts: &mut Fonts, msg: &str, tick: u64, u: f32) {

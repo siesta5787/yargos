@@ -370,7 +370,9 @@ pub fn bt_list() -> Res {
         .into_iter()
         .map(|(mac, name)| {
             let (paired, connected) = btctl(&["info", &mac], 6).map(|o| parse_bt_info(&o)).unwrap_or((false, false));
-            BtDevice { mac, name, paired, connected }
+            // A Wiimote counts as ready only once its guitar bridge is running.
+            let ready = !(connected && name.starts_with("Nintendo RVL")) || wii_bridge_ready(&mac);
+            BtDevice { mac, name, paired, connected, ready }
         })
         .filter(|d| d.paired || !is_mac_like(&d.name))
         .collect();
@@ -384,6 +386,51 @@ pub fn bt_scan() -> Res {
         let _ = btctl(&["--timeout", "12", "scan", "on"], 20);
     }
     bt_list()
+}
+
+/// A HID device's uevent -> its address (lowercase, possibly empty) if it is a Wiimote (bus 0005 = Bluetooth).
+pub fn parse_wiimote_uevent(uevent: &str) -> Option<String> {
+    let is_wiimote = uevent.lines().any(|l| {
+        let l = l.to_uppercase();
+        l.starts_with("HID_ID=0005:0000057E:00000306") || l.starts_with("HID_ID=0005:0000057E:00000330")
+    });
+    is_wiimote.then(|| uevent.lines().find_map(|l| l.strip_prefix("HID_UNIQ=")).unwrap_or("").trim().to_lowercase())
+}
+
+fn wiimote_hidraws() -> Vec<(String, String)> {
+    let Ok(dir) = std::fs::read_dir("/sys/class/hidraw") else { return vec![] };
+    dir.filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let uevent = std::fs::read_to_string(e.path().join("device/uevent")).ok()?;
+            Some((e.file_name().to_string_lossy().to_string(), parse_wiimote_uevent(&uevent)?))
+        })
+        .collect()
+}
+
+fn bridge_active(node: &str) -> bool {
+    Command::new("systemctl").args(["is-active", "--quiet", &format!("yargos-bridge-wii@{node}.service")]).status().map(|s| s.success()).unwrap_or(false)
+}
+
+/// Is the guitar bridge running for the Wiimote with this address? (If the kernel does not say which Wiimote a
+/// device is, any running bridge counts.)
+pub fn wii_bridge_ready(mac: &str) -> bool {
+    let mac = mac.to_lowercase();
+    wiimote_hidraws().iter().any(|(node, uniq)| (uniq.is_empty() || *uniq == mac) && bridge_active(node))
+}
+
+/// `yargos-home wiicheck [address]`: what the launcher sees of Wiimotes and their bridges (diagnostics).
+pub fn wiicheck(mac: Option<&str>) -> i32 {
+    let nodes = wiimote_hidraws();
+    if nodes.is_empty() {
+        println!("no Wiimote HID devices");
+    }
+    for (node, uniq) in &nodes {
+        println!("{node}  address '{uniq}'  bridge active: {}", bridge_active(node));
+    }
+    if let Some(m) = mac {
+        println!("ready for {m}: {}", wii_bridge_ready(m));
+    }
+    0
 }
 
 fn wiimote_hid_present() -> bool {
@@ -403,10 +450,28 @@ pub fn bt_connect(d: &BtDevice) -> Result<String, String> {
             let _ = btctl(&["connect", &d.mac], 8);
             std::thread::sleep(Duration::from_secs(1));
             if wiimote_hid_present() {
-                return Ok("Wiimote connected".into());
+                break;
             }
         }
-        return Err("The Wiimote did not connect. Hold 1+2 until the lights flash, then try again".into());
+        if !wiimote_hid_present() {
+            return Err("The Wiimote did not connect. Hold 1+2 on it until its lights flash, then choose it again.".into());
+        }
+        // The HID device appearing is not enough: the bridge that turns it into a guitar has to be running, and
+        // to stay up. Bluetooth alone happily reports "connected" for a Wiimote that is not really usable.
+        let start = Instant::now();
+        let mut up_since: Option<Instant> = None;
+        while start.elapsed() < Duration::from_secs(12) {
+            if wii_bridge_ready(&d.mac) {
+                if up_since.get_or_insert_with(Instant::now).elapsed() >= Duration::from_secs(2) {
+                    return Ok("Wiimote ready: the guitar bridge is running".into());
+                }
+            } else {
+                up_since = None;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        let _ = btctl(&["disconnect", &d.mac], 6);
+        return Err("The Wiimote connected, but it is NOT ready: the guitar bridge did not start. Hold 1+2 on the Wiimote until its lights flash and keep holding while it connects, then choose it again.".into());
     }
     let _ = btctl(&["pair", &d.mac], 25);
     let _ = btctl(&["trust", &d.mac], 6);
@@ -834,5 +899,14 @@ mod tests {
         assert_eq!(parse_sources("/media/songs/Songs\n/media/songs/Rock Band\n"), vec!["Songs", "Rock Band"]);
         assert_eq!(parse_sources("/media/songs\n"), vec!["the whole drive"]);
         assert!(parse_sources("").is_empty());
+    }
+
+    #[test]
+    fn wiimotes_are_recognised_from_the_hid_uevent() {
+        let wii = "DRIVER=hid-generic\nHID_ID=0005:0000057E:00000306\nHID_NAME=Nintendo RVL-CNT-01\nHID_UNIQ=00:22:D7:AD:BE:D4\n";
+        assert_eq!(parse_wiimote_uevent(wii), Some("00:22:d7:ad:be:d4".into()));
+        assert_eq!(parse_wiimote_uevent("HID_ID=0005:0000057E:00000330\n"), Some(String::new()));
+        assert_eq!(parse_wiimote_uevent("HID_ID=0003:0000046D:0000C534\nHID_UNIQ=\n"), None);
+        assert_eq!(parse_wiimote_uevent("HID_ID=0005:000012BA:00000100\n"), None); // our own virtual guitar
     }
 }

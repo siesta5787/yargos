@@ -29,9 +29,9 @@ pub fn model(name: &str) -> Model {
     m.cur_card_dev = Some((0, 3));
     m.volume = Some((1, 70));
     m.bt = vec![
-        BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false },
-        BtDevice { mac: "AA:BB:CC:00:00:01".into(), name: "Logitech K380".into(), paired: true, connected: true },
-        BtDevice { mac: "AA:BB:CC:00:00:02".into(), name: "Polybar Guitar".into(), paired: true, connected: false },
+        BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true },
+        BtDevice { mac: "AA:BB:CC:00:00:01".into(), name: "Logitech K380".into(), paired: true, connected: true, ready: true },
+        BtDevice { mac: "AA:BB:CC:00:00:02".into(), name: "Polybar Guitar".into(), paired: true, connected: false, ready: true },
     ];
     m.upd = UpdInfo {
         installed: "0.15.0".into(),
@@ -78,6 +78,15 @@ pub fn model(name: &str) -> Model {
         "system" => { m.screen = Screen::System; m.sel = 2; }
         "busy" => { m.screen = Screen::Wifi; m.busy = Some("Connecting to Neighbour 5G…".into()); }
         "confirm" => { m.screen = Screen::System; m.sel = 1; m.confirm = Some(Power::Shutdown); m.confirm_sel = 1; }
+        "bt-notready" => {
+            m.screen = Screen::Bluetooth;
+            m.bt[0].connected = true;
+            m.bt[0].ready = false;
+        }
+        "alert" => {
+            m.screen = Screen::Bluetooth;
+            m.alert = Some("The Wiimote connected, but it is NOT ready: the guitar bridge did not start. Hold 1+2 on the Wiimote until its lights flash and keep holding while it connects, then choose it again.".into());
+        }
         "toast" => { m.screen = Screen::Sound; m.toast("Sound output changed to HDMI 0"); }
         _ => {}
     }

@@ -102,7 +102,11 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
             Cmd::Refresh(Screen::Bluetooth) => bg(tx, |tx| res(tx, sys::bt_list())),
             Cmd::BtScan => bg(tx, |tx| res(tx, sys::bt_scan())),
             Cmd::BtConnect(d) => bg(tx, move |tx| {
-                done(tx, sys::bt_connect(&d));
+                // A failure is an alert that waits for OK, not a toast that is gone in a few seconds.
+                match sys::bt_connect(&d) {
+                    Ok(m) => res(tx, Res::Done(m)),
+                    Err(e) => res(tx, Res::Alert(e)),
+                }
                 res(tx, sys::bt_list());
             }),
             Cmd::BtForget(mac) => bg(tx, move |tx| {
