@@ -88,7 +88,16 @@ fn rows(m: &Model) -> Vec<Row> {
             Row { value: if m.upd.auto { "ON".into() } else { "OFF".into() }, ..row("Automatic updates") },
             Row { enabled: m.upd.previous.is_some(), value: m.upd.previous.clone().unwrap_or_default(), ..row("Go back to the previous version") },
         ],
-        Screen::Songs => vec![row("Look for the song drive again")],
+        Screen::Songs => {
+            let mut v = vec![row("Look for the song drive again")];
+            if m.songs.mounted {
+                let mut r = row(m.songs.name.clone());
+                r.value = m.songs.space.clone();
+                r.tag = Some(("CONNECTED", GREEN));
+                v.push(r);
+            }
+            v
+        }
         Screen::System => vec![row("Restart"), row("Shut down"), row("Install on this computer's disk")],
         Screen::Install if m.installed.is_some() => vec![row("Restart"), row("Shut down")],
         Screen::Install => {
@@ -152,6 +161,9 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
         }
         Screen::Songs => ("SONGS", {
             let mut v = vec![m.songs.detail.clone()];
+            if !m.songs.sources.is_empty() {
+                v.push(format!("YARG gets one song source for each of: {}.", m.songs.sources.join(", ")));
+            }
             v.push("Name your song drive YARGSONGS (ext4, exFAT, NTFS or FAT) and plug it in. YARG scans it each time it starts.".into());
             v
         }),

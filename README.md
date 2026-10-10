@@ -33,7 +33,7 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 
 ## Installing / trying it on a PC
 
-`output/images/yargos.img` is a complete UEFI-bootable disk (128M boot, 1.25G system, 700M data; about 2.2 GB,
+`output/images/yargos.img` is a complete UEFI-bootable disk (128M boot, 1.5G system, 700M data; about 2.4 GB,
 so any 4 GB or larger USB stick works, preferably USB 3). It runs from the drive you write it to. On first
 boot `yargos-growdata.service` grows the data partition (and its filesystem) to fill the drive, before `/data`
 is mounted; on a drive exactly the image's size nothing grows and the 700M holds YARG with some room to spare.
@@ -227,14 +227,15 @@ Verified:
   YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
   and the menus can be navigated with the pads.
 
-- Trimmed image (2.76 GB -> 2.2 GB): `post-build.sh` drops the Clang/libclc/SPIR-V tools Mesa's build leaves
-  behind (nothing links them) and compresses the firmware to `.xz` (404 -> 160 MB). In QEMU the trimmed image
-  boots, YARG reaches its menu, and the kernel loads an xz-compressed `regulatory.db` (a corrupt copy fails
-  with the expected error, so the check can tell). Real firmware (amdgpu, Wi-Fi, Bluetooth) loading from `.xz`
-  is not yet confirmed on hardware.
+- Trimmed image (2.76 GB -> 2.4 GB): `post-build.sh` drops the Clang/libclc/SPIR-V tools Mesa's build leaves
+  behind (nothing links them). Firmware compression to `.xz` was tried (404 -> 160 MB, and the kernel read a
+  compressed `regulatory.db` in QEMU) but the first real-hardware run lost Wi-Fi and sound, so firmware is
+  plain again until it can be tested on the real drivers.
 - Song drive: an NTFS drive labelled YARGSONGS (QEMU, as a USB drive) mounts read-only at `/media/songs` through
-  ntfs-3g and its files can be read; `run-yarg` makes sure YARG's `settings.json` lists `/media/songs`
-  (existing folders are kept). The Linux kernel's own NTFS driver refused a real Windows-formatted drive
+  ntfs-3g and its files can be read; `run-yarg` gives YARG one song source for each top-level folder on the drive that has songs
+  (`usr/lib/yargos/song-sources`; system folders skipped; a flat drive is one source), replacing its sources
+  under `/media/songs` and keeping any others; `AUTO_SONG_SOURCES=no` in `/data/yargos.conf` turns it off.
+  Checked in QEMU with an ext4 drive of three song folders, an empty one and Windows system folders. The Linux kernel's own NTFS driver refused a real Windows-formatted drive
   ("Failed to load $BadClus", "volume is dirty"); ntfs-3g mounted that same drive read-only on the dev PC.
   The kernel now has FUSE and `mount.ntfs` points at ntfs-3g. exFAT, FAT and ext4 are built into the kernel.
 - YARG's audio add-ons: with no `LD_LIBRARY_PATH`, YARG could not load Opus sound effects or songs (23 sound

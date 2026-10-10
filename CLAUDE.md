@@ -51,12 +51,13 @@ build a static x11rb program that calls XTEST (`xtest_fake_input`) and fetch it 
 
 ## Size
 
-`board/yargos/post-build.sh` trims the target: it removes the Clang/SPIR-V leftovers and compresses firmware with
-`xz --check=crc32 --lzma2=dict=512KiB` (the kernel's `FW_LOADER_COMPRESS_XZ`; `regulatory.db*` must stay plain).
-Do NOT compress kernel modules: the build's host `depmod` has no zlib/xz/zstd and silently writes an empty
-`modules.dep`, so no driver would load (verify any change with `wc -l .../modules.dep`). Changing
-`BR2_TARGET_ROOTFS_EXT2_SIZE` only takes effect after deleting `images/rootfs.ext2` (and the `.ext4` link and
-`yargos.img`) and running `tools/br.sh`; keep it a little above `du -sm output/target`.
+`board/yargos/post-build.sh` removes the Clang/SPIR-V leftovers of Mesa's build. Do NOT compress firmware to `.xz` or
+the kernel modules: compressed firmware cost a real laptop its Wi-Fi and sound (the cause was never confirmed,
+so it needs a hardware test before it comes back), and the build's host `depmod` has no zlib/xz/zstd, so
+compressed modules silently give an empty `modules.dep` and no driver loads. If `.xz` firmware ever sits in the
+target the post-build step stops on purpose: delete them and run `tools/br.sh linux-firmware-dirclean`.
+Changing `BR2_TARGET_ROOTFS_EXT2_SIZE` needs `tools/br.sh yargos_x86_64_defconfig`, then deleting
+`images/rootfs.ext2`, `rootfs.ext4` and `yargos.img`, then `tools/br.sh`; keep it well above `du -sm output/target`.
 
 ## Disk identity and the installer
 

@@ -19,24 +19,14 @@ rm -f "$TARGET_DIR"/usr/bin/diagtool "$TARGET_DIR"/usr/bin/llvm-spirv "$TARGET_D
 rm -f "$TARGET_DIR"/usr/libexec/analyze-c++ "$TARGET_DIR"/usr/libexec/analyze-cc \
       "$TARGET_DIR"/usr/libexec/intercept-c++ "$TARGET_DIR"/usr/libexec/intercept-cc
 
-# Firmware is the biggest part of the system. The kernel reads .xz files (CONFIG_FW_LOADER_COMPRESS_XZ), as
-# distributions ship them, and they shrink to about a third. regulatory.db stays plain: cfg80211 wants it by name.
+# Firmware stays as the .bin files linux-firmware installs. Compressing it to .xz (the kernel can read that, and
+# a test with regulatory.db worked) saved 250 MB but the first real-hardware run lost Wi-Fi and sound, so it
+# is off until it can be checked on the actual drivers. If a build left .xz firmware behind, the package must be
+# reinstalled (tools/br.sh linux-firmware-dirclean) to get the plain files back.
 FW=$TARGET_DIR/usr/lib/firmware
-if [ -d "$FW" ] && command -v xz >/dev/null; then
-    find "$FW" -type f ! -name '*.xz' ! -name '*.zst' ! -name 'regulatory.db*' \
-        -exec xz -f --check=crc32 --lzma2=dict=512KiB {} +
-    # A link must point at the compressed file under a compressed name (foo.bin -> bar.bin becomes foo.bin.xz -> bar.bin.xz).
-    find "$FW" -type l ! -name '*.xz' | while read -r link; do
-        target=$(readlink "$link")
-        case $target in
-            /*) real=$TARGET_DIR$target ;;
-            *) real=$(dirname "$link")/$target ;;
-        esac
-        if [ -f "$real.xz" ]; then
-            ln -sf "$target.xz" "$link.xz"
-            rm -f "$link"
-        fi
-    done
+if [ -d "$FW" ] && find "$FW" -name '*.xz' | grep -q .; then
+    echo "post-build: compressed firmware found in the target; run tools/br.sh linux-firmware-dirclean" >&2
+    exit 1
 fi
 
 # Modules are not compressed (the build's depmod cannot read compressed ones). Drop stale compressed copies

@@ -1,0 +1,51 @@
+#!/bin/sh
+# song-sources: print the folders YARG should scan on the song drive, one per line (nothing if no drive is
+# connected). Each top-level folder that has songs in it becomes its own source, so a drive organised into folders
+# (for sorting) shows up as separate sources in YARG. A flat drive, where the top-level folders are songs
+# themselves (or there are song files at the top), is one source: the whole drive.
+# A song is a folder with song.ini, notes.chart or notes.mid; a .sng file is a packed song.
+ROOT=${YARGOS_SONGS:-/media/songs}
+
+# Looking inside makes the automount mount the drive; if nothing is mounted, there is no drive.
+ls "$ROOT" >/dev/null 2>&1
+# The automount leaves an "autofs" entry behind even once the drive is mounted over it, so look for a real one.
+if [ -z "${YARGOS_SONGS_TEST:-}" ]; then
+    awk -v r="$ROOT" '$2 == r && $3 != "autofs" { found = 1 } END { exit !found }' "${YARGOS_MOUNTS:-/proc/mounts}" || exit 0
+fi
+
+is_song() { [ -e "$1/song.ini" ] || [ -e "$1/notes.chart" ] || [ -e "$1/notes.mid" ]; }
+
+has_songs() { # has_songs DIR: any song or .sng file within six levels (stops at the first)
+    find "$1" -maxdepth 6 \( -name song.ini -o -name notes.chart -o -name notes.mid -o -name '*.sng' \) -print 2>/dev/null | head -n 1 | grep -q .
+}
+
+skip() { # Windows and filesystem housekeeping folders, hidden folders
+    case $1 in .* | '$'* | 'System Volume Information' | 'lost+found' | RECYCLER | 'found.'*) return 0 ;; esac
+    return 1
+}
+
+flat=no
+for d in "$ROOT"/*/; do
+    [ -d "$d" ] || continue
+    skip "$(basename "$d")" && continue
+    if is_song "${d%/}"; then flat=yes; break; fi
+done
+for f in "$ROOT"/*.sng; do [ -e "$f" ] && flat=yes && break; done
+if [ "$flat" = yes ]; then
+    echo "$ROOT"
+    exit 0
+fi
+
+found=no
+for d in "$ROOT"/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    skip "$name" && continue
+    if has_songs "${d%/}"; then
+        echo "$ROOT/$name"
+        found=yes
+    fi
+done
+# Songs nowhere we could see (or deeper than six levels): scan the whole drive rather than nothing.
+[ "$found" = yes ] || echo "$ROOT"
+exit 0

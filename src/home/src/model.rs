@@ -134,6 +134,12 @@ pub struct UpdInfo {
 pub struct SongsInfo {
     pub mounted: bool,
     pub detail: String,
+    /// The drive's name (its label) and a short "52 GB free of 224 GB", shown as a row once it is connected.
+    pub name: String,
+    pub space: String,
+    pub fs: String,
+    /// What YARG will scan: the drive's top-level folders that have songs (or "the whole drive").
+    pub sources: Vec<String>,
 }
 
 /// Results of background jobs.
@@ -300,7 +306,7 @@ impl Model {
             Screen::Sound => self.outputs.len() + usize::from(self.volume.is_some()) + 1,
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
-            Screen::Songs => 1,
+            Screen::Songs => 1 + usize::from(self.songs.mounted),
             Screen::System => 3,
             Screen::Install => if self.installed.is_some() { 2 } else { 1 + self.disks.len() },
             Screen::Password => 0,
@@ -557,9 +563,13 @@ impl Model {
                     vec![Cmd::UpdRollback]
                 }
             },
-            Screen::Songs => {
-                self.busy = Some("Looking for the song drive…".into());
+            Screen::Songs if self.sel == 0 => {
+                self.busy = Some("Looking for the song drive\u{2026}".into());
                 vec![Cmd::SongsRefresh]
+            }
+            Screen::Songs => {
+                self.toast("The song drive is at /media/songs; YARG scans it each time it starts");
+                vec![]
             }
             Screen::System if self.sel == 2 => self.enter(Screen::Install),
             Screen::System => {
@@ -965,5 +975,19 @@ mod tests {
         m.handle(Nav::Back);
         assert!(m.erase.is_none());
         assert_eq!(m.screen, Screen::Install);
+    }
+
+    #[test]
+    fn a_connected_song_drive_gets_its_own_row() {
+        let mut m = Model::new();
+        m.screen = Screen::Songs;
+        assert_eq!(m.row_count(), 1);
+        m.apply(Res::Songs(SongsInfo { mounted: true, name: "YARGSONGS".into(), space: "52 GB free of 224 GB".into(), ..SongsInfo::default() }));
+        assert_eq!(m.row_count(), 2);
+        m.sel = 1;
+        assert!(m.handle(Nav::Ok).is_empty()); // only explains where it is
+        assert!(m.live_toast().unwrap().contains("/media/songs"));
+        m.sel = 0;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::SongsRefresh]);
     }
 }

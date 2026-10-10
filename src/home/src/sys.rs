@@ -512,16 +512,37 @@ pub fn human(kib: u64) -> String {
     if gb >= 10.0 { format!("{gb:.0} GB") } else if gb >= 1.0 { format!("{gb:.1} GB") } else { format!("{} MB", kib / 1024) }
 }
 
+/// `song-sources` output (paths under /media/songs) -> the names to show: folder names, or "the whole drive".
+pub fn parse_sources(out: &str) -> Vec<String> {
+    out.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| match l.trim_end_matches('/').strip_prefix("/media/songs/") {
+            Some(name) => name.to_string(),
+            None => "the whole drive".to_string(),
+        })
+        .collect()
+}
+
 pub fn songs_refresh() -> SongsInfo {
     // Looking inside makes the automount mount the drive (or fail after its short timeout).
     let entries = std::fs::read_dir("/media/songs").map(|d| d.take(200_000).count()).unwrap_or(0);
     let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
     match parse_mount(&mounts, "/media/songs") {
-        Some((_, fs)) => {
+        Some((src, fs)) => {
             let space = run("df", &["-k", "/media/songs"]).ok().and_then(|o| parse_df(&o)).map(|(t, f)| format!(", {} free of {}", human(f), human(t))).unwrap_or_default();
-            SongsInfo { mounted: true, detail: format!("The song drive is connected ({fs}{space}) and mounted at /media/songs. {entries} items at the top level.") }
+            let label = run("lsblk", &["-no", "LABEL", &src]).map(|o| o.trim().to_string()).unwrap_or_default();
+            let space_short = space.trim_start_matches(", ").to_string();
+            SongsInfo {
+                mounted: true,
+                detail: format!("The song drive is connected ({}) and mounted at /media/songs. {entries} items at the top level.", fs.to_uppercase().replace("FUSEBLK", "NTFS")),
+                name: if label.is_empty() { "Song drive".into() } else { label },
+                space: space_short,
+                fs: fs.to_uppercase().replace("FUSEBLK", "NTFS"),
+                sources: run("/usr/lib/yargos/song-sources", &[]).map(|o| parse_sources(&o)).unwrap_or_default(),
+            }
         }
-        None => SongsInfo { mounted: false, detail: "No song drive found. Plug in a drive labelled YARGSONGS.".into() },
+        None => SongsInfo { mounted: false, detail: "No song drive found. Plug in a drive labelled YARGSONGS.".into(), ..SongsInfo::default() },
     }
 }
 
@@ -786,5 +807,12 @@ mod tests {
         assert_eq!(parse_install_line("DONE\n"), InstallLine::Done);
         assert_eq!(parse_install_line("ERROR Could not partition /dev/sdb"), InstallLine::Error("Could not partition /dev/sdb".into()));
         assert_eq!(parse_install_line("cp: something"), InstallLine::Other);
+    }
+
+    #[test]
+    fn song_sources_are_shown_by_folder_name() {
+        assert_eq!(parse_sources("/media/songs/Songs\n/media/songs/Rock Band\n"), vec!["Songs", "Rock Band"]);
+        assert_eq!(parse_sources("/media/songs\n"), vec!["the whole drive"]);
+        assert!(parse_sources("").is_empty());
     }
 }

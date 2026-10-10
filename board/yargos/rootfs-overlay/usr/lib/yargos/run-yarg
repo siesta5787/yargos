@@ -6,16 +6,24 @@ xset s off -dpms
 # (it is already screen-sized) so the focus sticks.
 export SDL_VIDEO_X11_LEGACY_FULLSCREEN=0
 
-# The song drive (any drive labelled YARGSONGS) mounts at /media/songs; make sure YARG scans it, without anyone
-# having to add the folder by hand. Existing folders are kept; a settings file YARG cannot read is left alone.
+# The song drive (any drive labelled YARGSONGS) mounts at /media/songs. Every top-level folder on it that has songs
+# becomes its own song source in YARG (song-sources decides), so nobody adds folders by hand. Sources YARG already
+# has outside /media/songs are kept; the ones under /media/songs are replaced by what is on the drive now. With no
+# drive connected the list is left alone. AUTO_SONG_SOURCES=no in /data/yargos.conf turns this off.
 SETTINGS=/data/yarg/settings.json
-if [ -f "$SETTINGS" ]; then
-    if jq -e . "$SETTINGS" >/dev/null 2>&1; then
-        jq 'if ((.SongFolders // []) | index("/media/songs")) then . else .SongFolders = ((.SongFolders // []) + ["/media/songs"]) end' \
-            "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
+AUTO_SONG_SOURCES=yes
+[ -f /data/yargos.conf ] && . /data/yargos.conf
+if [ "$AUTO_SONG_SOURCES" != no ]; then
+    SOURCES=$(/usr/lib/yargos/song-sources)
+    NEW=$(printf '%s\n' "$SOURCES" | jq -R . | jq -s 'map(select(. != ""))')
+    if [ -n "$SOURCES" ]; then
+        if [ ! -f "$SETTINGS" ]; then
+            printf '{"SongFolders":%s}\n' "$NEW" > "$SETTINGS"
+        elif jq -e . "$SETTINGS" >/dev/null 2>&1; then
+            jq --argjson new "$NEW" '.SongFolders = (((.SongFolders // []) | map(select(startswith("/media/songs") | not))) + $new)' \
+                "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
+        fi
     fi
-else
-    printf '{"SongFolders":["/media/songs"]}\n' > "$SETTINGS"
 fi
 # YARG's audio library (BASS) loads its add-ons (Opus decoding, the effects used for the microphone) by bare
 # name, which only works if the plugins folder is on the library path. Without it every .opus sound effect,
