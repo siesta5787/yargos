@@ -151,3 +151,73 @@ impl Display {
         });
     }
 }
+
+/// `yargos-home xinfo`: print who has the input focus and how every top-level window is set up (diagnostics).
+pub fn xinfo() -> i32 {
+    let Ok((conn, num)) = RustConnection::connect(None) else { eprintln!("cannot connect to the X server"); return 1 };
+    let root = conn.setup().roots[num].root;
+    let name = |w: Window| -> String {
+        conn.get_property(false, w, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 64)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| String::from_utf8_lossy(&r.value).into_owned())
+            .unwrap_or_default()
+    };
+    if let Some(f) = conn.get_input_focus().ok().and_then(|c| c.reply().ok()) {
+        println!("input focus: 0x{:x} (revert {:?})", f.focus, f.revert_to);
+    }
+    if let Some(p) = conn.query_pointer(root).ok().and_then(|c| c.reply().ok()) {
+        println!("pointer at {},{} over child 0x{:x}", p.root_x, p.root_y, p.child);
+    }
+    let mut stack: Vec<(Window, usize)> = conn
+        .query_tree(root)
+        .ok()
+        .and_then(|c| c.reply().ok())
+        .map(|t| t.children.into_iter().rev().map(|w| (w, 0)).collect())
+        .unwrap_or_default();
+    while let Some((w, depth)) = stack.pop() {
+        let (Some(a), Some(g)) = (
+            conn.get_window_attributes(w).ok().and_then(|c| c.reply().ok()),
+            conn.get_geometry(w).ok().and_then(|c| c.reply().ok()),
+        ) else { continue };
+        println!(
+            "{:indent$}0x{w:x} \"{}\" {}x{}+{}+{} map={:?} override={} your_mask={:?} all_masks={:?}",
+            "", name(w), g.width, g.height, g.x, g.y, a.map_state, a.override_redirect, a.your_event_mask, a.all_event_masks,
+            indent = depth * 2
+        );
+        if let Some(t) = conn.query_tree(w).ok().and_then(|c| c.reply().ok()) {
+            stack.extend(t.children.into_iter().rev().map(|c| (c, depth + 1)));
+        }
+    }
+    0
+}
+
+/// `yargos-home xfocus`: lose and regain the input focus on the window called YARG (diagnostics).
+pub fn xfocus() -> i32 {
+    let Ok((conn, num)) = RustConnection::connect(None) else { return 1 };
+    let root = conn.setup().roots[num].root;
+    let mut stack = vec![root];
+    while let Some(w) = stack.pop() {
+        let Some(t) = conn.query_tree(w).ok().and_then(|c| c.reply().ok()) else { continue };
+        for c in t.children {
+            let n = conn
+                .get_property(false, c, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 8)
+                .ok()
+                .and_then(|r| r.reply().ok())
+                .map(|r| r.value)
+                .unwrap_or_default();
+            if n == b"YARG" {
+                let _ = conn.set_input_focus(InputFocus::NONE, 0u32, x11rb::CURRENT_TIME);
+                let _ = conn.flush();
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                let _ = conn.set_input_focus(InputFocus::POINTER_ROOT, c, x11rb::CURRENT_TIME);
+                let _ = conn.get_input_focus().ok().and_then(|c| c.reply().ok());
+                println!("refocused 0x{c:x}");
+                return 0;
+            }
+            stack.push(c);
+        }
+    }
+    eprintln!("no YARG window");
+    1
+}
