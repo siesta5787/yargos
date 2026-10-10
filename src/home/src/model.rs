@@ -105,6 +105,7 @@ pub enum Cmd {
     UpdRollback,
     UpdAuto(bool),
     SongsRefresh,
+    SongsAuto(bool),
     /// Erase this disk (a /dev path) and install the system on it.
     Install(String),
     Power(Power),
@@ -140,6 +141,8 @@ pub struct SongsInfo {
     pub fs: String,
     /// What YARG will scan: the drive's top-level folders that have songs (or "the whole drive").
     pub sources: Vec<String>,
+    /// Add each top-level song folder as its own source in YARG (AUTO_SONG_SOURCES in /data/yargos.conf).
+    pub auto: bool,
 }
 
 /// Results of background jobs.
@@ -306,7 +309,7 @@ impl Model {
             Screen::Sound => self.outputs.len() + usize::from(self.volume.is_some()) + 1,
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
-            Screen::Songs => 1 + usize::from(self.songs.mounted),
+            Screen::Songs => 2 + usize::from(self.songs.mounted),
             Screen::System => 3,
             Screen::Install => if self.installed.is_some() { 2 } else { 1 + self.disks.len() },
             Screen::Password => 0,
@@ -567,9 +570,13 @@ impl Model {
                 self.busy = Some("Looking for the song drive\u{2026}".into());
                 vec![Cmd::SongsRefresh]
             }
-            Screen::Songs => {
+            Screen::Songs if self.songs.mounted && self.sel == 1 => {
                 self.toast("The song drive is at /media/songs; YARG scans it each time it starts");
                 vec![]
+            }
+            Screen::Songs => {
+                self.songs.auto = !self.songs.auto;
+                vec![Cmd::SongsAuto(self.songs.auto)]
             }
             Screen::System if self.sel == 2 => self.enter(Screen::Install),
             Screen::System => {
@@ -978,16 +985,21 @@ mod tests {
     }
 
     #[test]
-    fn a_connected_song_drive_gets_its_own_row() {
+    fn a_connected_song_drive_gets_its_own_row_and_the_switch_stays_last() {
         let mut m = Model::new();
         m.screen = Screen::Songs;
-        assert_eq!(m.row_count(), 1);
-        m.apply(Res::Songs(SongsInfo { mounted: true, name: "YARGSONGS".into(), space: "52 GB free of 224 GB".into(), ..SongsInfo::default() }));
-        assert_eq!(m.row_count(), 2);
+        assert_eq!(m.row_count(), 2); // look again, automatic switch
+        m.apply(Res::Songs(SongsInfo { mounted: true, name: "YARGSONGS".into(), space: "52 GB free of 224 GB".into(), auto: true, ..SongsInfo::default() }));
+        assert_eq!(m.row_count(), 3);
         m.sel = 1;
         assert!(m.handle(Nav::Ok).is_empty()); // only explains where it is
         assert!(m.live_toast().unwrap().contains("/media/songs"));
         m.sel = 0;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::SongsRefresh]);
+        m.busy = None;
+        m.sel = 2;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::SongsAuto(false)]);
+        assert!(!m.songs.auto);
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::SongsAuto(true)]);
     }
 }

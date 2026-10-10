@@ -234,7 +234,9 @@ Verified:
 - Song drive: an NTFS drive labelled YARGSONGS (QEMU, as a USB drive) mounts read-only at `/media/songs` through
   ntfs-3g and its files can be read; `run-yarg` gives YARG one song source for each top-level folder on the drive that has songs
   (`usr/lib/yargos/song-sources`; system folders skipped; a flat drive is one source), replacing its sources
-  under `/media/songs` and keeping any others; `AUTO_SONG_SOURCES=no` in `/data/yargos.conf` turns it off.
+  under `/media/songs` and keeping any others; the "Add song folders to YARG" switch on the Songs screen (`AUTO_SONG_SOURCES` in `/data/yargos.conf`) turns it off. The
+  Songs screen also lists the connected drive with its free space and the sources found. The switch was toggled in QEMU
+  and saved; the drive was an ext4 test drive, not a real NTFS one.
   Checked in QEMU with an ext4 drive of three song folders, an empty one and Windows system folders. The Linux kernel's own NTFS driver refused a real Windows-formatted drive
   ("Failed to load $BadClus", "volume is dirty"); ntfs-3g mounted that same drive read-only on the dev PC.
   The kernel now has FUSE and `mount.ntfs` points at ntfs-3g. exFAT, FAT and ext4 are built into the kernel.

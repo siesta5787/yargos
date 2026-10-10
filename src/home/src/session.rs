@@ -122,6 +122,7 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Upd(sys::upd_info(&upd)));
             }),
             Cmd::UpdAuto(on) => bg(tx, move |tx| done(tx, sys::write_auto_update(on))),
+            Cmd::SongsAuto(on) => bg(tx, move |tx| done(tx, sys::write_auto_songs(on))),
             Cmd::Refresh(Screen::Install) => bg(tx, |tx| res(tx, Res::Disks(sys::install_disks()))),
             Cmd::Install(disk) => bg(tx, move |tx| {
                 let r = sys::install_run(&disk, |step| res(tx, Res::InstallStep(step)));

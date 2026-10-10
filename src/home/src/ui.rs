@@ -96,6 +96,7 @@ fn rows(m: &Model) -> Vec<Row> {
                 r.tag = Some(("CONNECTED", GREEN));
                 v.push(r);
             }
+            v.push(Row { value: if m.songs.auto { "ON".into() } else { "OFF".into() }, ..row("Add song folders to YARG") });
             v
         }
         Screen::System => vec![row("Restart"), row("Shut down"), row("Install on this computer's disk")],
@@ -161,10 +162,16 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
         }
         Screen::Songs => ("SONGS", {
             let mut v = vec![m.songs.detail.clone()];
-            if !m.songs.sources.is_empty() {
-                v.push(format!("YARG gets one song source for each of: {}.", m.songs.sources.join(", ")));
+            if m.songs.mounted {
+                v.push(if !m.songs.auto {
+                    "Automatic is OFF: you manage YARG's song folders yourself, in YARG's settings.".to_string()
+                } else if m.songs.sources.is_empty() {
+                    "Each folder on the drive that has songs becomes its own source in YARG.".to_string()
+                } else {
+                    format!("Becomes a source in YARG each time it starts: {}.", m.songs.sources.join(", "))
+                });
             }
-            v.push("Name your song drive YARGSONGS (ext4, exFAT, NTFS or FAT) and plug it in. YARG scans it each time it starts.".into());
+            v.push("Name your song drive YARGSONGS (ext4, exFAT, NTFS or FAT).".into());
             v
         }),
         Screen::System => ("SYSTEM", m.sysinfo.clone()),
@@ -351,7 +358,7 @@ fn draw_list_screen(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits:
         if let Some((t, _)) = r.tag {
             reserve += fonts.width(t, 14.0 * u, true) + 40.0 * u;
         }
-        let label = fit(fonts, &r.label, 26.0 * u, lw - (tx - lx) - reserve);
+        let label = fit_bold(fonts, &r.label, 26.0 * u, lw - (tx - lx) - reserve, sel);
         fonts.draw(cv, &label, tx, y + (rh - 26.0 * u) / 2.0 - 3.0 * u, 26.0 * u, sel, if sel { rgb(255, 255, 255) } else { TEXT }, a);
         let mut rx = lx + lw - 24.0 * u;
         match r.kind {
@@ -418,6 +425,19 @@ fn lines_draw(cv: &mut Canvas, fonts: &mut Fonts, lines: &[String], px: f32, pw:
         }
         *y += 10.0 * u;
     }
+}
+
+/// Like `fit`, measuring in the weight the text will be drawn in (the selected row is bold and wider).
+fn fit_bold(fonts: &mut Fonts, text: &str, px: f32, max: f32, bold: bool) -> String {
+    let width = |f: &mut Fonts, t: &str| f.width(t, px, bold);
+    if width(fonts, text) <= max {
+        return text.to_string();
+    }
+    let mut s: String = text.to_string();
+    while !s.is_empty() && width(fonts, &format!("{s}\u{2026}")) > max {
+        s.pop();
+    }
+    format!("{s}\u{2026}")
 }
 
 fn fit(fonts: &mut Fonts, text: &str, px: f32, max: f32) -> String {

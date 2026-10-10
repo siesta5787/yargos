@@ -435,13 +435,29 @@ pub fn read_auto_update() -> bool {
         .unwrap_or(true)
 }
 
-pub fn write_auto_update(on: bool) -> Result<String, String> {
+/// Set `KEY=yes|no` in /data/yargos.conf, keeping the other lines.
+fn write_conf_flag(key: &str, on: bool) -> Result<(), String> {
     let path = format!("{DATA}/yargos.conf");
     let old = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut lines: Vec<String> = old.lines().filter(|l| !l.trim().starts_with("AUTO_UPDATE=")).map(String::from).collect();
-    lines.push(format!("AUTO_UPDATE={}", if on { "yes" } else { "no" }));
-    std::fs::write(&path, lines.join("\n") + "\n").map_err(|e| e.to_string())?;
+    let prefix = format!("{key}=");
+    let mut lines: Vec<String> = old.lines().filter(|l| !l.trim().starts_with(&prefix)).map(String::from).collect();
+    lines.push(format!("{key}={}", if on { "yes" } else { "no" }));
+    std::fs::write(&path, lines.join("\n") + "\n").map_err(|e| e.to_string())
+}
+
+pub fn write_auto_update(on: bool) -> Result<String, String> {
+    write_conf_flag("AUTO_UPDATE", on)?;
     Ok(format!("Automatic updates {}", if on { "on" } else { "off" }))
+}
+
+/// Does YARG get one song source per drive folder? (Default yes: only an explicit AUTO_SONG_SOURCES=no turns it off.)
+pub fn read_auto_songs() -> bool {
+    std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| !c.lines().any(|l| l.trim() == "AUTO_SONG_SOURCES=no")).unwrap_or(true)
+}
+
+pub fn write_auto_songs(on: bool) -> Result<String, String> {
+    write_conf_flag("AUTO_SONG_SOURCES", on)?;
+    Ok(format!("Adding song folders to YARG is {}; it applies the next time YARG starts", if on { "on" } else { "off" }))
 }
 
 pub fn upd_info(prev: &UpdInfo) -> UpdInfo {
@@ -526,23 +542,27 @@ pub fn parse_sources(out: &str) -> Vec<String> {
 
 pub fn songs_refresh() -> SongsInfo {
     // Looking inside makes the automount mount the drive (or fail after its short timeout).
-    let entries = std::fs::read_dir("/media/songs").map(|d| d.take(200_000).count()).unwrap_or(0);
+    let _ = std::fs::read_dir("/media/songs").map(|d| d.take(1).count());
     let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
     match parse_mount(&mounts, "/media/songs") {
         Some((src, fs)) => {
-            let space = run("df", &["-k", "/media/songs"]).ok().and_then(|o| parse_df(&o)).map(|(t, f)| format!(", {} free of {}", human(f), human(t))).unwrap_or_default();
+            let fs = fs.to_uppercase().replace("FUSEBLK", "NTFS");
+            let df = run("df", &["-k", "/media/songs"]).ok().and_then(|o| parse_df(&o));
             let label = run("lsblk", &["-no", "LABEL", &src]).map(|o| o.trim().to_string()).unwrap_or_default();
-            let space_short = space.trim_start_matches(", ").to_string();
             SongsInfo {
                 mounted: true,
-                detail: format!("The song drive is connected ({}) and mounted at /media/songs. {entries} items at the top level.", fs.to_uppercase().replace("FUSEBLK", "NTFS")),
+                detail: match df {
+                    Some((t, _)) => format!("The song drive is connected ({fs}, {}) at /media/songs.", human(t)),
+                    None => format!("The song drive is connected ({fs}) at /media/songs."),
+                },
                 name: if label.is_empty() { "Song drive".into() } else { label },
-                space: space_short,
-                fs: fs.to_uppercase().replace("FUSEBLK", "NTFS"),
+                space: df.map(|(_, f)| format!("{} free", human(f))).unwrap_or_default(),
+                fs,
                 sources: run("/usr/lib/yargos/song-sources", &[]).map(|o| parse_sources(&o)).unwrap_or_default(),
+                auto: read_auto_songs(),
             }
         }
-        None => SongsInfo { mounted: false, detail: "No song drive found. Plug in a drive labelled YARGSONGS.".into(), ..SongsInfo::default() },
+        None => SongsInfo { mounted: false, detail: "No song drive found. Plug in a drive labelled YARGSONGS.".into(), auto: read_auto_songs(), ..SongsInfo::default() },
     }
 }
 

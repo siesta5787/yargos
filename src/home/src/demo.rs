@@ -41,7 +41,7 @@ pub fn model(name: &str) -> Model {
         auto: true,
         log: vec!["yargos-update: installed 0.15.0, latest 0.16.0".into(), "yargos-update: update available: 0.16.0".into()],
     };
-    m.songs = SongsInfo { mounted: true, detail: "The song drive is connected and mounted at /media/songs. 6,231 items at the top level.".into(), name: "YARGSONGS".into(), space: "412 GB free of 931 GB".into(), fs: "EXFAT".into(), sources: vec!["Songs".into(), "Clone Hero Extras".into(), "Rock Band".into()] };
+    m.songs = SongsInfo { mounted: true, detail: "The song drive is connected (EXFAT, 931 GB) at /media/songs.".into(), name: "YARGSONGS".into(), space: "412 GB free".into(), fs: "EXFAT".into(), sources: vec!["Songs".into(), "Clone Hero Extras".into(), "Rock Band".into()], auto: true };
     m.sysinfo = vec![
         "YARGOS 0.1  (Linux 6.19.14)".into(),
         "Up for 2 hours, 14 minutes".into(),
