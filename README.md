@@ -285,6 +285,8 @@ Verified:
   instead of every frame and pixels go to X without a copy (frames were ~170 ms in software); (6) the kernel keeps at
   most 32 MB of unwritten data (`sysctl.d`), so a ~500 MB unpack cannot leave the stick busy for minutes. The real cause
   of the owner's freeze is not proven: in QEMU the dashboard never stalled, even with all disk I/O limited to 5 MB/s.
+  Confirmed by the owner on the next image: download, unpack and install took under 30 seconds on the laptop; the first
+  freeze was never explained.
   `YARGOS_DEBUG_FPS=1` (kernel command line `systemd.setenv=YARGOS_DEBUG_FPS=1`) logs the frame rate, slow frames and
   any gap in the dashboard loop to the journal.
 - Security hardening (Phase 0 of docs/OTA-PLAN.md), checked in QEMU on a 256 GB drive: the player cannot rename,
