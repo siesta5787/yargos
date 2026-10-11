@@ -3,6 +3,8 @@ Name=en* eth*
 
 [Network]
 DHCP=yes
+LLMNR=no
+MulticastDNS=no
 
 [DHCPv4]
 RouteMetric=100

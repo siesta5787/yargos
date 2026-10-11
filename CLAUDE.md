@@ -1,8 +1,9 @@
 # YARGOS
 
 Buildroot external tree that builds a console-style YARG appliance image (x86_64). Read `README.md`
-first: it has the layout, runtime design and the verified / not verified lists. Keep that list honest;
-do not move something to "Verified" unless it was actually run.
+first (overview), then `docs/DESIGN.md` (how it works) and `docs/STATUS.md` (what is verified and what is not). Keep that
+list honest: do not move something to "verified" unless it was actually run. `docs/LICENSING.md` has the licensing rules.
+The repository is public: no secrets, no private keys, nothing that is not ours to publish (docs/LICENSING.md).
 
 ## Rules that are easy to get wrong
 
@@ -14,10 +15,12 @@ do not move something to "Verified" unless it was actually run.
   `make yargos_x86_64_defconfig` and confirm each symbol is set in `.config`.
 - Config changes do not rebuild packages automatically: use `tools/br.sh <pkg>-rebuild` or
   `-reconfigure`. Buildroot does not rebuild dependents either.
-- Do not publish the built image or YARG's release build. YARG's own code is LGPL-3.0, but its release also contains
-  BASS (whose licence covers only the developer's own software, "not the publishing of other's software"), the Discord
-  SDK and Unity's runtime. The repo only holds the package definition and checksum; devices download YARG from YARC.
-  Details and sources: docs/OTA-PLAN.md. Secure Boot is not planned.
+- Never publish anything that contains YARG's release build (a `YARGOS_WITH_YARG=1` image): it bundles BASS (whose licence
+  covers only the developer's own software, "not the publishing of other's software"), the Discord SDK and Unity's runtime.
+  The default (clean) image has none of it and MAY be published, but only together with its legal bundle (licences + the
+  source of the GPL/LGPL parts: `tools/release.sh` builds it, `tools/publish.sh` insists). `release.sh` refuses an image
+  with YARG in it. The repo only holds YARG's download address and checksum. Details: docs/LICENSING.md. Secure Boot is
+  not planned.
 - `genimage.cfg` boot-entry changes require `fresh` for `tools/qemu-run.sh` (stale qcow2 overlay).
 
 ## The bridge (`src/bridge`)

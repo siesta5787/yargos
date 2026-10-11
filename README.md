@@ -1,405 +1,133 @@
-# YARGOS
+# YARG OS
 
-Buildroot external tree for a console-style [YARG](https://github.com/YARC-Official/YARG) appliance
-(x86_64, AMD/Intel). Power on -> UEFI -> systemd-boot -> Xorg (no WM) -> YARG fullscreen.
+A small Linux system that turns a PC into a game console for [YARG](https://github.com/YARC-Official/YARG), the free
+open-source rhythm game. Plug in a USB stick, power on, and it boots straight into a dashboard and then YARG: no desktop, no
+terminal, controller-friendly menus. Wii guitars, Xbox 360 drums, USB microphones and MIDI pianos work.
 
-Status: the image builds and its contents have been inspected, but it has not been confirmed to boot
-all the way to YARG. The instrument bridges are partly tested on real hardware. See
-[Status](#status) for what is and is not verified.
+> **Unofficial.** This is a community project, not made or endorsed by the YARG team (YARC). YARG is **not included**: the
+> device downloads it from YARC's own releases. See [docs/LICENSING.md](docs/LICENSING.md).
 
-## Build
+It is built with [Buildroot](https://buildroot.org) for x86_64 UEFI PCs (AMD and Intel graphics), is about 5 GB on disk, and
+updates itself like a console.
 
-The first build takes about 10 hours on 4 cores (mostly LLVM/Clang for Mesa). Later builds only redo
-what changed.
+## What it does
+
+- **Boots like a console:** UEFI -> splash -> dashboard (Wi-Fi, Sound, Bluetooth, Updates, Songs, System) -> YARG fullscreen.
+  Everything is reachable with a game controller, keyboard or mouse. Nobody needs a terminal.
+- **YARG on demand:** the first start offers INSTALL YARG (a ~120 MB download with a percentage, checked against the SHA-256
+  GitHub publishes; or install from a zip on your song drive when offline). YARG updates itself over the air without touching
+  the system, and rolls back if a new version does not stay up.
+- **Instruments:**
+  - Wii guitars over Bluetooth (hold 1+2) and the ION Drum Rocker (Xbox 360) are turned into standard PlayStation
+    instruments that YARG already understands (`src/bridge`).
+  - USB microphones and USB MIDI pianos/drums/keys work as in YARG on any Linux.
+- **Song drive:** any drive labelled `YARGSONGS` (exFAT, NTFS, FAT, ext4) mounts itself; each top-level folder that holds songs
+  becomes its own song source in YARG.
+- **Screens:** HDMI/TV mirroring, and a closed laptop lid keeps the external screen on.
+- **System updates over the air:** two system slots (A/B), signed releases, automatic fallback if a new system does not come up.
+  It never restarts by itself. See [Updates](#updates).
+- **Install to the computer's disk** from the same dashboard, so it starts without the USB stick.
+- **Closed to the network:** no ssh, no remote login, nothing listening. See [Security](#security).
+
+## Try it
+
+You need an x86_64 PC with UEFI, a USB stick of 8 GB or more (USB 3 is nicer), and internet for the first run.
+
+1. Download `yargos-<version>.img.xz` from the [releases](https://github.com/siesta5787/yargos/releases) (or build it, see
+   below) and write it to the stick. From a checkout of this repository on Linux:
+   `IMG=yargos-<version>.img.xz sudo -E tools/flash.sh` (lists drives, asks you to retype the one to erase, verifies; it takes
+   the compressed file as it is). Everything on the stick is erased.
+2. Turn **Secure Boot off** in the PC's firmware settings (the boot loader is unsigned), and boot from the stick (usually
+   F7, F11, F12 or Del at power-on). A small menu shows for 5 seconds: *YARG OS* (default), *Install YARG OS on this computer*,
+   and a verbose troubleshooting entry.
+3. Connect Wi-Fi (WI-FI), then choose **INSTALL YARG**. Name your song drive `YARGSONGS` and plug it in.
+4. Choose PLAY YARG. To keep it on the computer's own disk: SYSTEM > *Install on this computer's disk*.
+
+The first boot grows the data partition to fill the stick. Wired networks work without setup.
+
+## Updates
+
+- **YARG** is updated by `yargos-update` (daily, can be switched off on the Updates screen). The new version runs "on trial"
+  and is rolled back if it does not stay up.
+- **The system** is updated by `yargos-os-update` (SYSTEM > System update; a daily check can be switched off). A signed
+  release is written to the other system slot and gets a boot entry that is tried twice; if the new system does not bring
+  up the dashboard and keep it running, the boot loader falls back to the old one by itself and the update is not tried
+  again. "Go back to the earlier system" is one press. Releases are signed (Ed25519); the public keys are in
+  `board/yargos/rootfs-overlay/usr/lib/yargos/keys/`.
+
+Design and the reasoning: [docs/OTA-PLAN.md](docs/OTA-PLAN.md), [docs/DESIGN.md](docs/DESIGN.md).
+
+## Security
+
+The device is meant to be harmless on a home network: no ssh or other login service, no open ports (LLMNR and mDNS are
+switched off; only the DHCP client and loopback sockets exist), YARG runs as an unprivileged `player` user, and the few
+things that need root go through a helper that accepts a short list of fixed requests. Root never runs or follows files the
+`player` can write (`/data` and its first-level folders belong to root). System updates are signed and cannot be downgraded.
+
+Known limit: the **console** (Ctrl+Alt+F2) has a root login with an empty password. It needs physical access to the machine
+(there is no network login), and a person at the boot menu can edit the kernel command line anyway, but if the machine is
+used where that matters, treat it as unsecured against someone at the keyboard.
+
+Report security problems by opening a GitHub issue (or contact the maintainer privately through their GitHub profile).
+
+## Building from source
+
+The first build takes about 10 hours on 4 cores (mostly LLVM/Clang for Mesa); later builds only redo what changed.
 
     git clone --branch 2026.02.3 https://github.com/buildroot/buildroot.git
     cd buildroot
-    make BR2_EXTERNAL=/path/to/yargos-br2 yargos_x86_64_defconfig
-    make                   # output/images/yargos.img (about 5.6 GB)
+    make BR2_EXTERNAL=/path/to/yargos yargos_x86_64_defconfig
+    make                    # output/images/yargos.img (about 5.3 GB)
 
-Needs a system `unzip` (Buildroot uses it for the YARG zip). Write the image to a USB stick or SSD:
-`sudo dd if=output/images/yargos.img of=/dev/sdX bs=4M status=progress`
+You need the usual Buildroot host tools plus `unzip`, and network access once (the Rust crates `x11rb` and `fontdue` are
+fetched and vendored by a build hook). The image does not contain YARG; `YARGOS_WITH_YARG=1` (see `tools/br.sh`) builds a
+**private** test image that does, which must never be published ([licensing](docs/LICENSING.md)).
 
-### Maintainer's setup (`tools/br.sh`)
+The maintainer builds through `tools/br.sh`, which also keeps the build tree in `~/yargos-build` working (see the comments
+in the script); `YARGOS_VERSION=2026.11.1 tools/br.sh` stamps a release version.
 
-The first build was done at `/tmp/brout` and `/tmp/buildroot`, then moved to `~/yargos-build/`
-(`/tmp` is wiped at boot). About 480 files in the host tools still embed the old `/tmp` paths, so use
-`tools/br.sh` for every build there: it recreates the `/tmp` symlinks first.
+### Publishing a release (maintainers and forks)
 
-    tools/br.sh                        # rebuild the image -> ~/yargos-build/output/images/yargos.img
-    tools/br.sh yargos-bridge-rebuild  # rebuild one package, then the image
+    YARGOS_VERSION=2026.11.1 tools/br.sh
+    tools/release.sh 2026.11.1 --github --notes "What is new"     # image, signed manifest, licence + source bundle
+    tools/publish.sh 2026.11.1                                    # shows the plan; add --yes to publish with `gh`
 
-ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much faster.
+Devices look for updates at the GitHub release `os-channel` of this repository. **If you fork**, replace the signing keys
+(`board/yargos/rootfs-overlay/usr/lib/yargos/keys/`) and the address `DEFAULT_URL` in `usr/bin/yargos-os-update` with your
+own, and keep your private key out of the repository. Details in [docs/LICENSING.md](docs/LICENSING.md).
 
-## Installing / trying it on a PC
+## Repository layout
 
-`output/images/yargos.img` is a complete UEFI-bootable disk (256M boot, two 2G system slots, 700M data; about 5.3 GB,
-so any 8 GB or larger USB stick works, preferably USB 3). It runs from the drive you write it to. On first
-boot `yargos-growdata.service` grows the data partition (and its filesystem) to fill the drive, before `/data`
-is mounted; on a drive exactly the image's size nothing grows and the 700M holds YARG with some room to spare.
+- `configs/yargos_x86_64_defconfig`, `board/yargos/` - Buildroot config, kernel options, image layout, the root filesystem
+  overlay (systemd units, udev rules, update and install scripts).
+- `src/home` - `yargos-home` (Rust): boot splash, session, dashboard, and the root helper. `src/bridge` - `yargos-bridge`
+  (Rust): Wii guitar and Xbox drum bridges.
+- `package/` - Buildroot packages for the two programs and the (optional) YARG seed.
+- `tools/` - flashing, building, release and publishing, QEMU helpers and tests (`test-update.sh`, `test-os-update.sh`).
+- `docs/` - [design notes](docs/DESIGN.md), [update design](docs/OTA-PLAN.md), [what is verified](docs/STATUS.md),
+  [licensing](docs/LICENSING.md). `CLAUDE.md` holds working rules for AI-assisted development.
 
-    sudo tools/flash.sh                 # lists USB drives, asks which, makes you retype it, writes, verifies
+## Testing
 
-On the target PC: turn Secure Boot off in the firmware settings (the boot loader is unsigned) and boot from
-the USB drive (usually F7, F11, F12 or Del at power-on). A small menu shows for 5 s:
-
-- **YARG OS <version>** (default): runs from the stick. After an update there are two of these, newest first.
-- **Install YARG OS on this computer**: opens the launcher on its Install screen (see below).
-- **YARG OS <version> (verbose, for troubleshooting)**: prints boot messages, and has a serial console.
-
-### Installing to the computer's own disk
-
-Choose the install entry (or SYSTEM > Install on this computer's disk in the launcher). It lists the other
-disks (at least 8 GB, nothing mounted from them; never the drive it is running from), asks you to confirm which
-one gets erased, then runs `yargos-install` through the root helper and shows its steps: GPT with a 256 MiB
-EFI partition, two 2 GiB system slots (the second stays empty until the first update) and the rest as data; it copies the running system and the whole data
-partition (YARG, its settings and updates, Bluetooth pairings, Wi-Fi passwords), writes boot entries and
-registers with the firmware (the fallback `EFI/BOOT/BOOTX64.EFI` boots it anyway). The installed system has no
-boot menu (hold the space bar during startup to get one). Every partition on the new disk gets a fresh random
-GUID that the boot entry uses (the entry also names /data, there is no /data line in `/etc/fstab`), so the USB
-drive and the installed disk can be plugged in together; the flashed image uses fixed GUIDs (`...0001` system A,
-`...0003` system B, `...0002` data) for the same reason. Never look a root or data partition up by label; the GPT
-names `yargos-a` / `yargos-b` tell the updater which partition is the other slot.
-
-If a machine boots to a black screen or stops early, the boot log is kept on the drive: plug it into another
-Linux PC, mount the `rootfs` partition and run `journalctl --directory <mount>/var/log/journal -b -1`
-(or read it from a photo of the screen: the kernel now shows its messages from the first second).
-
-For a diagnostic report on a machine with no network: press Ctrl+Alt+F2, log in as `root` (no password),
-run `journalctl -b > /data/boot.log`, then read `boot.log` from the `YARGDATA` partition on another PC.
-
-## Layout
-
-- `configs/yargos_x86_64_defconfig` - top-level config
-- `board/yargos/linux.fragment` - kernel options (broad driver set, UHID, ALSA sequencer, no hid-wiimote)
-- `board/yargos/genimage.cfg.in` - GPT: ESP (256M) / system A (2G, holds the system) / system B (2G, empty) / YARGDATA
-  (700M ext4, grows on first boot); `post-image.sh` fills in the ESP file list and writes the boot entries
-  (`rootfs-overlay/usr/lib/yargos/entries.sh`, shared with the installer and the updater)
-- `board/yargos/rootfs-overlay/` - systemd units, udev rules, bluez config, launch scripts
-- `package/yarg` - pinned YARG release as an OPTIONAL seed in `/usr/share/yarg-seed`: the default image does not contain YARG
-  (see "Building"); a private test image can (`YARGOS_WITH_YARG=1 tools/br.sh`)
-- `package/yargos-bridge` + `src/bridge` - Rust bridges: Wiimote guitar and wired Xbox 360 drums ->
-  virtual PS3 instruments (uhid)
-- `package/yargos-home` + `src/home` - Rust session: boot splash, YARG launcher, and the dashboard shown
-  when YARG is closed (needs the network once at build time to fetch its two crates, x11rb and fontdue)
-- `tools/` - `flash.sh` (write the image to a USB drive), `br.sh` (build), `dev-test.sh` (try the bridges on a desktop Linux PC), `test-update.sh`,
-  and QEMU helpers: `qemu-run.sh`, `qemu-key.sh` (send keys), `qemu-shot.sh` (screenshot), `qemu-sh.sh` (run a command in the guest)
-
-## Runtime design
-
-- The default image has no YARG. On first boot the main menu says INSTALL YARG: that screen downloads the latest release
-  from YARC's GitHub (checksum from the release metadata, ~120 MB, with a percentage), or installs a
-  `YARG_v<version>-Linux-x86_64.zip` found on the song drive when there is no internet, or leads to Wi-Fi setup first.
-  `yargos-update install` / `install-zip` do this; the daily timer never installs YARG on its own. An image built with the
-  seed instead gets it copied by `yargos-seed.service` (as the player) into `/data/apps/yarg/<version>`. Either way YARG
-  runs from `/data/apps/yarg/current`, so newer releases arrive without rebuilding the OS (see "Updating YARG").
-- YARG runs with `-persistent-data-path /data/yarg -offline`; settings, profiles and the song
-  cache live on the data partition. It uses OpenGL (radeonsi); this Buildroot has no RADV Vulkan option.
-- The song drive: label it `YARGSONGS` (ext4, exFAT, NTFS or FAT). It mounts read-only at
-  `/media/songs` with `nofail`, so a missing drive never blocks boot. Point YARG's song folder at
-  `/media/songs` once; the path never changes after that.
-- Wii guitars: the kernel config leaves `CONFIG_HID_WIIMOTE` off (it is only blacklisted in the dev setup). udev starts `yargos-bridge wii /dev/hidrawN` per Wiimote
-  (`057E:0306` / `057E:0330`). It initialises the extension, reads the guitar, and creates a uhid
-  device impersonating a PS3 Guitar Hero World Tour guitar (`12BA:0100`) using the PlasticBand
-  descriptor and report layout.
-- Xbox 360 drums (ION Drum Rocker, `1bad:0130`): YARG cannot read wired XInput devices on Linux. The
-  kernel `xpad` driver exposes the kit as evdev; udev starts `yargos-bridge drums /dev/input/eventN`,
-  which grabs the node and creates a uhid PS3 Rock Band 2 drum kit (`12BA:0210`). The Xbox pad/cymbal
-  flags map 1:1 onto the PS3 ones, so YARG's own decoding is reused. xpad inverts the Y axes; the
-  bridge undoes that. The kit's piezo sensors report velocity spikes with no hit, so velocity is only
-  forwarded while a pad flag is set. A udev rule makes the raw kit root-only so YARG does not list it
-  as a second device. Other 360 kits can be added by extending the udev rule.
-- YARG reads instruments through HIDrogen (`libhidapi-hidraw.so.0`), which the image ships. A
-  normal desktop needs `sudo apt install libhidapi-hidraw0`, or YARG silently falls back to a generic
-  gamepad layer (its log, `~/.config/unity3d/YARC/YARG/Player.log`, says so).
-- USB MIDI drums/keys/mic need no bridge (ALSA sequencer + libRtMidi).
-- Bluetooth pairing: run `yargos-pair [seconds]`. Wiimotes (1+2 held) are connected and trusted;
-  HID gaming devices, keyboards and mice are paired and trusted. Pairings persist in `/data/bluetooth`.
-- On a desktop kernel (hid-wiimote built), a Wiimote connects and BlueZ creates its HID device, but
-  hid-generic refuses to claim it (a "special driver" exists), so no hidraw node appears. The image's
-  kernel does not have that driver, so hid-generic binds normally. `tools/dev-test.sh wii` works around it
-  on desktops by briefly setting `hid.ignore_special_drivers` while binding.
-- Future Santroller guitars (USB or Bluetooth HID) need no bridge; YARG reads them over hidraw.
-- Buildroot's own `xorg.service` is masked in the overlay so it does not fight `yarg.service`, and
-  `default.target` is `graphical.target` (otherwise `yarg.service` never starts).
-- Buildroot's `modesetting_drv.so` is not linked against libgbm ("undefined symbol: gbm_bo_get_offset"),
-  so `/usr/lib/yargos/xorg` preloads `libgbm` for the X server only. Xorg autodetects its driver
-  (amdgpu for AMD via an OutputClass, modesetting otherwise) so the image is not tied to one GPU.
-- `session.sh` writes Xorg's log to `/tmp/Xorg.0.log` and prints it to the journal if Xorg exits.
-
-## Session and dashboard
-
-`yarg.service` starts Xorg with `yargos-home session` as its only client (no window manager). The machine
-boots to the **dashboard**; PLAY YARG (the first entry, so one OK press) runs YARG
-(`/usr/lib/yargos/run-yarg`) and the session stays out of the way while it runs. When YARG exits (Exit in its
-menu, or a crash, which also shows a message) the dashboard appears again.
-
-The dashboard is software-rendered (no GPU needed), works with a keyboard, mouse or the instruments, and
-has these screens: Wi-Fi (scan, join, an on-screen keyboard for passwords), Sound (pick the output, volume,
-test tone; writes `/data/asound.conf`), Bluetooth (scan, pair/connect, forget; Wiimotes get their own
-hold-1+2 flow), Updates (check, install, automatic on/off, go back), Songs (is the drive mounted) and
-System (restart, shut down). Instruments navigate like YARG's menus: strum or cymbals move up/down, green
-fret/pad = OK, red = Back, the two outer frets/pads = left/right. Power actions go through a root helper
-(`yargos-ctl.socket`) that accepts only `poweroff` and `reboot`.
-
-`yargos-home screenshot <screen> out.png` renders any screen with demo data (home, wifi, password, sound,
-bluetooth, updates, songs, system, busy, confirm, splash) without a display.
-
-The boot splash (`yargos-home splash`) draws the logo straight onto `/dev/fb0` early in boot; the kernel
-needs `CONFIG_DRM_FBDEV_EMULATION` for that.
-
-## Updating YARG
-
-`yargos-update` (shell, uses curl, jq, unzip) updates YARG on the data partition without touching the OS:
-
-- It asks GitHub for the latest release, downloads the Linux zip, and checks it against the SHA-256
-  digest GitHub publishes in the release metadata (both over HTTPS). YARG's own `.sig` is not checked
-  because its public key is unknown. A release with no digest is refused.
-- It unpacks to a staging folder, checks that every library's dependencies load, then atomically
-  switches `/data/apps/yarg/current` to the new folder and keeps the old one as `previous`.
-- It never touches the running game; the new version starts the next time YARG launches.
-- A new version is "on trial": the session runs `yargos-update boot-check` each time PLAY YARG launches YARG,
-  and calls `mark-good` once YARG has stayed up for 60 s. After three launches that did not get that far, the
-  next launch rolls back to `previous` (and tells you on the dashboard) and remembers the bad version so it
-  is not offered again. Booting or using the dashboard does not count.
-- `yargos-update.timer` runs `auto` 3 minutes after boot and daily. Set `AUTO_UPDATE=no` in
-  `/data/yargos.conf` to turn that off. Other commands: `status`, `check`, `apply [--restart]`, `rollback`.
-- `tools/test-update.sh [extracted YARG folder]` tests all of this against a local fake release server.
-
-Networking: wired links use DHCP (systemd-networkd). WiFi is handled by `iwd` (which does its own DHCP):
-press Ctrl+Alt+F2, log in as root (empty password; there is no network login), and run
-`iwctl station <wlan> connect "SSID"`. Press Ctrl+Alt+F1 to return to the game.
-
-## Boot entries
-
-The boot entries live on the ESP (mounted at `/efi`): `yargos-<version>.conf` (quiet; `default yargos-2*` picks the
-newest one that has not failed), `install.conf` (`yargos.install=1`, which makes the launcher open on its Install
-screen; on a stick only) and `debug.conf` (verbose output, also on the serial console); the last two follow the
-system that started last. Each entry names its root partition by GUID and /data via `systemd.mount-extra`, and its
-kernel is `/yargos/<version>/bzImage` on the ESP. The installer writes `loader.conf` with `timeout 0`.
-
-## Updating the system over the air
-
-The system updates itself like a console: `yargos-os-update` (root; the dashboard's SYSTEM > System update reaches it
-through the root helper) downloads a signed release into the OTHER system slot, adds a boot entry that tries it twice and
-never restarts by itself. The new system must bring up the launcher and keep it running (`yargos-boot-ok`), otherwise the
-boot loader falls back to the old system after two tries and the update is remembered as rejected. SYSTEM > System update
-also has automatic updates on/off (`OS_AUTO_UPDATE=no`), restart to use a waiting update, and going back to the earlier
-system. `tools/release.sh` makes and signs a release (`YARGOS_VERSION=2026.11.1 tools/br.sh` first); it refuses an image that
-holds YARG. `tools/test-os-update.sh` tests all of it in QEMU. Details and the design: docs/OTA-PLAN.md. Releases are signed
-with the key in `~/.yargos/release-ed25519.pem` (not in the repo, back it up); the matching public keys are in
-`board/yargos/rootfs-overlay/usr/lib/yargos/keys/`, plus an emergency key whose private half should be kept offline.
-
-## Trying it without the appliance
-
-- `tools/dev-test.sh` (see its header): runs the bridges on a desktop Linux PC. Needs root for
-  `/dev/uhid`. `setup` blocks `hid_wiimote` and installs dev udev rules; `teardown` undoes it;
-  `drums`, `wii`, `watch` (shows the virtual instrument's reports), `raw` (shows what the Ion kit
-  itself sends) and `yarg` (runs a downloaded YARG as your user).
-- `tools/qemu-run.sh`: boots the image in QEMU using a throwaway overlay (`HEADLESS=1` writes the
-  console to `~/yargos-build/qemu/serial.log`, and `tools/qemu-shot.sh` saves a screenshot; needs
-  `qemu-system-x86` and `ovmf`, and membership of the `kvm` group). Use `fresh` after rebuilding the
-  image, because the overlay is tied to the old image.
+`cargo test` in `src/home` and `src/bridge`; `tools/test-update.sh` (YARG updater against a fake release server);
+`tools/test-os-update.sh` (system updates in QEMU: good update, bad update with automatic fallback, power cut mid-write, going
+back, install to a second disk; about 35 minutes). `tools/qemu-run.sh` boots the image in QEMU (`HEADLESS=1` for a serial
+console; see its header) and `yargos-home screenshot <screen> out.png` renders any dashboard screen without a display.
 
 ## Status
 
-Verified:
-
-- The defconfig loads and every symbol takes effect (checked against Buildroot 2026.02.3). This
-  Buildroot has no "all linux-firmware" option, so the image uses a broad per-chip firmware list.
-- A full build completes. Image contents were inspected (partitions, bridge, YARG seed, units, rules,
-  `player` user), not booted to YARG.
-- Updater: in QEMU the daily check ran from the image, over HTTPS, and reported "up to date (0.15.0)".
-  Staging, switching and rolling back are tested only against the local fake server.
-- Dashboard (QEMU, real image): all screens open and show live data (network, sound card and volume,
-  update check against GitHub, song-drive state), keyboard and mouse (hover and click) work, and Shut down
-  powers the guest off through the root helper. Wi-Fi and Bluetooth screens only show their "no adapter"
-  states (QEMU has neither); the output parsers are tested on sample text, not on real iwd/BlueZ output.
-- Boot flow (QEMU, quiet kernel arguments): the logo splash is on screen at about 3 s, the dashboard takes
-  over at about 5 s with PLAY YARG selected, and Enter starts YARG.
-- Found by the boot tests and fixed: systemd was built without ACL support (so `uaccess` never gave the
-  player user raw-HID access, which instruments need), and the kernel had no fbdev emulation (no `/dev/fb0`, so no splash and no on-screen console).
-- Polish (checked in QEMU): `/media/songs` is an automount, so there is no boot wait without the drive;
-  wired DHCP works; the WiFi regulatory-database warning is gone; YARG starts about 7 s after power on
-  (first boot copies YARG to the data partition, later boots are shorter).
-- Wiimote guitar (real hardware, desktop PC): connects over Bluetooth, the bridge lights LED 1 and the
-  virtual PS3 guitar reports all five frets, strum up/down, whammy (full range), Start/Select and tilt
-  correctly, with no noise at rest; a guitar without a touch bar reports an idle slider. YARG on the
-  desktop auto-creates a guitar profile for it and the menus can be navigated with it. Needs the
-  desktop workarounds described under Runtime design.
-- Under QEMU (software rendering, `HEADLESS=1 tools/qemu-run.sh fresh`): the image boots, first boot seeds
-  YARG onto the data partition, rootless Xorg starts on the generic `modesetting` driver, and YARG reaches
-  its main menu about 10 s after kernel start. Real AMD hardware (amdgpu, audio, input) is untested.
-- YARG keyboard and mouse input (QEMU, fresh data partition): the anti-piracy dialog is dismissed by a click
-  on I UNDERSTAND (pointer moved and clicked through XTEST) or by Down then Enter (Enter alone does nothing
-  until a button is selected), and the main menu then follows the arrow keys, Enter and Esc. The cause was
-  Unity's built-in SDL: with no window manager it uses "legacy" fullscreen, reparents its window into an
-  override-redirect container, loses the X focus that way and then drops all input; `run-yarg` sets
-  `SDL_VIDEO_X11_LEGACY_FULLSCREEN=0`.
-- On a 2020 HP Envy x360 (Ryzen 4000, booted from a USB stick; reported by the owner): the image boots to the
-  launcher and into YARG, the touchpad and the built-in and a USB WiFi adapter work, and YARG takes keyboard
-  and mouse input. Instruments were not tried on it. A USB stick that answers its first read with "Medium not
-  present" can fail to boot (another stick or port worked); `usb-storage.delay_use=5` is set but did not fix that.
-- Latest image on the same laptop (reported by the owner): Wi-Fi, sound, YARG starting, the NTFS song drive, the Wii
-  guitar and the launcher's controls all work. Not yet tried on real hardware: the installer, the microphone
-  picking up a voice, drums in actual gameplay, and an over-the-air YARG update.
-- Playing (reported by the owner, HP laptop, songs from the NTFS song drive on a USB flash drive): several full songs
-  with drums, guitar and vocals all at the same time. A USB piano (Yamaha P-143) connects and its speaker works; a
-  song on piano has not been played yet. The newest image's sound-quality fix has not been heard yet. The HDMI
-  mirroring and lid-close work on the laptop with an HDMI TV; the TV shows torn, corrupted pictures for a few seconds
-  after a change (lid shut) and then clears. Cause: every output was switched off and on again; the newest image only
-  touches outputs whose mode changes (not yet tried on the TV).
-- Bridge: 19 unit tests pass. With a real ION Drum Rocker, pad, cymbal, d-pad and kick1 flags
-  decode correctly in the virtual kit's reports. On a desktop with `libhidapi-hidraw0` installed,
-  YARG recognises the virtual kit through its own PS3 drum layout, auto-creates a drums profile,
-  and the menus can be navigated with the pads.
-
-- Trimmed image (2.76 GB -> 2.4 GB): `post-build.sh` drops the Clang/libclc/SPIR-V tools Mesa's build leaves
-  behind (nothing links them). Firmware compression to `.xz` was tried (404 -> 160 MB, and the kernel read a
-  compressed `regulatory.db` in QEMU) but the first real-hardware run lost Wi-Fi and sound, so firmware is
-  plain again until it can be tested on the real drivers.
-- Song drive: an NTFS drive labelled YARGSONGS (QEMU, as a USB drive) mounts read-only at `/media/songs` through
-  ntfs-3g and its files can be read; `run-yarg` gives YARG one song source for each top-level folder on the drive that has songs
-  (`usr/lib/yargos/song-sources`; system folders skipped; a flat drive is one source), replacing its sources
-  under `/media/songs` and keeping any others; the "Add song folders to YARG" switch on the Songs screen (`AUTO_SONG_SOURCES` in `/data/yargos.conf`) turns it off. The
-  Songs screen also lists the connected drive with its free space and the sources found. The switch was toggled in QEMU
-  and saved; the drive was an ext4 test drive, not a real NTFS one.
-  Checked in QEMU with an ext4 drive of three song folders, an empty one and Windows system folders. The Linux kernel's own NTFS driver refused a real Windows-formatted drive
-  ("Failed to load $BadClus", "volume is dirty"); ntfs-3g mounted that same drive read-only on the dev PC.
-  The kernel now has FUSE and `mount.ntfs` points at ntfs-3g. exFAT, FAT and ext4 are built into the kernel.
-- YARG's audio add-ons: with no `LD_LIBRARY_PATH`, YARG could not load Opus sound effects or songs (23 sound
-  effects, 90 "Failed to load ... .opus: OK!" errors) and failed to initialise any microphone ("Failed to
-  initialize microphone", "Failed to create effects handle for Freeverb"). `run-yarg` now puts YARG's Plugins
-  folder on the library path: 0 failures, and connecting a (simulated QEMU) sound card as a microphone no
-  longer errors. A real USB microphone has not been tried since. One `NullReferenceException` in
-  `BassMicDevice.ProcessRecordData` still appears in YARG's log at startup in QEMU (never on the dev PC);
-  nothing visibly breaks.
-- First boot on a big drive (QEMU, a 256 GB overlay of the image): earlier images never ran the first-boot service
-  there (so YARG was "not installed" and the Sound screen got "Permission denied"); fixed, and with the fix
-  `/data/apps/yarg/current` exists, `/data` belongs to `player` and YARG starts. Also reproduced and fixed only
-  in QEMU; the real laptop has not run this image yet.
-- Wiimote readiness: connecting a Wiimote from the Bluetooth screen now waits for its guitar bridge to run (and stay
-  up for two seconds) and otherwise disconnects it and shows an ATTENTION box that waits for OK; a connected Wiimote
-  shows READY or NOT READY on its row. Checked in QEMU with the fake Wiimote (`yargos-home wiicheck`: bridge running,
-  bridge stopped, no device). Not tried with real Bluetooth.
-- First run without YARG (the default image has none; QEMU, 256 GB overlay, real GitHub): the main menu shows INSTALL YARG
-  and "YARG: not installed"; the screen downloaded the 122 MB release with a live percentage, checked the SHA-256 from
-  GitHub's metadata, unpacked, ran the library check and the menu became PLAY YARG. The same with a zip on a (fake) song
-  drive, with no download. Offline, an already installed system, a zip without a version in its name and a corrupt zip
-  all end in a clear message and leave nothing behind (tools/test-update.sh covers the first-install cases too). Not yet
-  tried on the laptop; the private "with YARG" variant builds and carries the seed.
-- Fixed in the same round: `firstboot.sh` used `stat`, which this image does not have, so it threw away the Sound choice
-  at every boot (it now uses `[ -O file ]`; the choice survives a reboot in QEMU).
-- System updates over the air (Phase 1 + 2 of docs/OTA-PLAN.md, all in QEMU with `tools/test-os-update.sh`, ~35 min, all
-  passing): a signed release downloads (resumable), is written to the other slot, checked (size, SHA-256 read-back,
-  fsck, version and kernel inside) and gets a boot entry that tries it twice; on restart the new system is judged by
-  `yargos-boot-ok` and blessed, and `settle` closes the books. Also tested: a bad update (no launcher) falls back to the
-  old system by itself after two tries, is recorded and not offered again; a power cut mid-write leaves the running system
-  alone and the update installs on the next try; going back; the installer's new layout; an installed NVMe disk (random
-  GUIDs) boots alone and updates itself; the dashboard path (SYSTEM > System update: check, install with a percentage,
-  BACK cancels, "Restart now?"). The system needs ONE re-flash and re-install (new layout, 5.3 GB image). NOT done: nothing
-  is published, so the default update address (GitHub release `os-channel` of this repo) answers "could not reach the
-  update server" until the owner publishes a first release (see tools/release.sh); not tried on the laptop; chunked/delta
-  downloads (a release is a ~230-400 MB download); automatic updates were only exercised by calling `auto` directly.
-- Install YARG on a slow stick (owner's report: "stuck unpacking", wheel not moving, after a forced reboot every retry said
-  "another update is running"). Fixed, checked in QEMU with throttled disks and a hard kill mid-install: (1) the lock
-  belongs to a process of this boot, so one left by a reboot or power cut is cleared (with the half-unpacked folder and
-  the partial download); (2) unpacking shows a percentage like the download does; (3) BACK cancels a download/install
-  (stops curl/unzip, removes everything, says nothing was changed); (4) the spinner runs on the clock, not on idle
-  moments: any steady stream of events (pointer, a controller) used to freeze it; (5) the gradient backdrop is made once
-  instead of every frame and pixels go to X without a copy (frames were ~170 ms in software); (6) the kernel keeps at
-  most 32 MB of unwritten data (`sysctl.d`), so a ~500 MB unpack cannot leave the stick busy for minutes. The real cause
-  of the owner's freeze is not proven: in QEMU the dashboard never stalled, even with all disk I/O limited to 5 MB/s.
-  Confirmed by the owner on the next image: download, unpack and install took under 30 seconds on the laptop; the first
-  freeze was never explained.
-  `YARGOS_DEBUG_FPS=1` (kernel command line `systemd.setenv=YARGOS_DEBUG_FPS=1`) logs the frame rate, slow frames and
-  any gap in the dashboard loop to the journal.
-- Security hardening (Phase 0 of docs/OTA-PLAN.md), checked in QEMU on a 256 GB drive: the player cannot rename,
-  replace or add anything in /data's first level or write asound.conf; links planted where root works (apps/yarg, yarg,
-  yargos.conf) are replaced and what they pointed at is untouched; the YARG seed is installed by the player; the daily
-  update runs as the player (sandboxed) and still reaches GitHub; the Sound screen saves through the root helper; iwd
-  (Wi-Fi passwords), ALSA state and Bluetooth live on /data. Not tried: the carry-over of an older system's iwd/ALSA
-  state, and the installer with this layout (its copy code is unchanged).
-- Wii guitars reconnecting (reported by the owner: a guitar that "syncs wrong" stays dead, after a reboot only one of
-  two connects, a timed-out bridge never retries). Fixed in the newest image, checked in QEMU with the fake Wiimote
-  (`tools/fake-wiimote.rs`, which now answers like a guitar, and can drop its first status requests): (1) the bridge asks
-  for the guitar's status every 3 s until it answers, instead of once, and writes `/run/yargos-bridge/ready-hidrawN` when
-  the guitar streams: the launcher's READY means that, not just "bridge running"; (2) the bridge unit has no start limit;
-  (3) player-LED slots are tied to the bridge's pid, so ones left by killed bridges are reused (they used to run out);
-  (4) the connect check looked for ANY Wiimote HID device, so with one guitar up the second was "connected" after a single
-  try: it now looks for that Wiimote's address; (5) while the dashboard is up (not while YARG runs) the launcher listens
-  for 5 s at a time and connects any Nintendo RVL-CNT controller that is calling (1+2 held), so no trip to the Bluetooth
-  screen is needed; a failed attempt is retried the next time 1+2 is pressed. The BlueZ half (a real Wiimote, `bluetoothctl
-  scan on` output parsed by `parse_scan_wiimotes`) is unit-tested on sample output only: not tried on real hardware.
-- Devices screen: one row per thing YARG can use (keyboards and mice with their USB id, sound cards, MIDI ports, pads);
-  a raw USB row only for a device the kernel made nothing of; a keyboard whose receiver has no input device says NO INPUT.
-  The owner's Rii 2.4G keyboard receiver was listed by the old screen but typed nothing: not diagnosed yet (needs the
-  vendor:product id and a check that the keyboard itself is switched on; a standard USB keyboard hot-plugs fine in QEMU).
-- Wii bridge lifetime (QEMU, fake Wiimote): the bridge starts when a Wiimote's HID device appears, is restarted
-  two seconds after it dies while the Wiimote is still there, and stops when the Wiimote disconnects
-  (`BindsTo` its hidraw device, `Restart=on-failure`). The drum bridge was left as it was.
-- NVMe and other internal storage (QEMU, a virtual NVMe disk): the kernel had no NVMe/MMC/VMD driver, so a laptop's
-  internal SSD was invisible and an installed system could not have booted from it (no initramfs, so they are built
-  in). Fixed: the installer lists the NVMe disk, installs, and the installed disk boots alone to the launcher.
-  eMMC, SD readers and Intel VMD were added the same way but are not tested.
-- Screens: every connected screen mirrors at the biggest resolution all of them share; with the lid shut and an
-  external screen connected the laptop panel is turned off (`src/home/src/screens.rs`, polled
-  every 2 s, lid read from /proc/acpi/button/lid). A lone screen uses its preferred mode. The planner has unit tests;
-  in QEMU a forced resolution change is restored by the watcher and the launcher resizes. A real second screen and
-  the lid work on the laptop (QEMU has one connected output). Outputs that already show the right mode are left
-  alone: re-programming an HDMI TV's link makes it glitch for seconds. `yargos-home screens` prints what it sees and plans.
-- SYSTEM > Connected devices lists USB devices, MIDI ports, sound cards and controllers (QEMU: keyboard, mouse, sound
-  card). The "Midi Through" loopback port is no longer created (modprobe `install snd-seq-dummy /bin/true`) so YARG's
-  device list only shows real devices. A USB piano (Yamaha P-143) works; it shows as two ports, MIDI 1 is the keys.
-- Sound quality: when a program's sample rate is not one the sound card does (44.1 kHz music on a USB card that only
-  does 48 kHz), ALSA converts it, and the converter this image had (the built-in one, no ALSA plugins) turned a
-  clean 10 kHz test tone into one with a false tone only 23 dB below it: harsh, tinny. `alsa-plugins` + `libsamplerate`
-  are now in the image and `etc/alsa/conf.d/50-yargos-rate.conf` makes `samplerate_best` the default: the same test
-  now leaves nothing above -94 dB. Measured in the guest with ALSA writing to a file (`tools/audio-test/`); the QEMU
-  USB sound card only does 48 kHz so it is a faithful stand-in for the conversion case. Not yet heard on the real
-  piano: if the P-143 (or whatever the output is) accepts 44.1 kHz itself, no conversion happens and the harshness has
-  another cause (check what rates it offers: it is on the to-do list for the Connected devices screen).
-- Installing to a disk (QEMU, a blank 12 GB virtio disk beside the boot stick): the boot menu's install entry
-  opens the Install screen, which lists only the other disk; the install ran to the end, and the installed
-  disk by itself booted straight to the launcher (no menu) with YARG 0.15.0. Its partitions, boot entry,
-  `fstab`, data copy and blank machine id were checked. An earlier version failed on a leftover install with
-  the same `YARGDATA` label because the stick looked its data up by label; both now use GUIDs.
-Not verified:
-- Pitch detection from a real USB microphone, and playing songs stored as Opus or from a real song drive.
-- The installer on real hardware: a real internal SATA/NVMe disk, firmware that ignores the fallback boot
-  file or has many stale entries, Secure Boot machines, and disks with other systems on them (it erases all
-  of the chosen disk).
-
-- Dashboard navigation with real instruments (the button mapping assumes the kernel's standard HID
-  gamepad mapping); the Wi-Fi password flow and Bluetooth pairing on real adapters; the dashboard's pad mapping on a
-  real guitar (`tools/dev-test.sh pads` shows it).
-- Playing a song on the virtual drums: whether each pad, cymbal and the kick land on the right lane
-  in gameplay, and kick2.
-- Drum velocity for yellow and green (red looks right; the Ion may not encode velocity as documented
-  for Rock Band kits). YARG only uses velocity for the optional bonus on ghost/accent notes and the
-  hit-sound volume; a flagged hit always registers (its layout floors the velocity at 1).
-- Wiimote guitars: playing a song in YARG (menus work); the World Tour touch bar (only a guitar without
-  one was tested); Bluetooth reconnect on a button press after the first connection; and the whole
-  Bluetooth path on the appliance image (pairing flow, `hid-generic` binding, bridge autostart).
-- Whether `hid-sony` claims the virtual `12BA:0100`/`12BA:0210` devices (uhid is declared as a
-  Bluetooth device to avoid it). Fallback: impersonate a Santroller device (`1209:2882`).
-- Anything on real hardware: amdgpu, HDMI audio, Bluetooth, WiFi, USB input, boot time.
-- Bluetooth Polybar guitars (generic Bluetooth HID is enabled; nothing specific was checked).
-
-Known limits: root filesystem is read-write ext4 for now (read-only root + overlay is a later phase);
-the data partition is a fixed 2G.
-
-Not started: a logo splash screen (boot is silent: black screen, no cursor, until YARG appears),
-RAUC/A-B OS updates (the OS itself is updated by reflashing), ALSA default-device selection for HDMI/USB
-audio, a WiFi setup screen that works without a keyboard.
-
-Not verified: an actual update install on the image (only the up-to-date check ran), WiFi, the power
-button (configured, not pressed), VT switching to a maintenance console.
+Tested on a 2020 HP laptop (Ryzen 4000) from a USB stick and installed to its disk: boot, Wi-Fi, sound, YARG, NTFS song
+drive, Wii guitar, ION drums, microphone, USB piano, HDMI mirroring. System updates have so far only run in QEMU. The full,
+honest list of what is and is not verified is in [docs/STATUS.md](docs/STATUS.md).
 
 ## License
 
-MIT, see `LICENSE`. It covers the files in this repository only. YARG's own code is LGPL-3.0, but its release build
-also bundles BASS (proprietary; free for non-commercial use by the developer, and its licence does not cover publishing
-other people's software), the Discord SDK and Unity's runtime, so the built image, which contains YARG, must not be
-published; a device downloads YARG from YARC's own releases. Secure Boot is not supported: turn it off in the firmware.
-Plans for over-the-air system updates are in `docs/OTA-PLAN.md`.
+MIT for this repository, see [LICENSE](LICENSE). The built system contains many other packages under their own licences
+(Linux is GPL-2.0, and so on); every release comes with the licences and the source of the GPL/LGPL parts. YARG is not
+included. Details: [docs/LICENSING.md](docs/LICENSING.md).
+
+## Credits
+
+[YARG](https://github.com/YARC-Official/YARG) and the YARC community; [Buildroot](https://buildroot.org);
+[PlasticBand](https://github.com/TheNathannator/PlasticBand) for the instrument report layouts; the authors of x11rb, fontdue
+and every package in the image.

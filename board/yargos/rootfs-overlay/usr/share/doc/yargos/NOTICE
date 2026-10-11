@@ -1,0 +1,18 @@
+YARG OS
+=======
+
+An unofficial community project. It is not made, endorsed or supported by the YARG / YARC team. YARG itself is not
+part of this system: it is downloaded on the device from YARC's own releases.
+
+The scripts and programs written for this project are under the MIT licence. The system is built with Buildroot and
+contains many other programs and libraries under their own licences: the Linux kernel (GPL-2.0), systemd, glibc and
+many libraries (LGPL-2.1+), busybox, util-linux and other tools (GPL), Mesa (MIT), and binary firmware and processor
+microcode (linux-firmware, intel-microcode; redistributable under the licence texts that come with them).
+
+Each system release is published together with a "legal" file holding the licence texts of everything in it and the
+source code of the GPL / LGPL parts (and a link to the exact source tree of the project itself):
+
+    https://github.com/siesta5787/yargos/releases
+
+Names such as PlayStation, Wii, Xbox, Guitar Hero and Rock Band belong to their owners. This system makes some
+instruments look like standard PlayStation instruments to YARG, because that is what YARG understands.

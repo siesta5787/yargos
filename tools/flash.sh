@@ -2,6 +2,7 @@
 # Write the YARGOS image to a USB stick (or SSD), with guard rails.
 #   sudo tools/flash.sh                 list removable drives, then ask which one
 #   sudo tools/flash.sh /dev/sdX        write to that drive (asks you to retype it first)
+#   IMG=yargos-2026.11.1.img.xz sudo -E tools/flash.sh /dev/sdX     a downloaded release image, compressed, as it is
 # EVERYTHING on the chosen drive is erased. The image is bootable on its own (UEFI): the stick IS the system.
 set -eu
 # Under sudo $HOME is root's; look in the invoking user's home.
@@ -9,7 +10,10 @@ USER_HOME=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
 IMG=${IMG:-$USER_HOME/yargos-build/output/images/yargos.img}
 [ "$(id -u)" = 0 ] || { echo "run with sudo: sudo tools/flash.sh"; exit 1; }
 [ -f "$IMG" ] || { echo "image not found: $IMG"; exit 1; }
-SIZE=$(stat -c %s "$IMG")
+case $IMG in
+    *.xz) SIZE=$(xz --robot -l "$IMG" | awk '$1=="totals" {print $5}') ;;   # a compressed image (a release download)
+    *) SIZE=$(stat -c %s "$IMG") ;;
+esac
 
 list() { lsblk -dno NAME,SIZE,MODEL,TRAN,RM | awk '$NF==1 || $0 ~ /usb/ {printf "  /dev/%-8s %-8s %s\n", $1, $2, substr($0, index($0,$3))}'; }
 
@@ -44,8 +48,15 @@ read -rp "Type the drive name again to confirm ($DEV): " CONFIRM
 [ "$CONFIRM" = "$DEV" ] || { echo "not confirmed, nothing written"; exit 1; }
 
 for p in $(lsblk -lnpo NAME "$DEV" | tail -n +2); do umount "$p" 2>/dev/null || true; done
-dd if="$IMG" of="$DEV" bs=4M status=progress conv=fsync
-sync
-echo "Checking what was written..."
-cmp -n "$SIZE" "$IMG" "$DEV" && echo "OK: the drive matches the image." || { echo "MISMATCH: do not use this drive"; exit 1; }
+if [ "${IMG%.xz}" != "$IMG" ]; then
+    xz -dc "$IMG" | dd of="$DEV" bs=4M status=progress conv=fsync iflag=fullblock
+    sync
+    echo "Checking what was written..."
+    xz -dc "$IMG" | cmp -n "$SIZE" - "$DEV" && echo "OK: the drive matches the image." || { echo "MISMATCH: do not use this drive"; exit 1; }
+else
+    dd if="$IMG" of="$DEV" bs=4M status=progress conv=fsync
+    sync
+    echo "Checking what was written..."
+    cmp -n "$SIZE" "$IMG" "$DEV" && echo "OK: the drive matches the image." || { echo "MISMATCH: do not use this drive"; exit 1; }
+fi
 echo "Done. Safely remove the drive, plug it into the mini PC and boot from it (UEFI, Secure Boot off)."
