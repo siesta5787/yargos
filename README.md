@@ -75,7 +75,8 @@ run `journalctl -b > /data/boot.log`, then read `boot.log` from the `YARGDATA` p
 - `board/yargos/esp/loader/` - systemd-boot config; the verbose `yargos-debug` entry is the default
   for now (see "Boot entries")
 - `board/yargos/rootfs-overlay/` - systemd units, udev rules, bluez config, launch scripts
-- `package/yarg` - pinned YARG release, installed as a seed in `/usr/share/yarg-seed`
+- `package/yarg` - pinned YARG release as an OPTIONAL seed in `/usr/share/yarg-seed`: the default image does not contain YARG
+  (see "Building"); a private test image can (`YARGOS_WITH_YARG=1 tools/br.sh`)
 - `package/yargos-bridge` + `src/bridge` - Rust bridges: Wiimote guitar and wired Xbox 360 drums ->
   virtual PS3 instruments (uhid)
 - `package/yargos-home` + `src/home` - Rust session: boot splash, YARG launcher, and the dashboard shown
@@ -85,9 +86,12 @@ run `journalctl -b > /data/boot.log`, then read `boot.log` from the `YARGDATA` p
 
 ## Runtime design
 
-- `yargos-firstboot.service` copies the seeded YARG into `/data/apps/yarg/<version>` and points
-  `/data/apps/yarg/current` at it. YARG runs from there, so newer releases can be dropped in
-  without rebuilding the OS (see "Updating YARG").
+- The default image has no YARG. On first boot the main menu says INSTALL YARG: that screen downloads the latest release
+  from YARC's GitHub (checksum from the release metadata, ~120 MB, with a percentage), or installs a
+  `YARG_v<version>-Linux-x86_64.zip` found on the song drive when there is no internet, or leads to Wi-Fi setup first.
+  `yargos-update install` / `install-zip` do this; the daily timer never installs YARG on its own. An image built with the
+  seed instead gets it copied by `yargos-seed.service` (as the player) into `/data/apps/yarg/<version>`. Either way YARG
+  runs from `/data/apps/yarg/current`, so newer releases arrive without rebuilding the OS (see "Updating YARG").
 - YARG runs with `-persistent-data-path /data/yarg -offline`; settings, profiles and the song
   cache live on the data partition. It uses OpenGL (radeonsi); this Buildroot has no RADV Vulkan option.
 - The song drive: label it `YARGSONGS` (ext4, exFAT, NTFS or FAT). It mounts read-only at
@@ -264,6 +268,14 @@ Verified:
   up for two seconds) and otherwise disconnects it and shows an ATTENTION box that waits for OK; a connected Wiimote
   shows READY or NOT READY on its row. Checked in QEMU with the fake Wiimote (`yargos-home wiicheck`: bridge running,
   bridge stopped, no device). Not tried with real Bluetooth.
+- First run without YARG (the default image has none; QEMU, 256 GB overlay, real GitHub): the main menu shows INSTALL YARG
+  and "YARG: not installed"; the screen downloaded the 122 MB release with a live percentage, checked the SHA-256 from
+  GitHub's metadata, unpacked, ran the library check and the menu became PLAY YARG. The same with a zip on a (fake) song
+  drive, with no download. Offline, an already installed system, a zip without a version in its name and a corrupt zip
+  all end in a clear message and leave nothing behind (tools/test-update.sh covers the first-install cases too). Not yet
+  tried on the laptop; the private "with YARG" variant builds and carries the seed.
+- Fixed in the same round: `firstboot.sh` used `stat`, which this image does not have, so it threw away the Sound choice
+  at every boot (it now uses `[ -O file ]`; the choice survives a reboot in QEMU).
 - Security hardening (Phase 0 of docs/OTA-PLAN.md), checked in QEMU on a 256 GB drive: the player cannot rename,
   replace or add anything in /data's first level or write asound.conf; links planted where root works (apps/yarg, yarg,
   yargos.conf) are replaced and what they pointed at is untouched; the YARG seed is installed by the player; the daily

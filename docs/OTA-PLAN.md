@@ -42,7 +42,8 @@ below. Verify the items marked *verify* before relying on them.
   uncompressed in the slot (the compressed-firmware/modules problem does not return). Hosted as GitHub release assets
   with a permanent `channel` release holding `stable.json`/`beta.json`; fetch with `curl -r` ranges (*verify* the asset CDN
   honours Range, else one asset per chunk). Version `YYYY.MM.N` in os-release.
-- **YARG kept out of the published rootfs**: the seed goes to the *flashed image's data partition* (`mke2fs -d` under
+- **YARG kept out of the published rootfs** (DONE 2026-10-10: the default build has no YARG and the device installs it from
+  the dashboard, from GitHub or from a zip on the song drive; the older plan below, seeding the data partition, is not used): the seed goes to the *flashed image's data partition* (`mke2fs -d` under
   fakeroot); firstboot no longer copies a seed; if `/data/apps/yarg/current` is missing the launcher offers "Install YARG"
   (download from YARC). `release.sh` refuses to publish if the rootfs contains yarg-seed, libbass* or discord_game_sdk*.
   GPL: publish Buildroot `make legal-info` output with the payload.

@@ -3,9 +3,13 @@
 #
 #   yargos-update status         what is installed, staged, pending or rejected
 #   yargos-update check          is a newer YARG release available?
+#   yargos-update install        first install: the same as apply, for a system that has no YARG yet
 #   yargos-update apply [--restart]
 #                                download, verify, stage and switch to the latest release
-#   yargos-update auto           what the daily timer runs (does nothing offline or if AUTO_UPDATE=no)
+#   yargos-update find-zip       list YARG release zips on the song drive (for an install without internet)
+#   yargos-update install-zip F  install YARG from a release zip file (no internet; YARG_v<version>-Linux-x86_64.zip)
+#   yargos-update auto           what the daily timer runs (does nothing offline, if AUTO_UPDATE=no or if there is no YARG:
+#                                the first install is always something a person asks for)
 #   yargos-update rollback       switch back to the previous version
 #   yargos-update boot-check     run before each YARG start: roll back after repeated failed starts
 #   yargos-update mark-good      run after YARG has stayed up for a while: the new version is good
@@ -28,6 +32,7 @@ ASSET_SUFFIX=${YARGOS_ASSET_SUFFIX:-Linux-x86_64.zip}
 MAX_ATTEMPTS=${YARGOS_MAX_ATTEMPTS:-3}
 OWNER=${YARGOS_OWNER:-player}
 CONF=$DATA/yargos.conf
+SONGS=${YARGOS_SONGS:-/media/songs}
 AUTO_UPDATE=yes
 [ -f "$CONF" ] && grep -qx 'AUTO_UPDATE=no' "$CONF" && AUTO_UPDATE=no
 
@@ -62,9 +67,11 @@ fetch_latest() {
     LATEST_VER=${tag#v}
     # endswith, not test(): the image's jq is built without a regex library.
     asset=$(printf '%s' "$json" | jq -r --arg suf "$ASSET_SUFFIX" \
-        '[.assets[] | select(.name | endswith($suf))][0] | "\(.browser_download_url // "") \(.digest // "")"') || return 1
-    LATEST_URL=${asset% *}
-    LATEST_DIGEST=${asset#* }
+        '[.assets[] | select(.name | endswith($suf))][0] | "\(.browser_download_url // "") \(.size // 0) \(.digest // "")"') || return 1
+    LATEST_URL=${asset%% *}
+    rest=${asset#* }
+    LATEST_SIZE=${rest%% *}
+    LATEST_DIGEST=${rest#* }
     [ -n "$LATEST_URL" ] && [ "$LATEST_URL" != null ]
 }
 
@@ -109,41 +116,18 @@ cmd_check() {
     fi
 }
 
-cmd_apply() {
-    restart=no
-    [ "${1:-}" = --restart ] && restart=yes
-    cur=$(current_version) || die "no YARG installed under $APPS"
-    fetch_latest || die "could not read the latest release (offline?)"
-    if is_rejected "$LATEST_VER"; then log "latest $LATEST_VER was rolled back before; skipping"; return 0; fi
-    ver_gt "$LATEST_VER" "$cur" || { log "up to date ($cur)"; return 0; }
-
-    case $LATEST_DIGEST in
-        sha256:*) want=${LATEST_DIGEST#sha256:} ;;
-        *) die "release $LATEST_VER has no SHA-256 digest in its metadata; refusing to install it" ;;
-    esac
-
-    mkdir "$APPS/.lock" 2>/dev/null || die "another update is running"
-    dl=$APPS/.dl
-    stage=$APPS/.stage-$LATEST_VER
-    trap 'rm -rf "$APPS/.lock" "$stage"' EXIT
-    rm -rf "$stage" "$dl"; mkdir -p "$dl" "$stage"
-
-    log "downloading $LATEST_VER"
-    curl -fL --max-time 3600 -o "$dl/yarg.zip" "$LATEST_URL" || { rm -rf "$dl"; die "download failed"; }
-    got=$(sha256sum "$dl/yarg.zip" | cut -d' ' -f1)
-    [ "$got" = "$want" ] || { rm -rf "$dl"; die "checksum mismatch (expected $want, got $got); not installing"; }
-
-    unzip -q "$dl/yarg.zip" -d "$stage" || { rm -rf "$dl"; die "could not unpack the download"; }
-    rm -rf "$dl"
+# Last steps of every install: check the unpacked folder in $stage, move it in, switch `current` to it. Needs $stage and
+# $VER; $cur is the version being replaced (empty on a first install).
+finish_install() {
+    log "STEP checking"
     chmod 0755 "$stage/YARG" 2>/dev/null
-    verify_dir "$stage" || die "$LATEST_VER would not start on this system (see above); keeping $cur"
-
-    [ -e "$APPS/$LATEST_VER" ] && rm -rf "$APPS/$LATEST_VER"
-    mv "$stage" "$APPS/$LATEST_VER"
-    fix_owner "$APPS/$LATEST_VER"
-    set_link previous "$cur"
-    set_link current "$LATEST_VER"
-    echo "$LATEST_VER 0" > "$APPS/.pending"
+    verify_dir "$stage" || die "$VER would not start on this system (see above)${cur:+; keeping $cur}"
+    [ -e "$APPS/$VER" ] && rm -rf "$APPS/$VER"
+    mv "$stage" "$APPS/$VER"
+    fix_owner "$APPS/$VER"
+    if [ -n "$cur" ]; then set_link previous "$cur"; fi
+    set_link current "$VER"
+    echo "$VER 0" > "$APPS/.pending"
 
     # Keep only the two newest. Skip the current/previous symlinks: "rm -rf link/" would empty
     # the folder they point to.
@@ -151,15 +135,92 @@ cmd_apply() {
         d=${d%/}
         [ -L "$d" ] && continue
         n=$(basename "$d")
-        [ "$n" = "$LATEST_VER" ] || [ "$n" = "$cur" ] || rm -rf "$d"
+        [ "$n" = "$VER" ] || [ "$n" = "$cur" ] || rm -rf "$d"
     done
     fix_owner "$APPS"
-    log "installed $LATEST_VER (was $cur); it starts the next time YARG launches"
+    log "installed $VER${cur:+ (was $cur)}; it starts the next time YARG launches"
+}
+
+cmd_apply() {
+    restart=no
+    [ "${1:-}" = --restart ] && restart=yes
+    cur=$(current_version) || cur=
+    fetch_latest || die "could not read the latest release (offline?)"
+    VER=$LATEST_VER
+    if is_rejected "$VER"; then log "latest $VER was rolled back before; skipping"; return 0; fi
+    if [ -n "$cur" ]; then ver_gt "$VER" "$cur" || { log "up to date ($cur)"; return 0; }; fi
+
+    case $LATEST_DIGEST in
+        sha256:*) want=${LATEST_DIGEST#sha256:} ;;
+        *) die "release $VER has no SHA-256 digest in its metadata; refusing to install it" ;;
+    esac
+
+    mkdir "$APPS/.lock" 2>/dev/null || die "another update is running"
+    dl=$APPS/.dl
+    stage=$APPS/.stage-$VER
+    trap 'rm -rf "$APPS/.lock" "$stage" "$dl"' EXIT
+    rm -rf "$stage" "$dl"; mkdir -p "$dl" "$stage"
+
+    log "downloading $VER"
+    # In the background, so the percentage can be reported while it runs ("PROGRESS n" lines for the dashboard).
+    curl -fsSL --max-time 3600 -o "$dl/yarg.zip" "$LATEST_URL" &
+    cpid=$!
+    while kill -0 "$cpid" 2>/dev/null; do
+        got=$(wc -c < "$dl/yarg.zip" 2>/dev/null || echo 0)
+        [ "${LATEST_SIZE:-0}" -gt 0 ] && log "PROGRESS $((got * 100 / LATEST_SIZE))"
+        sleep 1
+    done
+    wait "$cpid" || die "download failed"
+    got=$(sha256sum "$dl/yarg.zip" | cut -d' ' -f1)
+    [ "$got" = "$want" ] || die "checksum mismatch (expected $want, got $got); not installing"
+
+    log "STEP unpacking"
+    unzip -q "$dl/yarg.zip" -d "$stage" || die "could not unpack the download"
+    rm -rf "$dl"
+    finish_install
     if [ "$restart" = yes ]; then systemctl restart yarg.service; fi
+}
+
+cmd_install() {
+    current_version >/dev/null && die "YARG is already installed ($(current_version)); use apply to update it"
+    cmd_apply
+}
+
+# YARG release zips on the song drive: it is the drive people plug in anyway, and mounts itself when looked at.
+cmd_find_zip() {
+    # No song drive: do not even look (touching the empty automount makes the system wait for a drive that is not there).
+    if [ "$SONGS" = /media/songs ] && [ ! -e /dev/disk/by-label/YARGSONGS ]; then return 0; fi
+    for f in "$SONGS"/YARG*Linux*x86_64*.zip "$SONGS"/YARG*linux*.zip; do
+        [ -f "$f" ] && echo "$f"
+    done | sort -u
+    return 0
+}
+
+cmd_install_zip() {
+    zip=${1:?usage: yargos-update install-zip FILE.zip}
+    [ -f "$zip" ] || die "$zip not found"
+    # The version comes from the file name, the way YARC names its releases.
+    VER=$(basename "$zip" | sed -n 's/^YARG_v\{0,1\}\([0-9][0-9.]*\)[-_].*\.zip$/\1/p')
+    [ -n "$VER" ] || die "cannot tell the version from the file name $(basename "$zip") (expected YARG_v<version>-Linux-x86_64.zip)"
+    cur=$(current_version) || cur=
+    mkdir "$APPS/.lock" 2>/dev/null || die "another update is running"
+    stage=$APPS/.stage-$VER
+    trap 'rm -rf "$APPS/.lock" "$stage"' EXIT
+    rm -rf "$stage"; mkdir -p "$stage"
+    log "STEP unpacking"
+    unzip -q "$zip" -d "$stage" || die "could not unpack $(basename "$zip")"
+    # A zip that holds one folder with the game inside: use that folder.
+    if [ ! -e "$stage/YARG" ] && [ "$(ls -A "$stage" | wc -l)" = 1 ] && [ -d "$stage/$(ls -A "$stage")" ]; then
+        inner=$stage/$(ls -A "$stage")
+        mv "$inner" "$stage.inner" && rmdir "$stage" && mv "$stage.inner" "$stage"
+    fi
+    [ -e "$stage/YARG" ] || die "$(basename "$zip") does not look like a YARG Linux release"
+    finish_install
 }
 
 cmd_auto() {
     [ "$AUTO_UPDATE" = no ] && { log "automatic updates are off (AUTO_UPDATE=no in $CONF)"; return 0; }
+    current_version >/dev/null || { log "YARG is not installed; installing it is done from the dashboard"; return 0; }
     # A subshell, so a failure (offline, bad download) is logged but never marks the timer's service failed.
     (cmd_apply) || log "automatic update did not complete"
     return 0
@@ -200,11 +261,14 @@ cmd_mark_good() {
 case ${1:-} in
     status) cmd_status ;;
     check) cmd_check ;;
+    install) cmd_install ;;
     apply) shift; cmd_apply "$@" ;;
+    find-zip) cmd_find_zip ;;
+    install-zip) cmd_install_zip "${2:-}" ;;
     auto) cmd_auto ;;
     rollback) cmd_rollback ;;
     boot-check) cmd_boot_check ;;
     mark-good) cmd_mark_good ;;
     verify-dir) verify_dir "${2:?usage: yargos-update verify-dir DIR}" ;;
-    *) sed -n '2,20p' "$0"; exit 2 ;;
+    *) sed -n '2,24p' "$0"; exit 2 ;;
 esac

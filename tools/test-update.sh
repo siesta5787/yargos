@@ -77,6 +77,35 @@ check "good version is never rolled back" [ "$(cur)" = 0.99.0 ]
 "$UPD" rollback >/dev/null 2>&1
 check "manual rollback works" [ "$(cur)" = 0.15.0 ]
 
+echo "first install (an image without YARG)"
+rm -rf "$APPS"; mkdir -p "$APPS"
+api good.json
+"$UPD" auto 2>&1 | grep -q "not installed"; check "the daily update never installs YARG by itself" [ $? -eq 0 ]
+check "and installed nothing" [ ! -e "$APPS/current" ]
+out=$("$UPD" install 2>&1); case $out in *"STEP unpacking"*) ok "install reports its steps" ;; *) bad "install reports its steps" ;; esac
+check "install makes it current" [ "$(cur)" = 0.99.0 ]
+check "with no previous version" [ ! -e "$APPS/previous" ]
+check "on trial" [ "$(cat "$APPS/.pending")" = "0.99.0 0" ]
+out=$("$UPD" install 2>&1); case $out in *"already installed"*) ok "install refuses when YARG is there" ;; *) bad "install refuses when YARG is there" ;; esac
+for i in 1 2 3 4 5; do "$UPD" boot-check; done
+check "a first install with nothing to go back to is never rolled back" [ "$(cur)" = 0.99.0 ]
+
+echo "install from a zip (no internet)"
+rm -rf "$APPS"; mkdir -p "$APPS" "$T/songs"
+export YARGOS_SONGS=$T/songs
+check "no zip on the drive: nothing listed" [ -z "$("$UPD" find-zip)" ]
+cp "$T/www/yarg-0.99.0.zip" "$T/songs/YARG_v0.99.0-Linux-x86_64.zip"
+check "find-zip lists it" [ "$("$UPD" find-zip)" = "$T/songs/YARG_v0.99.0-Linux-x86_64.zip" ]
+"$UPD" install-zip "$T/songs/YARG_v0.99.0-Linux-x86_64.zip" >/dev/null 2>&1
+check "install-zip makes it current" [ "$(cur)" = 0.99.0 ]
+check "and it is launchable" [ -x "$APPS/current/YARG" ]
+cp "$T/www/yarg-0.99.0.zip" "$T/songs/odd name.zip"
+"$UPD" install-zip "$T/songs/odd name.zip" 2>&1 | grep -q "cannot tell the version"; check "a zip without a version in its name is refused" [ $? -eq 0 ]
+echo "not a zip" > "$T/songs/YARG_v1.0.0-Linux-x86_64.zip"
+"$UPD" install-zip "$T/songs/YARG_v1.0.0-Linux-x86_64.zip" >/dev/null 2>&1; check "a broken zip is refused" [ "$(cur)" = 0.99.0 ]
+check "and leaves no debris" bash -c '[ -z "$(ls -A '"$APPS"'/.stage-* 2>/dev/null)" ]'
+unset YARGOS_SONGS
+
 if [ -n "${1:-}" ]; then
     echo "real YARG folder"
     check "real YARG passes the library check here" "$UPD" verify-dir "$1"

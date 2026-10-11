@@ -54,6 +54,18 @@ pub fn model(name: &str) -> Model {
     ];
     m.tick = 3;
     match name {
+        "yarg" => {
+            m.status.yarg = "not installed".into();
+            m.status.network = "Wi-Fi: Living Room (192.168.0.47)".into();
+            m.screen = Screen::Yarg;
+            m.yarg_zips = vec!["/media/songs/YARG_v0.15.0-Linux-x86_64.zip".into()];
+        }
+        "yarg-home" => m.status.yarg = "not installed".into(),
+        "yarg-busy" => {
+            m.status.yarg = "not installed".into();
+            m.screen = Screen::Yarg;
+            m.busy = Some("Downloading YARG\u{2026} 43%".into());
+        }
         "devices" => {
             m.screen = Screen::Devices;
             m.sel = 3;

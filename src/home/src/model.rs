@@ -30,6 +30,8 @@ pub enum Screen {
     System,
     Install,
     Devices,
+    /// First install of YARG itself (an image without it): download, or install from a zip on the song drive.
+    Yarg,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -113,6 +115,10 @@ pub enum Cmd {
     BtForget(String),
     UpdCheck,
     UpdApply,
+    /// Download and install YARG from its GitHub release (nothing installed yet).
+    YargInstall,
+    /// Install YARG from a release zip on the song drive (full path).
+    YargInstallZip(String),
     UpdRollback,
     UpdAuto(bool),
     SongsRefresh,
@@ -168,6 +174,12 @@ pub enum Res {
     SysInfo(Vec<String>),
     Disks(Vec<Disk>),
     Devices(Vec<DeviceEntry>),
+    /// YARG release zips found on the song drive.
+    YargZips(Vec<String>),
+    /// Progress text of a YARG download/install (only shown while the busy overlay is up).
+    YargProgress(String),
+    /// A YARG install finished: the message to show, or why it failed.
+    YargInstalled(Result<String, String>),
     /// One progress line from the installer.
     InstallStep(String),
     InstallDone(Result<(), String>),
@@ -244,6 +256,7 @@ impl Osk {
 // ---- model -----------------------------------------------------------------------------------
 
 pub const HOME_ITEMS: [&str; 7] = ["PLAY YARG", "WI-FI", "SOUND", "BLUETOOTH", "UPDATES", "SONGS", "SYSTEM"];
+const INSTALL_YARG: &str = "INSTALL YARG";
 
 pub struct Model {
     pub screen: Screen,
@@ -264,6 +277,8 @@ pub struct Model {
     pub confirm_sel: usize,
     pub disks: Vec<Disk>,
     pub devices: Vec<DeviceEntry>,
+    /// YARG release zips on the song drive (full paths).
+    pub yarg_zips: Vec<String>,
     /// The disk the user is being asked to confirm erasing (index into `disks`).
     pub erase: Option<usize>,
     /// Set once the install finished: what it was installed on.
@@ -299,6 +314,7 @@ impl Model {
             confirm_sel: 0,
             disks: vec![],
             devices: vec![],
+            yarg_zips: vec![],
             erase: None,
             installed: None,
             install_error: None,
@@ -319,6 +335,16 @@ impl Model {
         self.toast.as_ref().filter(|(_, t)| t.elapsed() < Duration::from_secs(4)).map(|(m, _)| m.as_str())
     }
 
+    /// Nothing to play yet: the image has no YARG until it is installed from the dashboard.
+    pub fn yarg_missing(&self) -> bool {
+        self.status.yarg == "not installed"
+    }
+
+    /// The label of a main menu row (the first one becomes INSTALL YARG while there is no YARG).
+    pub fn home_label(&self, i: usize) -> &'static str {
+        if i == 0 && self.yarg_missing() { INSTALL_YARG } else { HOME_ITEMS[i] }
+    }
+
     /// Number of selectable rows on the current list screen.
     pub fn row_count(&self) -> usize {
         match self.screen {
@@ -330,6 +356,7 @@ impl Model {
             Screen::Songs => 2 + usize::from(self.songs.mounted),
             Screen::System => 4,
             Screen::Devices => 1 + self.devices.len(),
+            Screen::Yarg => 3,
             Screen::Install => if self.installed.is_some() { 2 } else { 1 + self.disks.len() },
             Screen::Password => 0,
         }
@@ -513,7 +540,9 @@ impl Model {
     fn activate(&mut self) -> Vec<Cmd> {
         match self.screen {
             Screen::Home => match self.sel {
+                0 if self.yarg_missing() => self.enter(Screen::Yarg),
                 0 => vec![Cmd::LaunchYarg],
+                4 if self.yarg_missing() => self.enter(Screen::Yarg), // UPDATES: there is nothing to update yet
                 i => {
                     let s = [Screen::Wifi, Screen::Sound, Screen::Bluetooth, Screen::Updates, Screen::Songs, Screen::System][i - 1];
                     self.enter(s)
@@ -565,6 +594,23 @@ impl Model {
                 });
                 vec![Cmd::BtConnect(d)]
             }
+            Screen::Yarg => match self.sel {
+                0 => {
+                    self.busy = Some("Downloading YARG\u{2026} this can take a few minutes".into());
+                    vec![Cmd::YargInstall]
+                }
+                1 => match self.yarg_zips.first().cloned() {
+                    Some(zip) => {
+                        self.busy = Some("Installing YARG\u{2026}".into());
+                        vec![Cmd::YargInstallZip(zip)]
+                    }
+                    None => {
+                        self.toast("No YARG zip found on the song drive");
+                        vec![]
+                    }
+                },
+                _ => self.enter(Screen::Wifi),
+            },
             Screen::Updates => match self.sel {
                 0 => {
                     self.busy = Some("Checking for updates…".into());
@@ -704,6 +750,26 @@ impl Model {
             Res::Alert(msg) => {
                 self.busy = None;
                 self.alert = Some(msg);
+            }
+            Res::YargZips(z) => {
+                self.yarg_zips = z;
+                self.loading = false;
+            }
+            Res::YargProgress(t) => {
+                if self.busy.is_some() {
+                    self.busy = Some(t);
+                }
+            }
+            Res::YargInstalled(r) => {
+                self.busy = None;
+                match r {
+                    Ok(msg) => {
+                        self.screen = Screen::Home;
+                        self.sel = 0;
+                        self.toast(msg);
+                    }
+                    Err(e) => self.alert = Some(e),
+                }
             }
             Res::Done(msg) => {
                 self.busy = None;
@@ -893,6 +959,74 @@ mod tests {
         assert_eq!(m.handle(Nav::Right), vec![Cmd::SoundVolume { card: 0, pct: 55 }]);
         m.volume = Some((0, 2));
         assert_eq!(m.handle(Nav::Left), vec![Cmd::SoundVolume { card: 0, pct: 0 }]);
+    }
+
+    fn without_yarg() -> Model {
+        let mut m = Model::new();
+        m.status.yarg = "not installed".into();
+        m
+    }
+
+    #[test]
+    fn with_no_yarg_the_first_row_installs_it_instead_of_playing() {
+        let mut m = Model::new();
+        m.status.yarg = "0.15.0".into();
+        assert_eq!(m.home_label(0), "PLAY YARG");
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::LaunchYarg]);
+
+        let mut m = without_yarg();
+        assert_eq!(m.home_label(0), "INSTALL YARG");
+        assert_eq!(m.home_label(1), "WI-FI");
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Yarg)]);
+        assert_eq!(m.screen, Screen::Yarg);
+    }
+
+    #[test]
+    fn updates_with_no_yarg_leads_to_the_install_screen() {
+        let mut m = without_yarg();
+        m.sel = 4;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Yarg)]);
+        assert_eq!(m.screen, Screen::Yarg);
+    }
+
+    #[test]
+    fn the_install_screen_downloads_installs_from_a_zip_or_goes_to_wifi() {
+        let mut m = without_yarg();
+        m.screen = Screen::Yarg;
+        m.sel = 1;
+        assert!(m.handle(Nav::Ok).is_empty(), "no zip yet");
+        assert!(m.busy.is_none());
+        m.apply(Res::YargZips(vec!["/media/songs/YARG_v0.15.0-Linux-x86_64.zip".into()]));
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::YargInstallZip("/media/songs/YARG_v0.15.0-Linux-x86_64.zip".into())]);
+        assert!(m.busy.is_some());
+        m.busy = None;
+        m.sel = 0;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::YargInstall]);
+        assert!(m.busy.as_ref().unwrap().contains("Downloading"));
+        m.apply(Res::YargProgress("Downloading YARG\u{2026} 40%".into()));
+        assert!(m.busy.as_ref().unwrap().contains("40%"));
+        m.busy = None;
+        m.apply(Res::YargProgress("late line".into()));
+        assert!(m.busy.is_none(), "progress after the end does not bring the overlay back");
+        m.sel = 2;
+        m.handle(Nav::Ok);
+        assert_eq!(m.screen, Screen::Wifi);
+    }
+
+    #[test]
+    fn a_finished_install_returns_home_and_a_failed_one_raises_an_alert() {
+        let mut m = without_yarg();
+        m.screen = Screen::Yarg;
+        m.busy = Some("x".into());
+        m.apply(Res::YargInstalled(Err("Could not reach the internet.".into())));
+        assert!(m.busy.is_none());
+        assert_eq!(m.alert.as_deref(), Some("Could not reach the internet."));
+        assert_eq!(m.screen, Screen::Yarg);
+        m.alert = None;
+        m.busy = Some("x".into());
+        m.apply(Res::YargInstalled(Ok("YARG is installed. Choose PLAY YARG".into())));
+        assert_eq!(m.screen, Screen::Home);
+        assert!(m.live_toast().is_some());
     }
 
     #[test]

@@ -8,6 +8,10 @@ TARGET_DIR=$1
 
 mkdir -p "$TARGET_DIR/data" "$TARGET_DIR/media/songs"
 
+# The image has no YARG unless it was asked for (tools/br.sh with YARGOS_WITH_YARG=1). Buildroot never removes what a
+# package installed before, so take the seed out by hand when the package is not selected.
+grep -q '^BR2_PACKAGE_YARG=y' "$BR2_CONFIG" || rm -rf "$TARGET_DIR/usr/share/yarg-seed"
+
 # ---- trimming ---------------------------------------------------------------------------------
 # Mesa's build pulls in Clang, libclc and the SPIR-V tools for OpenCL, which the appliance never uses.
 # Nothing at runtime links the Clang libraries (checked with readelf); only these tools themselves do.

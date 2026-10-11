@@ -119,6 +119,14 @@ fn rows(m: &Model) -> Vec<Row> {
             }
             v
         }
+        Screen::Yarg => {
+            let zip = m.yarg_zips.first().map(|z| z.rsplit('/').next().unwrap_or(z).to_string());
+            vec![
+                Row { value: "from GitHub".into(), ..row("Download YARG") },
+                Row { enabled: zip.is_some(), value: if zip.is_some() { "found".into() } else { "no file".into() }, ..row("Install from the song drive") },
+                row("Set up Wi-Fi first"),
+            ]
+        }
         Screen::Install if m.installed.is_some() => vec![row("Restart"), row("Shut down")],
         Screen::Install => {
             let mut v = vec![row("Look for disks again")];
@@ -209,6 +217,20 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
                 "Your YARG, its settings and your paired Bluetooth devices were copied across.".into(),
             ],
         ),
+        Screen::Yarg => {
+            let mut v = vec![
+                "YARG is the free game this system runs. It is not part of YARG OS: it is downloaded from the official YARG release on GitHub (YARC-Official/YARG), about 120 MB.".to_string(),
+                format!("Network: {}", if m.status.network.is_empty() { "checking\u{2026}" } else { &m.status.network }),
+            ];
+            if m.status.network == "not connected" {
+                v.push("Not connected: choose Set up Wi-Fi first (or plug in a network cable).".into());
+            }
+            v.push(match m.yarg_zips.first() {
+                Some(z) => format!("No internet? A YARG zip was found on the song drive: {}.", z.rsplit('/').next().unwrap_or(z)),
+                None => "No internet? Put the YARG Linux zip (YARG_v...-Linux-x86_64.zip) on the song drive and look again.".into(),
+            });
+            ("INSTALL YARG", v)
+        }
         Screen::Install => {
             let mut v = vec![
                 "Install YARG OS on this computer's own disk, so it starts without the USB drive.".to_string(),
@@ -237,6 +259,7 @@ fn title_of(s: Screen) -> &'static str {
         Screen::System => "SYSTEM",
         Screen::Devices => "DEVICES",
         Screen::Install => "INSTALL",
+        Screen::Yarg => "INSTALL YARG",
     }
 }
 
@@ -314,7 +337,8 @@ fn header(cv: &mut Canvas, fonts: &mut Fonts, title: &str, u: f32) {
 fn draw_home(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &mut Vec<Hit>) {
     header(cv, fonts, "", u);
     let (x, y0, step) = (96.0 * u, 168.0 * u, 62.0 * u);
-    for (i, label) in HOME_ITEMS.iter().enumerate() {
+    for i in 0..HOME_ITEMS.len() {
+        let label = m.home_label(i);
         let y = y0 + i as f32 * step;
         let sel = i == m.sel;
         if sel {

@@ -62,7 +62,8 @@ file "$DATA/yargos.conf" player:player 0644
 # /etc/asound.conf links here. ROOT owns it: root's own audio tools (alsactl, restoring the volume at boot) read it,
 # and an ALSA config can load a program, so the player must not be able to write it. The Sound screen asks the system
 # helper to write it. One written by an older image belonged to the player and cannot be trusted: it is dropped.
-[ "$(stat -c %U "$DATA/asound.conf" 2>/dev/null)" = root ] || rm -rf "$DATA/asound.conf"
+# (-O: owned by this process's user, i.e. root. There is no stat command in this image.)
+[ -O "$DATA/asound.conf" ] && [ ! -L "$DATA/asound.conf" ] || rm -rf "$DATA/asound.conf"
 file "$DATA/asound.conf" root:root 0644
 
 # State that must outlive the system itself lives on /data: Bluetooth pairings, Wi-Fi passwords, the volume.

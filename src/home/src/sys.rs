@@ -615,7 +615,7 @@ pub fn parse_check(out: &str) -> (Option<String>, bool) {
 }
 
 fn clean_log(out: &str) -> Vec<String> {
-    out.lines().map(|l| l.trim().trim_start_matches("yargos-update: ").to_string()).filter(|l| !l.is_empty() && !l.contains('%') && !l.starts_with("Dload")).collect()
+    out.lines().map(|l| l.trim().trim_start_matches("yargos-update: ").to_string()).filter(|l| !l.is_empty() && !l.contains('%') && !l.starts_with("Dload") && !l.starts_with("PROGRESS") && !l.starts_with("STEP")).collect()
 }
 
 pub fn upd_check(prev: &UpdInfo) -> UpdInfo {
@@ -635,11 +635,79 @@ pub fn upd_check(prev: &UpdInfo) -> UpdInfo {
     u
 }
 
-pub fn upd_apply() -> Result<String, String> {
-    match run_timeout("yargos-update", &["apply"], 3600) {
-        Ok(out) => Ok(if out.contains("installed ") { "Installed. Choose PLAY YARG to use it".into() } else { "You are up to date".into() }),
-        Err(e) => Err(clean_log(&e).last().cloned().unwrap_or_else(|| "The update did not install".into())),
+/// One line of `yargos-update` output.
+#[derive(Debug, PartialEq)]
+pub enum UpdLine {
+    Progress(u32),
+    Step(String),
+    Text(String),
+}
+
+pub fn parse_update_line(line: &str) -> UpdLine {
+    let t = line.trim().trim_start_matches("yargos-update: ");
+    if let Some(n) = t.strip_prefix("PROGRESS ").and_then(|n| n.trim().parse::<u32>().ok()) {
+        UpdLine::Progress(n.min(100))
+    } else if let Some(step) = t.strip_prefix("STEP ") {
+        UpdLine::Step(step.trim().to_string())
+    } else {
+        UpdLine::Text(t.to_string())
     }
+}
+
+/// Run `yargos-update ARGS`, reporting what it is doing ("Downloading YARG… 40%") while it runs.
+/// Ok with its messages, or Err with them when it failed.
+fn update_stream(args: &[&str], mut on_progress: impl FnMut(String)) -> Result<Vec<String>, Vec<String>> {
+    let mut child = Command::new("sh")
+        .args(["-c", "exec yargos-update \"$@\" 2>&1", "sh"])
+        .args(args)
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| vec![format!("yargos-update: {e}")])?;
+    let mut text = vec![];
+    if let Some(out) = child.stdout.take() {
+        for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+            match parse_update_line(&line) {
+                UpdLine::Progress(n) => on_progress(format!("Downloading YARG\u{2026} {n}%")),
+                UpdLine::Step(s) if s == "unpacking" => on_progress("Unpacking YARG\u{2026}".into()),
+                UpdLine::Step(s) if s == "checking" => on_progress("Checking YARG\u{2026}".into()),
+                UpdLine::Step(_) => {}
+                UpdLine::Text(t) if !t.is_empty() => text.push(t),
+                UpdLine::Text(_) => {}
+            }
+        }
+    }
+    if child.wait().map(|s| s.success()).unwrap_or(false) { Ok(text) } else { Err(text) }
+}
+
+/// The last message of a failed run, in words for the screen.
+pub fn update_error(lines: &[String]) -> String {
+    let last = lines.last().cloned().unwrap_or_else(|| "it did not finish".into());
+    if last.contains("offline") || last.contains("could not read the latest release") {
+        "Could not reach the internet. Choose WI-FI on the main menu, connect, and try again.".into()
+    } else {
+        last
+    }
+}
+
+pub fn upd_apply(on_progress: impl FnMut(String)) -> Result<String, String> {
+    match update_stream(&["apply"], on_progress) {
+        Ok(out) => Ok(if out.iter().any(|l| l.starts_with("installed ")) { "Installed. Choose PLAY YARG to use it".into() } else { "You are up to date".into() }),
+        Err(e) => Err(update_error(&e)),
+    }
+}
+
+/// First install of YARG: downloaded from GitHub, or from a release zip (a full path) when there is no internet.
+pub fn yarg_install(zip: Option<&str>, on_progress: impl FnMut(String)) -> Result<String, String> {
+    let r = match zip {
+        Some(z) => update_stream(&["install-zip", z], on_progress),
+        None => update_stream(&["install"], on_progress),
+    };
+    r.map(|_| "YARG is installed. Choose PLAY YARG".to_string()).map_err(|e| update_error(&e))
+}
+
+/// YARG release zips on the song drive.
+pub fn yarg_zips() -> Vec<String> {
+    run("yargos-update", &["find-zip"]).map(|o| o.lines().map(|l| l.trim().to_string()).filter(|l| l.starts_with('/')).collect()).unwrap_or_default()
 }
 
 pub fn upd_rollback() -> Result<String, String> {
@@ -1041,6 +1109,16 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
 [NEW] Device 77:77:77:77:77:77 Nintendo RVL-WBC-01\n[DEL] Device 00:1E:35:CC:00:03 Nintendo RVL-CNT-01\n";
         assert_eq!(parse_scan_wiimotes(scan, &known), vec!["00:1E:35:AA:00:01", "00:1E:35:BB:00:02"]);
         assert!(parse_scan_wiimotes("Discovery started\n", &known).is_empty());
+    }
+
+    #[test]
+    fn update_output_lines_are_told_apart() {
+        assert_eq!(parse_update_line("yargos-update: PROGRESS 42"), UpdLine::Progress(42));
+        assert_eq!(parse_update_line("yargos-update: PROGRESS 250"), UpdLine::Progress(100));
+        assert_eq!(parse_update_line("yargos-update: STEP unpacking"), UpdLine::Step("unpacking".into()));
+        assert_eq!(parse_update_line("yargos-update: downloading 0.15.0"), UpdLine::Text("downloading 0.15.0".into()));
+        assert!(update_error(&["could not read the latest release (offline?)".to_string()]).contains("WI-FI"));
+        assert_eq!(update_error(&["checksum mismatch".to_string()]), "checksum mismatch");
     }
 
     #[test]

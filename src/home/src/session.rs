@@ -101,6 +101,13 @@ fn done(tx: &Sender<Event>, r: Result<String, String>) {
     res(tx, Res::Done(match r { Ok(m) | Err(m) => m }));
 }
 
+/// Install YARG for the first time and refresh the status (so PLAY YARG appears).
+fn yarg_install_job(tx: &Sender<Event>, zip: Option<String>, upd: &UpdInfo) {
+    let r = sys::yarg_install(zip.as_deref(), |t| res(tx, Res::YargProgress(t)));
+    res(tx, Res::YargInstalled(r));
+    res(tx, Res::Status(sys::status(&sys::sound_label(), upd)));
+}
+
 /// Run the commands a screen asked for in the background; results come back as events.
 fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
     for cmd in cmds {
@@ -141,11 +148,14 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
             Cmd::Refresh(Screen::Updates) => bg(tx, move |tx| res(tx, Res::Upd(sys::upd_info(&upd)))),
             Cmd::UpdCheck => bg(tx, move |tx| res(tx, Res::Upd(sys::upd_check(&upd)))),
             Cmd::UpdApply => bg(tx, move |tx| {
-                done(tx, sys::upd_apply());
+                done(tx, sys::upd_apply(|t| res(tx, Res::YargProgress(t))));
                 let mut u = sys::upd_info(&upd);
                 u.available = false;
                 res(tx, Res::Upd(u));
             }),
+            Cmd::YargInstall => bg(tx, move |tx| yarg_install_job(tx, None, &upd)),
+            Cmd::YargInstallZip(zip) => bg(tx, move |tx| yarg_install_job(tx, Some(zip), &upd)),
+            Cmd::Refresh(Screen::Yarg) => bg(tx, |tx| res(tx, Res::YargZips(sys::yarg_zips()))),
             Cmd::UpdRollback => bg(tx, move |tx| {
                 done(tx, sys::upd_rollback());
                 res(tx, Res::Upd(sys::upd_info(&upd)));

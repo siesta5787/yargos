@@ -61,6 +61,15 @@ build a static x11rb program that calls XTEST (`xtest_fake_input`) and fetch it 
 loses sync and shows torn, corrupted pictures for seconds); it only disables what changes, and resizes the screen only
 when the size differs.
 
+## Building with and without YARG
+
+The default build has NO YARG: `BR2_PACKAGE_YARG` is off, `post-build.sh` deletes any `usr/share/yarg-seed` left in the target,
+and the device installs YARG itself (INSTALL YARG on the main menu, `yargos-update install`). That image is the only kind that
+may ever be published. `YARGOS_WITH_YARG=1 tools/br.sh` switches the package on (and redoes its install step) for a PRIVATE
+test image; a plain `tools/br.sh` switches it back off. Each full build also leaves `images/yargos-clean.img` or
+`yargos-with-yarg.img`; `images/yargos.img` is just the latest. The busybox image has no `stat`, `nc`, `pgrep` or `python`:
+write image scripts without them (`[ -O f ]`, `wc -c < f`).
+
 ## Size
 
 `board/yargos/post-build.sh` removes the Clang/SPIR-V leftovers of Mesa's build. Do NOT compress firmware to `.xz` or

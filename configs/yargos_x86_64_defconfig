@@ -177,7 +177,9 @@ BR2_PACKAGE_MESA3D_DEMOS=y
 BR2_PACKAGE_VULKAN_TOOLS=y
 
 # YARGOS packages
-BR2_PACKAGE_YARG=y
+# YARG itself is not in the image: it is downloaded on the device (and its release bundles proprietary parts that
+# must not be redistributed). `YARGOS_WITH_YARG=1 tools/br.sh` makes a private test image that has it preloaded.
+# BR2_PACKAGE_YARG is not set
 BR2_PACKAGE_YARGOS_BRIDGE=y
 BR2_PACKAGE_YARGOS_HOME=y
 
