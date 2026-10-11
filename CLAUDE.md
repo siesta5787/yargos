@@ -113,11 +113,25 @@ There is no initramfs, so the drivers for whatever the boot disk sits on (SATA/A
 NVMe disk, pick Install), then `BOOT_NVME=1 IMG=<that file> WORK=<other dir> HEADLESS=1 tools/qemu-run.sh fresh`
 to boot the installed disk alone. `MAX_OUTPUTS=2` adds a second virtual screen but headless QEMU does not connect it.
 
+## System updates (A/B slots)
+
+Read docs/OTA-PLAN.md ("As built"). The rules that are easy to break: (1) a boot entry names its root partition by GUID and
+/data by `systemd.mount-extra`; nothing in the rootfs knows its disk (no /data line in fstab, growdata reads the GUID
+from /proc/cmdline); (2) all entry writing goes through `usr/lib/yargos/entries.sh` (image build, installer, updater);
+(3) the updater deletes every entry that points at the other slot BEFORE writing it and writes the new entry LAST (a power
+cut must leave only the running system's entry); (4) the efivar `LoaderBootCountPath` holds an EFI path with backslashes
+in UTF-16; (5) `yargos-boot-ok` must require the launcher to stay up with no restarts (a crash-looping service is
+"active" part of the time); (6) the ESP is mounted at `/efi`; (7) the image has no zstd/stat/nc: xz and openssl are
+there. Every build stamps `/usr/lib/yargos/version` (`YARGOS_VERSION`, default the build time); a release image must be
+built with its own version. Test builds (`YARGOS_TEST_CONSOLE=1`) get a serial console on the normal entry; real builds
+must not. `tools/test-os-update.sh` rebuilds the image several times and leaves a test image in `images/`: run
+`tools/br.sh` afterwards.
+
 ## Disk identity and the installer
 
-Never find a root or data partition by label: the flashed image uses fixed partition GUIDs (`...0001` system,
-`...0002` data) and `yargos-install` gives every installed disk fresh random ones (it rewrites the boot entry
-and `/etc/fstab`). Labels would clash as soon as the stick and an installed disk are plugged in together.
+Never find a root or data partition by label: the flashed image uses fixed partition GUIDs (`...0001` system A,
+`...0003` system B, `...0002` data) and `yargos-install` gives every installed disk fresh random ones (it writes the
+boot entries; the slots are told apart by their GPT names `yargos-a`/`yargos-b`). Labels would clash as soon as the stick and an installed disk are plugged in together.
 `usr/bin/yargos-install` is plain sh (busybox ash; this image's jq has no regex), run as root through the
 `install /dev/X` request of `yargos-home ctl`, which only accepts a plain disk path. Test it in QEMU with
 `DISK2=~/yargos-build/qemu/target.img` (blank second disk) and pick "Install" in the boot menu; boot the result

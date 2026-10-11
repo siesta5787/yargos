@@ -4,8 +4,9 @@
 # Safe to run on every boot: it does nothing when there is no free space after the partition.
 set -eu
 
-# The data partition as /etc/fstab names it: by GUID (the flashed image and any installed system), or by label.
-SPEC=$(awk '$2 == "/data" { print $1; exit }' /etc/fstab)
+# The data partition as the boot entry names it (systemd.mount-extra=PARTUUID=<guid>:/data:...), by GUID.
+SPEC=$(tr ' ' '\n' < /proc/cmdline | sed -n 's|^systemd.mount-extra=\(PARTUUID=[^:]*\):/data:.*|\1|p' | head -n 1)
+[ -n "$SPEC" ] || exit 0   # not started from one of our boot entries: nothing to grow
 find_part() {
     case $SPEC in
         PARTUUID=*) readlink -f "/dev/disk/by-partuuid/${SPEC#PARTUUID=}" 2>/dev/null ;;

@@ -108,7 +108,20 @@ fn rows(m: &Model) -> Vec<Row> {
             v.push(Row { value: if m.songs.auto { "ON".into() } else { "OFF".into() }, ..row("Add song folders to YARG") });
             v
         }
-        Screen::System => vec![row("Restart"), row("Shut down"), row("Install on this computer's disk"), row("Connected devices")],
+        Screen::System => vec![
+            row("Restart"),
+            row("Shut down"),
+            row("Install on this computer's disk"),
+            row("Connected devices"),
+            Row { tag: m.os.staged.as_ref().map(|_| ("READY", GREEN)).or(m.os.available.as_ref().map(|_| ("NEW", AMBER))), ..row("System update") },
+        ],
+        Screen::OsUpdate => vec![
+            row("Check for a system update"),
+            Row { enabled: m.os.available.is_some(), value: m.os.available.clone().unwrap_or_default(), ..row("Install the system update") },
+            Row { enabled: m.os.staged.is_some(), value: m.os.staged.clone().unwrap_or_default(), ..row("Restart to use the update") },
+            Row { value: if m.os.auto { "ON".into() } else { "OFF".into() }, ..row("Automatic system updates") },
+            Row { enabled: m.os.previous.is_some(), value: m.os.previous.clone().unwrap_or_default(), ..row("Go back to the earlier system") },
+        ],
         Screen::Devices => {
             let mut v = vec![row("Look again")];
             for d in &m.devices {
@@ -202,6 +215,25 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             v
         }),
         Screen::System => ("SYSTEM", m.sysinfo.clone()),
+        Screen::OsUpdate => {
+            let mut v = vec![format!("Running: {}", if m.os.running.is_empty() { "?" } else { &m.os.running })];
+            v.push(format!("Latest known: {}", m.os.latest.as_deref().unwrap_or("not checked")));
+            if let Some(s) = &m.os.staged {
+                v.push(format!("{s} is installed. Restart to use it."));
+            } else if let Some(a) = &m.os.available {
+                v.push(format!("{a} is available."));
+            }
+            if !m.os.notes.trim().is_empty() {
+                v.push(m.os.notes.trim().to_string());
+            }
+            match m.os.error.as_deref() {
+                Some("offline") => v.push("The update server could not be reached. Check Wi-Fi and try again.".into()),
+                Some("signature") => v.push("The update information was not signed by us, so it was ignored.".into()),
+                _ => {}
+            }
+            v.push("It never restarts without asking. A new system that does not start is replaced by the earlier one by itself.".into());
+            ("SYSTEM UPDATE", v)
+        }
         Screen::Devices => (
             "DEVICES",
             vec![
@@ -260,6 +292,7 @@ fn title_of(s: Screen) -> &'static str {
         Screen::Devices => "DEVICES",
         Screen::Install => "INSTALL",
         Screen::Yarg => "INSTALL YARG",
+        Screen::OsUpdate => "SYSTEM UPDATE",
     }
 }
 
@@ -319,7 +352,7 @@ pub fn draw(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) 
     }
     if let Some(msg) = &m.busy {
         hits.clear();
-        draw_busy(cv, fonts, msg, m.tick, m.cancellable, u);
+        draw_busy(cv, fonts, msg, m.tick, m.cancellable(), u);
     }
     if let Some(msg) = &m.alert {
         hits.clear();
@@ -360,7 +393,7 @@ fn draw_home(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &mut V
         ("CONTROLLERS", if st.pads == 0 { "none connected".into() } else { format!("{} connected", st.pads) }),
     ];
     if let Some(v) = &st.update {
-        items.push(("UPDATE", format!("{v} is available")));
+        items.push(("UPDATE", v.clone()));
     }
     let wrapped: Vec<(&str, Vec<String>)> = items
         .into_iter()

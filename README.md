@@ -33,8 +33,8 @@ ccache is enabled (`~/.buildroot-ccache`, 20G) so a from-scratch rebuild is much
 
 ## Installing / trying it on a PC
 
-`output/images/yargos.img` is a complete UEFI-bootable disk (128M boot, 1.5G system, 700M data; about 2.4 GB,
-so any 4 GB or larger USB stick works, preferably USB 3). It runs from the drive you write it to. On first
+`output/images/yargos.img` is a complete UEFI-bootable disk (256M boot, two 2G system slots, 700M data; about 5.3 GB,
+so any 8 GB or larger USB stick works, preferably USB 3). It runs from the drive you write it to. On first
 boot `yargos-growdata.service` grows the data partition (and its filesystem) to fill the drive, before `/data`
 is mounted; on a drive exactly the image's size nothing grows and the 700M holds YARG with some room to spare.
 
@@ -43,22 +43,23 @@ is mounted; on a drive exactly the image's size nothing grows and the 700M holds
 On the target PC: turn Secure Boot off in the firmware settings (the boot loader is unsigned) and boot from
 the USB drive (usually F7, F11, F12 or Del at power-on). A small menu shows for 5 s:
 
-- **Start YARG OS from this drive** (default): runs from the stick.
+- **YARG OS <version>** (default): runs from the stick. After an update there are two of these, newest first.
 - **Install YARG OS on this computer**: opens the launcher on its Install screen (see below).
-- **Start YARG OS (verbose, for troubleshooting)**: prints boot messages, and has a serial console.
+- **YARG OS <version> (verbose, for troubleshooting)**: prints boot messages, and has a serial console.
 
 ### Installing to the computer's own disk
 
 Choose the install entry (or SYSTEM > Install on this computer's disk in the launcher). It lists the other
 disks (at least 8 GB, nothing mounted from them; never the drive it is running from), asks you to confirm which
-one gets erased, then runs `yargos-install` through the root helper and shows its steps: GPT with a 128 MiB
-EFI partition, a 4 GiB system and the rest as data; it copies the running system and the whole data
+one gets erased, then runs `yargos-install` through the root helper and shows its steps: GPT with a 256 MiB
+EFI partition, two 2 GiB system slots (the second stays empty until the first update) and the rest as data; it copies the running system and the whole data
 partition (YARG, its settings and updates, Bluetooth pairings, Wi-Fi passwords), writes boot entries and
 registers with the firmware (the fallback `EFI/BOOT/BOOTX64.EFI` boots it anyway). The installed system has no
 boot menu (hold the space bar during startup to get one). Every partition on the new disk gets a fresh random
-GUID that the boot entry and `/etc/fstab` use, so the USB drive and the installed disk can be plugged in
-together; the flashed image uses fixed GUIDs (`...0001` system, `...0002` data) for the same reason. Never
-look a root or data partition up by label.
+GUID that the boot entry uses (the entry also names /data, there is no /data line in `/etc/fstab`), so the USB
+drive and the installed disk can be plugged in together; the flashed image uses fixed GUIDs (`...0001` system A,
+`...0003` system B, `...0002` data) for the same reason. Never look a root or data partition up by label; the GPT
+names `yargos-a` / `yargos-b` tell the updater which partition is the other slot.
 
 If a machine boots to a black screen or stops early, the boot log is kept on the drive: plug it into another
 Linux PC, mount the `rootfs` partition and run `journalctl --directory <mount>/var/log/journal -b -1`
@@ -71,9 +72,9 @@ run `journalctl -b > /data/boot.log`, then read `boot.log` from the `YARGDATA` p
 
 - `configs/yargos_x86_64_defconfig` - top-level config
 - `board/yargos/linux.fragment` - kernel options (broad driver set, UHID, ALSA sequencer, no hid-wiimote)
-- `board/yargos/genimage.cfg` - GPT: ESP (128M) / rootfs (1.8G ext4) / YARGDATA (700M ext4, grows on first boot)
-- `board/yargos/esp/loader/` - systemd-boot config; the verbose `yargos-debug` entry is the default
-  for now (see "Boot entries")
+- `board/yargos/genimage.cfg.in` - GPT: ESP (256M) / system A (2G, holds the system) / system B (2G, empty) / YARGDATA
+  (700M ext4, grows on first boot); `post-image.sh` fills in the ESP file list and writes the boot entries
+  (`rootfs-overlay/usr/lib/yargos/entries.sh`, shared with the installer and the updater)
 - `board/yargos/rootfs-overlay/` - systemd units, udev rules, bluez config, launch scripts
 - `package/yarg` - pinned YARG release as an OPTIONAL seed in `/usr/share/yarg-seed`: the default image does not contain YARG
   (see "Building"); a private test image can (`YARGOS_WITH_YARG=1 tools/br.sh`)
@@ -171,10 +172,23 @@ press Ctrl+Alt+F2, log in as root (empty password; there is no network login), a
 
 ## Boot entries
 
-On the flashed stick, `loader.conf` defaults to `yargos.conf` (quiet) with a 5 second menu that also offers
-`yargos-install.conf` (the same kernel with `yargos.install=1`, which makes the launcher open on its Install
-screen) and `yargos-debug.conf` (verbose output, also on the serial console). The installer writes its own
-`loader.conf` with `timeout 0` and only the first and last entries, pointing at the new disk's GUID.
+The boot entries live on the ESP (mounted at `/efi`): `yargos-<version>.conf` (quiet; `default yargos-2*` picks the
+newest one that has not failed), `install.conf` (`yargos.install=1`, which makes the launcher open on its Install
+screen; on a stick only) and `debug.conf` (verbose output, also on the serial console); the last two follow the
+system that started last. Each entry names its root partition by GUID and /data via `systemd.mount-extra`, and its
+kernel is `/yargos/<version>/bzImage` on the ESP. The installer writes `loader.conf` with `timeout 0`.
+
+## Updating the system over the air
+
+The system updates itself like a console: `yargos-os-update` (root; the dashboard's SYSTEM > System update reaches it
+through the root helper) downloads a signed release into the OTHER system slot, adds a boot entry that tries it twice and
+never restarts by itself. The new system must bring up the launcher and keep it running (`yargos-boot-ok`), otherwise the
+boot loader falls back to the old system after two tries and the update is remembered as rejected. SYSTEM > System update
+also has automatic updates on/off (`OS_AUTO_UPDATE=no`), restart to use a waiting update, and going back to the earlier
+system. `tools/release.sh` makes and signs a release (`YARGOS_VERSION=2026.11.1 tools/br.sh` first); it refuses an image that
+holds YARG. `tools/test-os-update.sh` tests all of it in QEMU. Details and the design: docs/OTA-PLAN.md. Releases are signed
+with the key in `~/.yargos/release-ed25519.pem` (not in the repo, back it up); the matching public keys are in
+`board/yargos/rootfs-overlay/usr/lib/yargos/keys/`, plus an emergency key whose private half should be kept offline.
 
 ## Trying it without the appliance
 
@@ -276,6 +290,17 @@ Verified:
   tried on the laptop; the private "with YARG" variant builds and carries the seed.
 - Fixed in the same round: `firstboot.sh` used `stat`, which this image does not have, so it threw away the Sound choice
   at every boot (it now uses `[ -O file ]`; the choice survives a reboot in QEMU).
+- System updates over the air (Phase 1 + 2 of docs/OTA-PLAN.md, all in QEMU with `tools/test-os-update.sh`, ~35 min, all
+  passing): a signed release downloads (resumable), is written to the other slot, checked (size, SHA-256 read-back,
+  fsck, version and kernel inside) and gets a boot entry that tries it twice; on restart the new system is judged by
+  `yargos-boot-ok` and blessed, and `settle` closes the books. Also tested: a bad update (no launcher) falls back to the
+  old system by itself after two tries, is recorded and not offered again; a power cut mid-write leaves the running system
+  alone and the update installs on the next try; going back; the installer's new layout; an installed NVMe disk (random
+  GUIDs) boots alone and updates itself; the dashboard path (SYSTEM > System update: check, install with a percentage,
+  BACK cancels, "Restart now?"). The system needs ONE re-flash and re-install (new layout, 5.3 GB image). NOT done: nothing
+  is published, so the default update address (GitHub release `os-channel` of this repo) answers "could not reach the
+  update server" until the owner publishes a first release (see tools/release.sh); not tried on the laptop; chunked/delta
+  downloads (a release is a ~230-400 MB download); automatic updates were only exercised by calling `auto` directly.
 - Install YARG on a slow stick (owner's report: "stuck unpacking", wheel not moving, after a forced reboot every retry said
   "another update is running"). Fixed, checked in QEMU with throttled disks and a hard kill mid-install: (1) the lock
   belongs to a process of this boot, so one left by a reboot or power cut is cleared (with the half-unpacked folder and

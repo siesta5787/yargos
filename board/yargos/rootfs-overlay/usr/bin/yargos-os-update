@@ -1,0 +1,460 @@
+#!/bin/sh
+# yargos-os-update: update YARG OS itself over the air. Runs as root (the dashboard asks the system helper).
+#
+#   yargos-os-update status        what runs, what is waiting, what happened last
+#   yargos-os-update check         is a newer system published? (signed manifest, nothing is changed)
+#   yargos-os-update install       check, download, write it to the OTHER system slot, add a boot entry that tries it
+#                                  twice; it starts at the next restart (this never restarts by itself)
+#   yargos-os-update auto          what the daily timer runs: check and install, unless AUTO_UPDATE is off or YARG runs
+#   yargos-os-update cancel        stop a running install (what was downloaded is kept)
+#   yargos-os-update go-back       make the system that ran before the default again (restart to use it)
+#   yargos-os-update ack           the rollback notice has been seen
+#   yargos-os-update settle        run at every boot after the boot is judged: closes the books on an update
+#   yargos-os-update boot-ok       run before boot-complete.target: is this system really up? (fails if not)
+#
+# Layout and how it stays safe (see docs/OTA-PLAN.md):
+#  - two root partitions, "yargos-a" and "yargos-b" (GPT names); the running one is never written to;
+#  - a boot entry names its root partition and the kernel for it (/boot/yargos/<version>/bzImage);
+#  - before the other slot is touched, every entry that points at it is deleted: a power cut mid-write leaves only the
+#    entry of the running system;
+#  - the new entry has a boot counter (+2): systemd-boot tries it twice and then skips it, so a system that does not
+#    come up falls back to the old one by itself; a system that comes up is marked good by systemd-bless-boot;
+#  - the manifest is signed (Ed25519, public keys in /usr/lib/yargos/keys); the image is checked against sizes and
+#    SHA-256 from it; a version that is not newer, or was rolled back before, is not installed.
+# Settings (/data/yargos.conf belongs to the player: read as text, never run, and nothing in it can make the
+# signature check pass): OS_AUTO_UPDATE=no  switches the daily check off; OS_UPDATE_URL=...  OS_CHANNEL=stable|beta.
+
+set -u
+
+DATA=${YARGOS_DATA:-/data}
+STATE=$DATA/os-update
+RUN=${YARGOS_RUN:-/run/yargos-os-update}
+CONF=$DATA/yargos.conf
+# The boot partition: systemd mounts it at /efi (or /boot when there is no /efi); looking inside makes it mount.
+find_esp() { for d in /efi /boot; do [ -d "$d/loader" ] && { echo "$d"; return; }; done; echo /efi; }
+ESP=${YARGOS_ESP:-$(find_esp)}
+KEYS=${YARGOS_KEYS:-/usr/lib/yargos/keys}
+CMDLINE_FILE=${YARGOS_CMDLINE:-/proc/cmdline}
+VERSION_FILE=${YARGOS_VERSION_FILE:-/usr/lib/yargos/version}
+ENTRIES_LIB=${YARGOS_ENTRIES_LIB:-/usr/lib/yargos/entries.sh}
+DEFAULT_URL=https://github.com/siesta5787/yargos/releases/download/os-channel
+TRIES=2
+
+# shellcheck disable=SC1090
+. "$ENTRIES_LIB"
+
+log() { echo "yargos-os-update: $*"; }
+die() { log "$*" >&2; exit 1; }
+
+# ---- settings, read as text -------------------------------------------------------------------------------------
+
+conf_get() { [ -f "$CONF" ] && sed -n "s/^$1=//p" "$CONF" | tail -n 1; }
+conf_url() {
+    u=$(conf_get OS_UPDATE_URL)
+    case $u in
+        http://* | https://*) case $u in *[!A-Za-z0-9._~:/@%+-]*) u= ;; esac ;;
+        *) u= ;;
+    esac
+    echo "${u:-$DEFAULT_URL}"
+}
+conf_channel() {
+    c=$(conf_get OS_CHANNEL)
+    case $c in stable | beta) echo "$c" ;; *) echo stable ;; esac
+}
+
+# ---- versions and the running system --------------------------------------------------------------------------------
+
+current_version() { cat "$VERSION_FILE" 2>/dev/null || echo 0; }
+
+# ver_gt A B: true if A > B (dotted numbers)
+ver_gt() {
+    awk -v a="$1" -v b="$2" 'BEGIN {
+        n = split(a, x, "."); m = split(b, y, "."); k = (n > m) ? n : m
+        for (i = 1; i <= k; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+        exit 1 }'
+}
+
+fsize() { if [ -f "$1" ]; then wc -c < "$1"; else echo 0; fi; }   # a size without the shell complaining about a missing file
+valid_version() { case $1 in "" | *[!0-9.]* | .* | *. | *..*) return 1 ;; esac; }
+valid_name() { case $1 in "" | *[!A-Za-z0-9._-]* | .*) return 1 ;; esac; }
+valid_sha() { [ ${#1} -eq 64 ] && case $1 in *[!0-9a-f]*) return 1 ;; esac; }
+valid_num() { case $1 in "" | *[!0-9]*) return 1 ;; esac; }
+
+cmdline_get() { tr ' ' '\n' < "$CMDLINE_FILE" | sed -n "s|^$1=||p" | head -n 1; }
+root_partuuid() { cmdline_get root | sed -n 's|^PARTUUID=||p'; }
+data_partuuid() { cmdline_get systemd.mount-extra | sed -n 's|^PARTUUID=\([^:]*\):/data:.*|\1|p'; }
+
+# The partition of the same disk that is the other system slot: device path on stdout, its PARTUUID on fd 3 not needed.
+slot_dev() { readlink -f "/dev/disk/by-partuuid/$1" 2>/dev/null; }
+other_slot() { # prints "<partuuid> <device>" of the other yargos-a/yargos-b partition on the running disk
+    mine=$(root_partuuid)
+    dev=$(slot_dev "$mine")
+    [ -b "$dev" ] || return 1
+    disk=$(lsblk -no PKNAME "$dev" 2>/dev/null | head -n 1)
+    [ -n "$disk" ] || return 1
+    lsblk -rno PARTUUID,PARTLABEL,PATH "/dev/$disk" 2>/dev/null | while read -r pu label path; do
+        case $label in yargos-a | yargos-b) [ "$pu" != "$mine" ] && { echo "$pu $path"; break; } ;; esac
+    done
+}
+
+# Is the system that is running a trial one: started from an entry that still has its boot counter, i.e. not yet marked
+# good? (The loader leaves the entry's path in an EFI variable; marking it good renames the file, so the path is gone.)
+on_trial() {
+    f=$(ls /sys/firmware/efi/efivars/LoaderBootCountPath-* 2>/dev/null | head -n 1)
+    [ -n "$f" ] || return 1
+    # (an EFI path: UTF-16 with backslashes)
+    p=$(tail -c +5 "$f" 2>/dev/null | tr -d '\0' | tr '\\' '/')
+    [ -n "$p" ] && [ -e "$ESP$p" ]
+}
+
+proc_running() { # is a process with this name running?
+    for c in /proc/[0-9]*/comm; do
+        [ "$(cat "$c" 2>/dev/null)" = "$1" ] && return 0
+    done
+    return 1
+}
+yarg_running() { proc_running YARG; }
+
+# ---- state the dashboard reads (world readable, written by root) -------------------------------------------------------
+
+write_status() { # write_status KEY=VALUE...: set these keys in $STATE/status, keep the others
+    mkdir -p "$STATE"
+    chmod 0755 "$STATE"
+    touch "$STATE/status"
+    for kv in "$@"; do
+        k=${kv%%=*}
+        grep -v "^$k=" "$STATE/status" > "$STATE/status.new" 2>/dev/null
+        [ -n "${kv#*=}" ] && echo "$kv" >> "$STATE/status.new"
+        mv "$STATE/status.new" "$STATE/status"
+    done
+    chmod 0644 "$STATE/status"
+}
+status_get() { sed -n "s/^$1=//p" "$STATE/status" 2>/dev/null | tail -n 1; }
+
+is_rejected() { [ -f "$STATE/rejected" ] && grep -qx "$1" "$STATE/rejected"; }
+
+# ---- the manifest ---------------------------------------------------------------------------------------------------
+
+# Download the manifest and its signature, check the signature. Sets M (the manifest file) and BASE.
+fetch_manifest() {
+    mkdir -p "$RUN"
+    chmod 0700 "$RUN"
+    url=$(conf_url)
+    name=$(conf_channel).json
+    rm -f "$RUN/$name" "$RUN/$name.sig"
+    curl -fsS --max-time 30 -o "$RUN/$name" "$url/$name" || return 1
+    curl -fsS --max-time 30 -o "$RUN/$name.sig" "$url/$name.sig" || return 1
+    ok=1
+    for k in "$KEYS"/*.pem; do
+        [ -f "$k" ] || continue
+        if openssl pkeyutl -verify -pubin -inkey "$k" -rawin -in "$RUN/$name" -sigfile "$RUN/$name.sig" >/dev/null 2>&1; then ok=0; break; fi
+    done
+    [ $ok = 0 ] || { log "the signature of the update information is not valid; ignoring it" >&2; return 2; }
+    M=$RUN/$name
+    BASE=$(jq -r '.base // empty' "$M" 2>/dev/null)
+    [ -n "$BASE" ] || BASE=$url
+    return 0
+}
+
+# Fill LATEST and the image fields from the (verified) manifest, with every value checked.
+read_manifest() {
+    LATEST=$(jq -r '.version // empty' "$M" 2>/dev/null)
+    IMG_FILE=$(jq -r '.image.file // empty' "$M" 2>/dev/null)
+    IMG_SIZE=$(jq -r '.image.size // empty' "$M" 2>/dev/null)
+    IMG_SHA=$(jq -r '.image.sha256 // empty' "$M" 2>/dev/null)
+    RAW_SIZE=$(jq -r '.image.raw_size // empty' "$M" 2>/dev/null)
+    RAW_SHA=$(jq -r '.image.raw_sha256 // empty' "$M" 2>/dev/null)
+    NOTES=$(jq -r '.notes // empty' "$M" 2>/dev/null | head -c 300 | tr '\n' ' ')
+    valid_version "$LATEST" && valid_name "$IMG_FILE" && valid_num "$IMG_SIZE" && valid_sha "$IMG_SHA" &&
+        valid_num "$RAW_SIZE" && valid_sha "$RAW_SHA"
+}
+
+cmd_check() {
+    cur=$(current_version)
+    fetch_manifest
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        write_status "checked_at=$(date +%s)" "check_error=$([ $rc = 2 ] && echo signature || echo offline)"
+        die "$([ $rc = 2 ] && echo 'the update information is not signed by us' || echo 'could not reach the update server (offline?)')"
+    fi
+    read_manifest || die "the update information is incomplete"
+    write_status "checked_at=$(date +%s)" "check_error=" "latest=$LATEST" "notes=$NOTES"
+    log "running $cur, latest $LATEST"
+    if is_rejected "$LATEST"; then
+        write_status "available="
+        log "latest $LATEST failed to start here before; ignoring it"
+    elif ver_gt "$LATEST" "$cur"; then
+        write_status "available=$LATEST"
+        log "update available: $LATEST"
+    else
+        write_status "available="
+        log "up to date"
+    fi
+}
+
+# ---- installing -----------------------------------------------------------------------------------------------------
+
+cleanup() {
+    for p in ${dlpid:-} ${xzpid:-} ${ddpid:-} ${hdpid:-} ${shapid:-}; do kill "$p" 2>/dev/null; done
+    mountpoint -q "$RUN/slot" 2>/dev/null && umount "$RUN/slot" 2>/dev/null
+    rm -f "$RUN/fifo" "$RUN/sum" "$RUN/pid"
+    rmdir "$RUN/slot" 2>/dev/null
+    write_status "installing="
+}
+
+# Delete every boot entry that starts the given root partition, and the kernels nothing refers to any more.
+drop_entries_for() {
+    for e in "$ESP"/loader/entries/*.conf; do
+        [ -f "$e" ] || continue
+        grep -q "root=PARTUUID=$1 " "$e" && rm -f "$e"
+    done
+    for d in "$ESP"/yargos/*/; do
+        [ -d "$d" ] || continue
+        v=$(basename "$d")
+        grep -qs "^linux .*/yargos/$v/" "$ESP"/loader/entries/*.conf || rm -rf "$d"
+    done
+    sync
+}
+
+cmd_install() {
+    cur=$(current_version)
+    exec 9> "$RUN.lock"
+    flock -n 9 || die "another update is running"
+    mkdir -p "$RUN" "$STATE"
+    chmod 0700 "$RUN"
+    echo $$ > "$RUN/pid"
+    trap cleanup EXIT
+    trap 'exit 1' INT TERM HUP
+    write_status installing=1
+
+    on_trial && die "this system has not been confirmed as good yet; try again after it has run for a while"
+    [ -n "$(status_get staged)" ] && die "an update ($(status_get staged)) is already waiting for a restart"
+    fetch_manifest
+    rc=$?
+    [ $rc = 0 ] || die "$([ $rc = 2 ] && echo 'the update information is not signed by us' || echo 'could not reach the update server (offline?)')"
+    read_manifest || die "the update information is incomplete"
+    is_rejected "$LATEST" && die "$LATEST failed to start here before; not installing it again"
+    ver_gt "$LATEST" "$cur" || { write_status available=; log "up to date ($cur)"; return 0; }
+
+    set -- $(other_slot)
+    OTHER=${1:-}; OTHER_DEV=${2:-}
+    [ -n "$OTHER" ] && [ -b "$OTHER_DEV" ] || die "cannot find the second system partition (this disk was not set up for updates)"
+    DATA_ID=$(data_partuuid)
+    [ -n "$DATA_ID" ] || die "cannot tell which partition is /data"
+    [ "$(blockdev --getsize64 "$OTHER_DEV")" -ge "$RAW_SIZE" ] || die "the second system partition is too small for $LATEST"
+    ls "$ESP/loader" >/dev/null 2>&1 || die "cannot reach the boot partition"
+
+    # 1. Download (resumes where an earlier try stopped; if the server cannot resume, starts over).
+    xzf=$STATE/$IMG_FILE
+    if [ -f "$xzf" ] && [ "$(sha256sum < "$xzf" | cut -d' ' -f1)" = "$IMG_SHA" ]; then
+        log "the download from an earlier try is complete"
+    else
+        rm -f "$xzf"
+        [ "$(fsize "$xzf.part")" -gt "$IMG_SIZE" ] && rm -f "$xzf.part"
+        log "STEP downloading"
+        log "downloading $LATEST"
+        for attempt in 1 2; do
+            curl -fsSL -C - --max-time 7200 -o "$xzf.part" "$BASE/$IMG_FILE" &
+            dlpid=$!
+            while kill -0 "$dlpid" 2>/dev/null; do
+                got=$(fsize "$xzf.part")
+                log "PROGRESS $((got * 100 / IMG_SIZE))"
+                sleep 1
+            done
+            wait "$dlpid" && break
+            dlpid=
+            [ $attempt = 2 ] && die "download failed"
+            rm -f "$xzf.part"   # a server that cannot resume answers a resume with an error: once more from the start
+        done
+        dlpid=
+        [ "$(wc -c < "$xzf.part")" = "$IMG_SIZE" ] || { rm -f "$xzf.part"; die "the download has the wrong size"; }
+        log "STEP checking"
+        [ "$(sha256sum < "$xzf.part" | cut -d' ' -f1)" = "$IMG_SHA" ] || { rm -f "$xzf.part"; die "the download is damaged (checksum); not installing"; }
+        mv "$xzf.part" "$xzf"
+    fi
+
+    # 2. From here the other slot is changed: nothing may start it until it is complete.
+    drop_entries_for "$OTHER"
+    log "STEP writing"
+    mkfifo "$RUN/fifo"
+    xz -dc < "$xzf" > "$RUN/fifo" &
+    xzpid=$!
+    dd if="$RUN/fifo" of="$OTHER_DEV" bs=4M conv=fsync 2>/dev/null &
+    ddpid=$!
+    while kill -0 "$ddpid" 2>/dev/null; do
+        pos=$(sed -n 's/^pos:[[:space:]]*//p' "/proc/$xzpid/fdinfo/0" 2>/dev/null)
+        [ -n "$pos" ] && log "PROGRESS $((pos * 100 / IMG_SIZE))"
+        sleep 1
+    done
+    wait "$ddpid" || die "writing the new system failed"
+    wait "$xzpid" || die "the downloaded system could not be unpacked"
+    ddpid=; xzpid=
+    rm -f "$RUN/fifo"
+
+    log "STEP verifying"
+    mkfifo "$RUN/fifo"
+    head -c "$RAW_SIZE" < "$OTHER_DEV" > "$RUN/fifo" &
+    hdpid=$!
+    sha256sum < "$RUN/fifo" > "$RUN/sum" &
+    shapid=$!
+    while kill -0 "$hdpid" 2>/dev/null; do
+        pos=$(sed -n 's/^pos:[[:space:]]*//p' "/proc/$hdpid/fdinfo/0" 2>/dev/null)
+        [ -n "$pos" ] && log "PROGRESS $((pos * 100 / RAW_SIZE))"
+        sleep 1
+    done
+    wait "$hdpid"; wait "$shapid"
+    hdpid=; shapid=
+    got=$(cut -d' ' -f1 "$RUN/sum")
+    rm -f "$RUN/fifo" "$RUN/sum"
+    [ "$got" = "$RAW_SHA" ] || die "what was written does not match the update (checksum); the new system was not activated"
+    e2fsck -fn "$OTHER_DEV" >/dev/null 2>&1 || die "the new system's file system is damaged; it was not activated"
+
+    # 3. Look inside: its version must be the one announced, and it must bring the kernel that goes with it.
+    mkdir -p "$RUN/slot"
+    mount -o ro "$OTHER_DEV" "$RUN/slot" || die "cannot read the new system"
+    inner=$(cat "$RUN/slot/usr/lib/yargos/version" 2>/dev/null)
+    [ "$inner" = "$LATEST" ] || die "the new system says it is $inner, not $LATEST; it was not activated"
+    [ -f "$RUN/slot/boot/bzImage" ] || die "the new system has no kernel; it was not activated"
+    mkdir -p "$ESP/yargos/$LATEST"
+    cp "$RUN/slot/boot/bzImage" "$ESP/yargos/$LATEST/bzImage.new" && mv "$ESP/yargos/$LATEST/bzImage.new" "$ESP/yargos/$LATEST/bzImage" || die "cannot copy the new kernel to the boot partition"
+    umount "$RUN/slot"
+
+    # 4. Switch on: the entry that tries it (twice) is the last thing written.
+    log "STEP finishing"
+    sync
+    write_os_entry "$ESP" "$LATEST" "$OTHER" "$DATA_ID" "$TRIES"
+    sync
+    rm -f "$xzf"
+    write_status "staged=$LATEST" "available=" "staged_notes=$NOTES"
+    echo "$LATEST" > "$STATE/pending"
+    log "installed $LATEST; it starts the next time the computer is restarted"
+}
+
+cmd_cancel() {
+    [ -f "$RUN/pid" ] || { log "nothing is running"; return 0; }
+    kill -TERM "$(cat "$RUN/pid")" 2>/dev/null
+    log "stopped"
+}
+
+cmd_auto() {
+    [ "$(conf_get OS_AUTO_UPDATE)" = no ] && { log "automatic system updates are off (OS_AUTO_UPDATE=no)"; return 0; }
+    yarg_running && { log "YARG is running; not now"; return 0; }
+    (cmd_check && [ -n "$(status_get available)" ] && nice -n 10 "$0" install) || log "automatic update did not complete"
+    return 0
+}
+
+# ---- after a restart --------------------------------------------------------------------------------------------------
+
+# Is the launcher up? The service is active, its program is running, the modules and /data are there.
+launcher_up() {
+    systemctl is-active --quiet yarg.service || return 1
+    proc_running yargos-home || return 1
+    [ -s "/lib/modules/$(uname -r)/modules.dep" ] && mountpoint -q "$DATA"
+}
+
+# Waits for the launcher: a system that boots but cannot show the dashboard is not a working system. "Up" means up and
+# staying up: a service that crashes and is restarted every few seconds is active part of the time, so the number of
+# restarts must not change while we watch.
+cmd_boot_ok() {
+    n=0
+    while [ $n -lt 120 ]; do
+        if launcher_up; then
+            r=$(systemctl show -p NRestarts --value yarg.service)
+            sleep 8
+            if launcher_up && [ "$(systemctl show -p NRestarts --value yarg.service)" = "$r" ]; then
+                log "this system is up"
+                return 0
+            fi
+        fi
+        sleep 2
+        n=$((n + 2))
+    done
+    log "this system did not come up properly" >&2
+    # A new system on trial goes back to the old one: restart now instead of waiting for someone to notice.
+    if on_trial; then
+        log "it is on trial: restarting so the next try (or the old system) can start" >&2
+        systemctl --no-block reboot
+    fi
+    return 1
+}
+
+# Runs once the boot has been judged (and, on a trial boot, after systemd-bless-boot).
+cmd_settle() {
+    cur=$(current_version)
+    mkdir -p "$STATE"
+    chmod 0755 "$STATE"
+    write_status "running=$cur" "previous=$(other_good_version)"
+    pending=$(cat "$STATE/pending" 2>/dev/null)
+    # A boot that is still on trial proves nothing yet: the books are closed once it is marked good (or was given up).
+    if [ -n "$pending" ] && ! on_trial; then
+        if [ "$pending" = "$cur" ]; then
+            log "the update to $cur is complete"
+            write_status "staged=" "staged_notes=" "updated=$cur"
+        else
+            log "$pending did not start (back on $cur)"
+            echo "$pending" >> "$STATE/rejected"
+            { date; echo "$pending did not start and was rolled back to $cur"; } > "$STATE/last-rollback.txt"
+            write_status "staged=" "staged_notes=" "rolled_back=$pending"
+        fi
+        rm -f "$STATE/pending"
+    fi
+    # The menu extras (troubleshooting, and the installer on a stick) follow the system that is running.
+    if ! on_trial && [ -d "$ESP/loader/entries" ]; then
+        root=$(root_partuuid); data=$(data_partuuid)
+        if [ -n "$root" ] && [ -n "$data" ] && [ -f "$ESP/yargos/$cur/bzImage" ]; then
+            inst=
+            [ -f "$ESP/loader/entries/install.conf" ] && inst=install
+            write_extra_entries "$ESP" "$cur" "$root" "$data" $inst
+        fi
+    fi
+    return 0
+}
+
+cmd_ack() { write_status "rolled_back="; log "ok"; }
+
+# The version of another system that can be started (an entry that is not the running one, not marked bad, not on trial).
+other_good_version() {
+    cur=$(current_version)
+    for e in "$ESP"/loader/entries/yargos-2*.conf; do
+        [ -f "$e" ] || continue
+        case $e in *+*) continue ;; esac
+        v=$(sed -n 's/^version[[:space:]]*//p' "$e" | head -n 1)
+        [ -n "$v" ] && [ "$v" != "$cur" ] && echo "$v"
+    done | tail -n 1
+}
+
+cmd_go_back() {
+    cur=$(current_version)
+    other=$(other_good_version)
+    [ -n "$other" ] || die "there is no earlier system to go back to"
+    # Mark the running one bad (a boot counter of 0) so the other becomes the default, and never offer it again.
+    run=$ESP/loader/entries/yargos-$cur.conf
+    [ -f "$run" ] || die "cannot find this system's boot entry"
+    mv "$run" "$ESP/loader/entries/yargos-$cur+0.conf" || die "cannot change the boot entry"
+    sync
+    echo "$cur" >> "$STATE/rejected"
+    write_status "available=" "previous=" "went_back_from=$cur"
+    log "the next start uses $other instead of $cur"
+}
+
+cmd_status() {
+    log "running:   $(current_version)"
+    log "latest:    $(status_get latest)"
+    [ -n "$(status_get staged)" ] && log "waiting:   $(status_get staged) (restart to use it)"
+    [ -n "$(status_get rolled_back)" ] && log "rolled back: $(status_get rolled_back)"
+    [ -f "$STATE/rejected" ] && log "rejected:  $(tr '\n' ' ' < "$STATE/rejected")"
+    return 0
+}
+
+case ${1:-} in
+    status) cmd_status ;;
+    check) cmd_check ;;
+    install | update) cmd_install ;;
+    auto) cmd_auto ;;
+    cancel) cmd_cancel ;;
+    go-back) cmd_go_back ;;
+    ack) cmd_ack ;;
+    settle) cmd_settle ;;
+    boot-ok) cmd_boot_ok ;;
+    *) sed -n '2,15p' "$0"; exit 2 ;;
+esac

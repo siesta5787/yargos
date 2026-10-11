@@ -1,0 +1,15 @@
+[Unit]
+Description=Check that this system really came up
+Documentation=file:///usr/bin/yargos-os-update
+# systemd-boot starts a freshly updated system on trial (a boot counter): this decides whether it is marked good
+# (systemd-bless-boot runs after boot-complete.target) or restarts so the old system can take over.
+Before=boot-complete.target
+After=data.mount
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yargos-os-update boot-ok
+TimeoutStartSec=200
+
+[Install]
+RequiredBy=boot-complete.target

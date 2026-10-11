@@ -1,0 +1,11 @@
+[Unit]
+Description=Close the books on a system update
+After=yargos-firstboot.service systemd-bless-boot.service
+Wants=yargos-firstboot.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yargos-os-update settle
+
+[Install]
+WantedBy=multi-user.target

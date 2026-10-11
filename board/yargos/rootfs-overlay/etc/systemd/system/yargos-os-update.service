@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for a newer YARG OS and prepare it (never restarts the computer)
+After=network-online.target yargos-firstboot.service
+Wants=network-online.target
+ConditionPathIsMountPoint=/data
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yargos-os-update auto
+TimeoutStartSec=3h
+Nice=10
+IOSchedulingClass=idle

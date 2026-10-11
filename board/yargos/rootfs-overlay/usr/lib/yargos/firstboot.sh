@@ -16,7 +16,7 @@ DATA=/data
 # Wait for the data partition to be mounted (it comes a moment after this service may start); ask for it if it is late.
 n=0
 while ! mountpoint -q "$DATA" && [ $n -lt 240 ]; do
-    [ $n -eq 20 ] && mount "$DATA" 2>/dev/null
+    [ $n -eq 20 ] && systemctl start --no-block data.mount 2>/dev/null
     sleep 0.5
     n=$((n + 1))
 done

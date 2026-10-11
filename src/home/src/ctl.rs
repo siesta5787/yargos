@@ -13,6 +13,9 @@ pub enum Request {
     Install(String),
     /// `sound CARD DEV`: write /data/asound.conf (root-owned: root's own audio tools read it).
     Sound(u32, u32),
+    /// `os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`: the system updater, always without arguments (the
+    /// word picks the command; progress lines stream back, then "ok" or "error").
+    Os(&'static str),
 }
 
 /// A whole-disk device path: /dev/ and then letters and digits only (sda, vdb, nvme0n1, mmcblk0).
@@ -31,6 +34,11 @@ pub fn parse(line: &str) -> Option<Request> {
     match line {
         "poweroff" => Some(Request::Fixed("systemctl", &["poweroff"])),
         "reboot" => Some(Request::Fixed("systemctl", &["reboot"])),
+        "os-check" => Some(Request::Os("check")),
+        "os-update" => Some(Request::Os("install")),
+        "os-cancel" => Some(Request::Os("cancel")),
+        "os-goback" => Some(Request::Os("go-back")),
+        "os-ack" => Some(Request::Os("ack")),
         _ => {
             if let Some(rest) = line.strip_prefix("sound ") {
                 let (c, d) = rest.split_once(' ')?;
@@ -67,6 +75,17 @@ pub fn run() -> i32 {
             Ok(s) if s.success() => 0,
             _ => 1,
         },
+        // Its output (progress lines) goes straight down the socket; a final line says how it ended.
+        Some(Request::Os(cmd)) => match Command::new("/usr/bin/yargos-os-update").arg(cmd).status() {
+            Ok(s) if s.success() => {
+                println!("ok");
+                0
+            }
+            _ => {
+                println!("error: the system update did not finish");
+                1
+            }
+        },
         Some(Request::Sound(card, dev)) => match write_sound(card, dev) {
             Ok(()) => {
                 println!("ok");
@@ -95,6 +114,19 @@ mod tests {
         assert_eq!(parse("poweroff; rm -rf /"), None);
         assert_eq!(parse("systemctl poweroff"), None);
         assert_eq!(parse(""), None);
+    }
+
+    #[test]
+    fn the_system_updater_is_reached_only_through_fixed_words() {
+        assert_eq!(parse("os-check\n"), Some(Request::Os("check")));
+        assert_eq!(parse("os-update"), Some(Request::Os("install")));
+        assert_eq!(parse("os-cancel"), Some(Request::Os("cancel")));
+        assert_eq!(parse("os-goback"), Some(Request::Os("go-back")));
+        assert_eq!(parse("os-ack"), Some(Request::Os("ack")));
+        assert_eq!(parse("os-update --url http://evil"), None);
+        assert_eq!(parse("os-settle"), None);
+        assert_eq!(parse("os-boot-ok"), None);
+        assert_eq!(parse("os-check; reboot"), None);
     }
 
     #[test]

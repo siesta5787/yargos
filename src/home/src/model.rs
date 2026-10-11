@@ -30,6 +30,8 @@ pub enum Screen {
     System,
     Install,
     Devices,
+    /// The system (YARG OS itself): check for, install and go back from an over-the-air update.
+    OsUpdate,
     /// First install of YARG itself (an image without it): download, or install from a zip on the song drive.
     Yarg,
 }
@@ -121,6 +123,12 @@ pub enum Cmd {
     YargInstallZip(String),
     /// Stop the YARG download/install that is running (BACK on the busy overlay).
     YargCancel,
+    OsCheck,
+    OsInstall,
+    OsCancel,
+    OsGoBack,
+    OsAck,
+    OsAuto(bool),
     UpdRollback,
     UpdAuto(bool),
     SongsRefresh,
@@ -130,13 +138,35 @@ pub enum Cmd {
     Power(Power),
 }
 
+/// What the system updater says (read from /data/os-update/status).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OsInfo {
+    pub running: String,
+    pub latest: Option<String>,
+    /// A newer system is published and not yet installed.
+    pub available: Option<String>,
+    /// A newer system is installed and starts at the next restart.
+    pub staged: Option<String>,
+    pub notes: String,
+    /// An update that did not start properly and was undone (shown until it is acknowledged).
+    pub rolled_back: Option<String>,
+    /// The earlier system that "go back" returns to.
+    pub previous: Option<String>,
+    pub auto: bool,
+    /// Why the last check failed: "offline" or "signature".
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Status {
     pub network: String,
     pub songs: String,
     pub sound: String,
     pub yarg: String,
+    /// A line for the main menu card about an update that is available or waiting for a restart.
     pub update: Option<String>,
+    /// A system update that did not start properly and was undone: the version (until the notice is acknowledged).
+    pub os_rolled_back: Option<String>,
     pub pads: usize,
 }
 
@@ -176,6 +206,9 @@ pub enum Res {
     SysInfo(Vec<String>),
     Disks(Vec<Disk>),
     Devices(Vec<DeviceEntry>),
+    Os(OsInfo),
+    /// A system update (or going back) finished: a message that asks for a restart, or why it failed.
+    OsDone(Result<String, String>),
     /// YARG release zips found on the song drive.
     YargZips(Vec<String>),
     /// Progress text of a YARG download/install (only shown while the busy overlay is up).
@@ -290,8 +323,11 @@ pub struct Model {
     /// Label of the disk being installed on while the install runs.
     target: Option<String>,
     pub busy: Option<String>,
-    /// The busy overlay can be cancelled with BACK (a download or install of YARG).
-    pub cancellable: bool,
+    /// What BACK does on the busy overlay, if the work can be stopped (a download or install).
+    pub cancel: Option<Cmd>,
+    pub os: OsInfo,
+    /// The alert being shown is a rollback notice: dismissing it tells the updater.
+    alert_ack: bool,
     pub toast: Option<(String, Instant)>,
     pub loading: bool,
     pub tick: u64,
@@ -325,7 +361,9 @@ impl Model {
             alert: None,
             target: None,
             busy: None,
-            cancellable: false,
+            cancel: None,
+            os: OsInfo::default(),
+            alert_ack: false,
             toast: None,
             loading: false,
             tick: 0,
@@ -338,6 +376,10 @@ impl Model {
 
     pub fn live_toast(&self) -> Option<&str> {
         self.toast.as_ref().filter(|(_, t)| t.elapsed() < Duration::from_secs(4)).map(|(m, _)| m.as_str())
+    }
+
+    pub fn cancellable(&self) -> bool {
+        self.cancel.is_some()
     }
 
     /// Nothing to play yet: the image has no YARG until it is installed from the dashboard.
@@ -359,7 +401,8 @@ impl Model {
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
             Screen::Songs => 2 + usize::from(self.songs.mounted),
-            Screen::System => 4,
+            Screen::System => 5,
+            Screen::OsUpdate => 5,
             Screen::Devices => 1 + self.devices.len(),
             Screen::Yarg => 3,
             Screen::Install => if self.installed.is_some() { 2 } else { 1 + self.disks.len() },
@@ -408,14 +451,18 @@ impl Model {
         if self.alert.is_some() {
             if matches!(nav, Nav::Ok | Nav::Submit | Nav::Back) {
                 self.alert = None;
+                if std::mem::take(&mut self.alert_ack) {
+                    return vec![Cmd::OsAck];
+                }
             }
             return vec![];
         }
         if self.busy.is_some() {
-            if self.cancellable && nav == Nav::Back {
-                self.cancellable = false;
-                self.busy = Some("Cancelling\u{2026}".into());
-                return vec![Cmd::YargCancel];
+            if nav == Nav::Back {
+                if let Some(c) = self.cancel.take() {
+                    self.busy = Some("Cancelling\u{2026}".into());
+                    return vec![c];
+                }
             }
             return vec![]; // ignore input while an action runs
         }
@@ -607,13 +654,13 @@ impl Model {
             Screen::Yarg => match self.sel {
                 0 => {
                     self.busy = Some("Downloading YARG\u{2026} this can take a few minutes".into());
-                    self.cancellable = true;
+                    self.cancel = Some(Cmd::YargCancel);
                     vec![Cmd::YargInstall]
                 }
                 1 => match self.yarg_zips.first().cloned() {
                     Some(zip) => {
                         self.busy = Some("Installing YARG\u{2026}".into());
-                        self.cancellable = true;
+                        self.cancel = Some(Cmd::YargCancel);
                         vec![Cmd::YargInstallZip(zip)]
                     }
                     None => {
@@ -634,7 +681,7 @@ impl Model {
                         return vec![];
                     }
                     self.busy = Some("Downloading the update… this can take a few minutes".into());
-                    self.cancellable = true;
+                    self.cancel = Some(Cmd::YargCancel);
                     vec![Cmd::UpdApply]
                 }
                 2 => {
@@ -664,6 +711,43 @@ impl Model {
             }
             Screen::System if self.sel == 2 => self.enter(Screen::Install),
             Screen::System if self.sel == 3 => self.enter(Screen::Devices),
+            Screen::System if self.sel == 4 => self.enter(Screen::OsUpdate),
+            Screen::OsUpdate => match self.sel {
+                0 => {
+                    self.busy = Some("Checking for a system update\u{2026}".into());
+                    vec![Cmd::OsCheck]
+                }
+                1 => {
+                    if self.os.available.is_none() {
+                        self.toast(if self.os.staged.is_some() { "An update is already waiting for a restart" } else { "The system is up to date" });
+                        return vec![];
+                    }
+                    self.busy = Some("Downloading the update\u{2026} this can take a few minutes".into());
+                    self.cancel = Some(Cmd::OsCancel);
+                    vec![Cmd::OsInstall]
+                }
+                2 => {
+                    if self.os.staged.is_none() {
+                        self.toast("There is no update waiting");
+                        return vec![];
+                    }
+                    self.confirm = Some(Power::Restart);
+                    self.confirm_sel = 0;
+                    vec![]
+                }
+                3 => {
+                    self.os.auto = !self.os.auto;
+                    vec![Cmd::OsAuto(self.os.auto)]
+                }
+                _ => {
+                    if self.os.previous.is_none() {
+                        self.toast("There is no earlier system to go back to");
+                        return vec![];
+                    }
+                    self.busy = Some("Going back to the earlier system\u{2026}".into());
+                    vec![Cmd::OsGoBack]
+                }
+            },
             Screen::Devices if self.sel == 0 => {
                 self.busy = Some("Looking at what is plugged in\u{2026}".into());
                 vec![Cmd::Refresh(Screen::Devices)]
@@ -698,7 +782,14 @@ impl Model {
 
     pub fn apply(&mut self, res: Res) {
         match res {
-            Res::Status(s) => self.status = s,
+            Res::Status(s) => {
+                // A system update that did not start properly (and was undone) is never shown only as a status line.
+                if let (Some(v), None) = (&s.os_rolled_back, &self.alert) {
+                    self.alert = Some(format!("The system update to {v} did not start properly, so the earlier system was put back. Nothing was lost. The update will not be tried again."));
+                    self.alert_ack = true;
+                }
+                self.status = s;
+            }
             Res::Wifi { dev, nets } => {
                 self.wifi_dev = dev;
                 self.nets = nets;
@@ -764,6 +855,25 @@ impl Model {
                 self.busy = None;
                 self.alert = Some(msg);
             }
+            Res::Os(info) => {
+                self.os = info;
+                self.loading = false;
+                self.busy = None;
+                self.cancel = None;
+                self.sel = self.sel.min(self.row_count().saturating_sub(1));
+            }
+            Res::OsDone(r) => {
+                self.busy = None;
+                self.cancel = None;
+                match r {
+                    Ok(msg) => {
+                        self.toast(msg);
+                        self.confirm = Some(Power::Restart);
+                        self.confirm_sel = 0;
+                    }
+                    Err(e) => self.alert = Some(e),
+                }
+            }
             Res::YargZips(z) => {
                 self.yarg_zips = z;
                 self.loading = false;
@@ -775,7 +885,7 @@ impl Model {
             }
             Res::YargInstalled(r) => {
                 self.busy = None;
-                self.cancellable = false;
+                self.cancel = None;
                 match r {
                     Ok(msg) => {
                         self.screen = Screen::Home;
@@ -787,7 +897,7 @@ impl Model {
             }
             Res::Done(msg) => {
                 self.busy = None;
-                self.cancellable = false;
+                self.cancel = None;
                 self.toast(msg);
             }
             Res::DoneRefresh(msg, _) => {
@@ -1050,17 +1160,92 @@ mod tests {
         m.screen = Screen::Yarg;
         m.sel = 0;
         m.handle(Nav::Ok);
-        assert!(m.cancellable);
+        assert!(m.cancellable());
         assert_eq!(m.handle(Nav::Back), vec![Cmd::YargCancel]);
         assert!(m.busy.as_ref().unwrap().contains("Cancelling"));
         assert!(m.handle(Nav::Back).is_empty(), "only once");
         m.apply(Res::YargInstalled(Err("Installation cancelled.".into())));
-        assert!(m.busy.is_none() && !m.cancellable);
+        assert!(m.busy.is_none() && !m.cancellable());
         // Some other kind of busy: BACK does nothing.
         m.alert = None;
         m.busy = Some("Scanning\u{2026}".into());
         assert!(m.handle(Nav::Back).is_empty());
         assert!(m.busy.is_some());
+    }
+
+    fn os_screen() -> Model {
+        let mut m = Model::new();
+        m.screen = Screen::OsUpdate;
+        m.os = OsInfo { running: "1".into(), auto: true, ..Default::default() };
+        m
+    }
+
+    #[test]
+    fn the_system_screen_leads_to_system_updates() {
+        let mut m = Model::new();
+        m.screen = Screen::System;
+        m.sel = 4;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::OsUpdate)]);
+        assert_eq!(m.screen, Screen::OsUpdate);
+    }
+
+    #[test]
+    fn system_update_rows_only_act_when_there_is_something_to_do() {
+        let mut m = os_screen();
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsCheck]);
+        m.busy = None;
+        m.sel = 1;
+        assert!(m.handle(Nav::Ok).is_empty(), "nothing available");
+        m.sel = 2;
+        assert!(m.handle(Nav::Ok).is_empty(), "nothing waiting");
+        assert!(m.confirm.is_none());
+        m.sel = 4;
+        assert!(m.handle(Nav::Ok).is_empty(), "no earlier system");
+        m.sel = 3;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsAuto(false)]);
+        assert!(!m.os.auto);
+    }
+
+    #[test]
+    fn installing_a_system_update_can_be_cancelled_and_ends_in_a_restart_question() {
+        let mut m = os_screen();
+        m.os.available = Some("2".into());
+        m.sel = 1;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsInstall]);
+        assert!(m.cancellable());
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::OsCancel]);
+        m.apply(Res::OsDone(Err("Update cancelled. Nothing was changed.".into())));
+        assert!(m.alert.is_some() && m.busy.is_none() && m.confirm.is_none());
+        m.alert = None;
+        m.busy = Some("x".into());
+        m.apply(Res::OsDone(Ok("The update is installed. Restart to use it".into())));
+        assert_eq!(m.confirm, Some(Power::Restart));
+        m.confirm = None;
+        m.os.staged = Some("2".into());
+        m.os.available = None;
+        m.sel = 2;
+        m.handle(Nav::Ok);
+        assert_eq!(m.confirm, Some(Power::Restart), "restart to use it asks first");
+    }
+
+    #[test]
+    fn going_back_needs_an_earlier_system() {
+        let mut m = os_screen();
+        m.os.previous = Some("0".into());
+        m.sel = 4;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsGoBack]);
+    }
+
+    #[test]
+    fn a_rolled_back_update_raises_an_alert_that_is_acknowledged_once() {
+        let mut m = Model::new();
+        m.apply(Res::Status(Status { os_rolled_back: Some("2".into()), ..Default::default() }));
+        assert!(m.alert.as_ref().unwrap().contains("2"));
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsAck]);
+        assert!(m.alert.is_none());
+        // Another alert (no rollback) does not ask for an acknowledgement.
+        m.alert = Some("Something else".into());
+        assert!(m.handle(Nav::Ok).is_empty());
     }
 
     #[test]

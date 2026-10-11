@@ -10,7 +10,8 @@ pub fn model(name: &str) -> Model {
         songs: "YARGSONGS connected, 412 GB free".into(),
         sound: "HDMI 0 (HDA ATI HDMI)".into(),
         yarg: "0.15.0".into(),
-        update: Some("0.16.0".into()),
+        update: Some("YARG 0.16.0 is available".into()),
+        os_rolled_back: None,
         pads: 3,
     };
     m.wifi_dev = Some("wlan0".into());
@@ -54,6 +55,25 @@ pub fn model(name: &str) -> Model {
     ];
     m.tick = 3;
     match name {
+        "system" => {
+            m.screen = Screen::System;
+            m.sel = 4;
+            m.os = OsInfo { running: "2026.10.11.2".into(), latest: Some("2026.11.1".into()), available: Some("2026.11.1".into()), notes: "Faster start-up and a fix for Wii guitars.".into(), previous: Some("2026.10.11.1".into()), auto: true, ..Default::default() };
+        }
+        "os-update" => {
+            m.screen = Screen::OsUpdate;
+            m.sel = 1;
+            m.os = OsInfo { running: "2026.10.11.2".into(), latest: Some("2026.11.1".into()), available: Some("2026.11.1".into()), notes: "Faster start-up and a fix for Wii guitars.".into(), previous: Some("2026.10.11.1".into()), auto: true, ..Default::default() };
+        }
+        "os-busy" => {
+            m.screen = Screen::OsUpdate;
+            m.os = OsInfo { running: "2026.10.11.2".into(), available: Some("2026.11.1".into()), auto: true, ..Default::default() };
+            m.busy = Some("Installing the update\u{2026} 63%".into());
+            m.cancel = Some(Cmd::OsCancel);
+        }
+        "os-rolledback" => {
+            m.alert = Some("The system update to 2026.11.1 did not start properly, so the earlier system was put back. Nothing was lost. The update will not be tried again.".into());
+        }
         "yarg" => {
             m.status.yarg = "not installed".into();
             m.status.network = "Wi-Fi: Living Room (192.168.0.47)".into();

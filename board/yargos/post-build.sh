@@ -8,6 +8,19 @@ TARGET_DIR=$1
 
 mkdir -p "$TARGET_DIR/data" "$TARGET_DIR/media/songs"
 
+# The system's version: what the updater compares and what names its boot entry and kernel. A release sets
+# YARGOS_VERSION (tools/release.sh); a development build gets the build time, which is newer than the one before.
+VERSION=${YARGOS_VERSION:-$(date +%Y.%m.%d.%H%M)}
+mkdir -p "$TARGET_DIR/usr/lib/yargos"
+echo "$VERSION" > "$TARGET_DIR/usr/lib/yargos/version"
+# A test build (tools/test-os-update.sh) gets a serial console on the normal boot entries; a real build must not.
+if [ -n "${YARGOS_TEST_CONSOLE:-}" ]; then
+    echo "console=ttyS0,115200" > "$TARGET_DIR/usr/lib/yargos/entry-extra-opts"
+else
+    rm -f "$TARGET_DIR/usr/lib/yargos/entry-extra-opts"
+fi
+sed -i -e '/^NAME=/c NAME="YARG OS"' -e '/^PRETTY_NAME=/c PRETTY_NAME="YARG OS '"$VERSION"'"' -e '/^VERSION_ID=/c VERSION_ID='"$VERSION" "$TARGET_DIR/usr/lib/os-release"
+
 # The image has no YARG unless it was asked for (tools/br.sh with YARGOS_WITH_YARG=1). Buildroot never removes what a
 # package installed before, so take the seed out by hand when the package is not selected.
 grep -q '^BR2_PACKAGE_YARG=y' "$BR2_CONFIG" || rm -rf "$TARGET_DIR/usr/share/yarg-seed"

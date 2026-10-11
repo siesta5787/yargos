@@ -5,19 +5,21 @@
 #   yargos-install run /dev/X   ERASE that disk and install (root only). Prints "STEP n/N text" lines,
 #                               then "DONE", or "ERROR text" if something failed.
 #
-# The new disk is GPT: a 128 MiB EFI partition, a 4 GiB root and a data partition for the rest. Every
-# partition gets a fresh random GUID and the boot entries and fstab are rewritten to match, so the USB
-# drive and the installed disk can be plugged in together without confusing each other.
-# What is on the running drive's data partition (YARG, its settings, Bluetooth pairings) is copied across.
+# The new disk is GPT: a 256 MiB EFI partition, two 2 GiB system slots (A holds the system, B stays empty until the
+# first update is written there) and a data partition for the rest. Every partition gets a fresh random GUID and the
+# boot entries are written to match, so the USB drive and the installed disk can be plugged in together without
+# confusing each other. What is on the running drive's data partition (YARG, its settings, Bluetooth pairings) is
+# copied across.
 
 set -u
 
 MIN_BYTES=${YARGOS_INSTALL_MIN_BYTES:-8000000000}
-ROOT_SIZE=4GiB
-ESP_SIZE=128MiB
+ROOT_SIZE=2GiB
+ESP_SIZE=256MiB
 W=/run/yargos-install
 STEPS=6
-ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+# shellcheck disable=SC1091
+. /usr/lib/yargos/entries.sh
 
 # The disk the running system lives on, e.g. "sda" or "nvme0n1".
 root_disk() {
@@ -52,7 +54,7 @@ list() {
 step() { echo "STEP $1/$STEPS $2"; }
 
 cleanup() {
-    for d in esp data root src sesp; do
+    for d in esp data root src; do
         mountpoint -q "$W/$d" 2>/dev/null && umount "$W/$d" 2>/dev/null
     done
     rm -rf "$W"
@@ -75,11 +77,13 @@ run() {
     list | cut -d'|' -f1 | grep -qx "$disk" || fail "$disk is not a disk that can be installed to"
     [ -b "$disk" ] || fail "$disk is not there any more"
     mkdir "$W" 2>/dev/null || fail "An installation is already running"
-    mkdir "$W/src" "$W/root" "$W/esp" "$W/data" "$W/sesp"
+    mkdir "$W/src" "$W/root" "$W/esp" "$W/data"
 
     ESP_UUID=$(cat /proc/sys/kernel/random/uuid)
     ROOT_UUID=$(cat /proc/sys/kernel/random/uuid)
+    ROOTB_UUID=$(cat /proc/sys/kernel/random/uuid)
     DATA_UUID=$(cat /proc/sys/kernel/random/uuid)
+    VERSION=$(cat /usr/lib/yargos/version 2>/dev/null) || fail "This system has no version, so it cannot be copied"
 
     step 1 "Preparing the disk"
     for p in $(lsblk -lnpo NAME "$disk" | tail -n +2); do umount "$p" 2>/dev/null; done
@@ -92,11 +96,12 @@ run() {
     sfdisk -q "$disk" <<EOF >/dev/null 2>&1 || fail "Could not partition $disk"
 label: gpt
 size=$ESP_SIZE, type=U, uuid=$ESP_UUID, name="YARGOS EFI"
-size=$ROOT_SIZE, type=L, uuid=$ROOT_UUID, name="YARGOS root"
+size=$ROOT_SIZE, type=L, uuid=$ROOT_UUID, name="yargos-a"
+size=$ROOT_SIZE, type=L, uuid=$ROOTB_UUID, name="yargos-b"
 type=L, uuid=$DATA_UUID, name="YARGOS data"
 EOF
     partx -u "$disk" 2>/dev/null
-    P1=$(part_path "$disk" 1); P2=$(part_path "$disk" 2); P3=$(part_path "$disk" 3)
+    P1=$(part_path "$disk" 1); P2=$(part_path "$disk" 2); P3=$(part_path "$disk" 4)
     n=0
     while [ ! -b "$P3" ] && [ $n -lt 50 ]; do sleep 0.2; n=$((n + 1)); done
     [ -b "$P3" ] || fail "The new partitions did not appear"
@@ -117,38 +122,29 @@ EOF
     umount "$W/src"
     rm -rf "$W/root/var/log/journal"/* 2>/dev/null
     : > "$W/root/etc/machine-id"   # a fresh machine id is made on the first boot
-    # The data partition is found by its own GUID now, so a USB drive with the same label cannot get in the way.
-    sed -i "s|^[^#[:space:]]*\([[:space:]][[:space:]]*/data[[:space:]]\)|PARTUUID=$DATA_UUID\1|" "$W/root/etc/fstab"
-    grep -q "^PARTUUID=$DATA_UUID" "$W/root/etc/fstab" || fail "Could not update the new system's disk table"
-
     step 4 "Copying your YARG and settings"
-    cp -a /data/. "$W/data/" || fail "Copying your data failed (is the disk big enough?)"
+    # Everything except a half-downloaded system update and the filesystem's own lost+found.
+    for f in /data/* /data/.[!.]*; do
+        [ -e "$f" ] || continue
+        case $f in /data/os-update | /data/lost+found) continue ;; esac
+        cp -a "$f" "$W/data/" || fail "Copying your data failed (is the disk big enough?)"
+    done
 
     step 5 "Making the disk bootable"
-    # The boot files come from this drive's own EFI partition.
-    rd=$(root_disk)
-    sesp=$(lsblk -lnpo NAME,PARTTYPE "/dev/$rd" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1; exit }')
-    [ -b "$sesp" ] || fail "Could not find this drive's boot partition"
-    # systemd usually has it mounted at /boot already (mounting a FAT partition twice, once read-only, fails).
-    ls /boot >/dev/null 2>&1
-    esp_src=$(findmnt -rno TARGET -S "$sesp" 2>/dev/null | head -n 1)
-    if [ -z "$esp_src" ]; then
-        mount -o ro "$sesp" "$W/sesp" || fail "Could not read this drive's boot partition"
-        esp_src=$W/sesp
-    fi
-    mkdir -p "$W/esp/loader/entries"
-    cp -a "$esp_src/EFI" "$esp_src/bzImage" "$W/esp/" || fail "Could not copy the boot files"
-    for e in yargos.conf yargos-debug.conf; do
-        sed "s|root=PARTUUID=[^ ]*|root=PARTUUID=$ROOT_UUID|" "$esp_src/loader/entries/$e" > "$W/esp/loader/entries/$e" || fail "Could not write the boot entries"
-    done
-    sed -i 's|^title .*|title   YARG OS|' "$W/esp/loader/entries/yargos.conf"
+    # Everything comes from the system that was just copied: its boot loader, its kernel (the one that matches its
+    # modules), and its version, which names the boot entry.
+    [ -f "$W/root/boot/bzImage" ] || fail "The system has no kernel to boot"
+    mkdir -p "$W/esp/EFI/BOOT" "$W/esp/loader/entries" "$W/esp/yargos/$VERSION"
+    cp "$W/root/usr/lib/systemd/boot/efi/systemd-bootx64.efi" "$W/esp/EFI/BOOT/BOOTX64.EFI" || fail "Could not copy the boot loader"
+    cp "$W/root/boot/bzImage" "$W/esp/yargos/$VERSION/bzImage" || fail "Could not copy the kernel"
     # No boot menu on the installed system (hold the space bar while it starts to get one).
-    printf 'default yargos.conf\ntimeout 0\nconsole-mode keep\neditor yes\n' > "$W/esp/loader/loader.conf"
-    mountpoint -q "$W/sesp" && umount "$W/sesp"
+    write_loader "$W/esp" 0
+    write_os_entry "$W/esp" "$VERSION" "$ROOT_UUID" "$DATA_UUID"
+    write_extra_entries "$W/esp" "$VERSION" "$ROOT_UUID" "$DATA_UUID"
     # Best effort: also register with the firmware. The fallback file (EFI/BOOT/BOOTX64.EFI) boots anyway.
     bootctl --esp-path="$W/esp" install >/dev/null 2>&1 || true
     # bootctl may rewrite loader.conf; ours must win.
-    printf 'default yargos.conf\ntimeout 0\nconsole-mode keep\neditor yes\n' > "$W/esp/loader/loader.conf"
+    write_loader "$W/esp" 0
 
     step 6 "Finishing"
     sync

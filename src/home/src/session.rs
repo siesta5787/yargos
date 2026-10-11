@@ -156,6 +156,27 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
             Cmd::YargInstall => bg(tx, move |tx| yarg_install_job(tx, None, &upd)),
             Cmd::YargInstallZip(zip) => bg(tx, move |tx| yarg_install_job(tx, Some(zip), &upd)),
             Cmd::YargCancel => bg(tx, |_| sys::update_cancel()),
+            Cmd::Refresh(Screen::OsUpdate) => bg(tx, |tx| res(tx, Res::Os(sys::os_info()))),
+            Cmd::OsCheck => bg(tx, |tx| {
+                let _ = sys::os_run("os-check", |_| {});
+                res(tx, Res::Os(sys::os_info()));
+            }),
+            Cmd::OsInstall => bg(tx, move |tx| {
+                let r = sys::os_run("os-update", |t| res(tx, Res::YargProgress(t)));
+                res(tx, Res::OsDone(r.map(|_| "The update is installed. Restart to use it".to_string())));
+                res(tx, Res::Os(sys::os_info()));
+                res(tx, Res::Status(sys::status(&sys::sound_label(), &upd)));
+            }),
+            Cmd::OsCancel => bg(tx, |_| sys::os_cancel()),
+            Cmd::OsGoBack => bg(tx, move |tx| {
+                let r = sys::os_run("os-goback", |_| {});
+                res(tx, Res::OsDone(r.map(|_| "Restart to go back to the earlier system".to_string())));
+                res(tx, Res::Os(sys::os_info()));
+            }),
+            Cmd::OsAck => bg(tx, |_| {
+                let _ = sys::os_run("os-ack", |_| {});
+            }),
+            Cmd::OsAuto(on) => bg(tx, move |tx| done(tx, sys::write_auto_os(on))),
             Cmd::Refresh(Screen::Yarg) => bg(tx, |tx| res(tx, Res::YargZips(sys::yarg_zips()))),
             Cmd::UpdRollback => bg(tx, move |tx| {
                 done(tx, sys::upd_rollback());

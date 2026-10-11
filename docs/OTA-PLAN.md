@@ -1,7 +1,9 @@
 # Over-the-air OS updates: plan
 
-Status: planned, nothing built yet. Planned by an Opus agent from the code as of 2026-10-10; the owner's decisions are
-below. Verify the items marked *verify* before relying on them.
+Status: Phases 0, 1 and 2 (dashboard screens, timer) are built and tested in QEMU (2026-10-11); publishing a first release
+and trying it on hardware are next. Planned by an
+Opus agent from the code as of 2026-10-10; the owner's decisions are below. "As built" notes in the text say where the
+implementation differs from the first plan.
 
 ## Decisions made by the owner
 - **No Secure Boot.** Not planned at all (it would need signed loader/kernel/modules, key enrollment, and a rework of the
@@ -79,3 +81,43 @@ below. Verify the items marked *verify* before relying on them.
   service, tests (`tools/test-os-update.sh`, QEMU with a 64G overlay, forced bad releases, `system_reset` mid-update).
 - Phase 2 (~3 days): launcher screens, ctl requests, timer (`OnBootSec=5min`, daily), GitHub publishing, channels.
 - Phase 3 (optional): read-only root, chunk deltas, watchdog drivers. (Secure Boot: not planned.)
+
+## As built (Phase 1)
+- **Layout**: ESP 256 MiB | `yargos-a` 2 GiB (the shipped system, GUID `...0001`) | `yargos-b` 2 GiB (empty, `...0003`) | data
+  (`...0002`). The GPT partition NAMES (`yargos-a`/`yargos-b`) tell the updater which partition is the other slot, so
+  installed disks (random GUIDs) work the same. Flashed image 5.3 GB. `yargos-install` makes the same layout.
+- **Disk identity is in the boot entry**: `root=PARTUUID=<slot> systemd.mount-extra=PARTUUID=<data>:/data:ext4:...
+  panic=10`; fstab has no /data line, one rootfs fits every disk. `usr/lib/yargos/entries.sh` writes entries for the
+  image build, the installer and the updater. Verified: `mount-extra` with `x-systemd.device-timeout`, growdata reading the
+  GUID from the command line.
+- **Kernel** is inside each rootfs (`/boot/bzImage`, `BR2_LINUX_KERNEL_INSTALL_TARGET`) and copied to
+  `/efi/yargos/<version>/bzImage` by whoever writes the entry, so kernel and modules always match. The ESP is mounted at
+  `/efi` by systemd (`/boot` only when there is no `/efi`). Entries: `yargos-<version>[+tries].conf` (the default
+  `yargos-2*`: newest wins, an entry with 0 tries left is skipped), `debug.conf` and (on a stick) `install.conf` follow
+  the system that booted last (`yargos-os-update settle`).
+- **Verified boot-counting behaviour (systemd-boot 258.7 in QEMU)**: a `+2` entry is tried twice (`+1-1`, `+0-2`), then
+  sorted last so the older one boots; a boot that reaches `boot-complete.target` with no failed unit is blessed by
+  `systemd-bless-boot` (the counter is removed); `boot-complete.target` only starts on a trial boot.
+- **Payload** (simpler than the zchunks idea): one `rootfs-<version>.img.xz` (xz of the raw 1.5 GB ext4), a signed
+  `<channel>.json` manifest with the sizes and SHA-256 of both the xz and the raw image. ~230 MB at `xz -1`. `curl -C -`
+  resumes, a server without ranges makes it start over. Written with `xz -dc | dd` straight onto the other slot, read back
+  and checked against the raw SHA-256, `e2fsck -fn`, then mounted read-only to check the version inside equals the
+  announced one and to take the kernel. No `zstd` on the device (xz is already there); `openssl` (Ed25519, `pkeyutl
+  -rawin`) verifies the signature. Keys: `usr/lib/yargos/keys/*.pem` (release + an emergency key whose private half is
+  kept offline); private keys live in `~/.yargos/` (outside the repo).
+- **Order of operations** (power-cut safe): delete every entry (and kernel dir) that points at the other slot, then write
+  and verify it, then copy the kernel, then write the `+2` entry LAST. Until that last step only the running system has an
+  entry. The new system's `yargos-boot-ok.service` (RequiredBy `boot-complete.target`) needs the launcher up AND with no
+  restarts over 8 s (a crash-looping service is "active" part of the time; an earlier check missed that and blessed a
+  system with no launcher), and restarts at once on failure when on trial; after two tries the loader skips the entry.
+  `yargos-os-settle.service` runs every boot after blessing: it records `updated=` or, if the system that ran is not the
+  one that was staged, `rolled_back=` plus the version on `rejected` (never offered again).
+- **go-back**: renames the running system's entry to `+0`, so the other system becomes the default at the next restart.
+- **Tests**: `tools/test-os-update.sh` (QEMU, ~30 min): good update, bad update that falls back, power cut mid-write,
+  going back. `tools/release.sh` makes and signs a release and refuses an image that holds YARG, BASS, Discord or Unity.
+- Dashboard: SYSTEM > System update (check, install with a percentage, BACK cancels, "Restart now?", automatic on/off,
+  go back); a rolled-back update raises an ATTENTION box that is acknowledged once; the main menu card says when a system
+  update is waiting. The root helper only accepts the fixed words `os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`.
+  `yargos-os-update.timer` checks 5 minutes after boot and daily (never while YARG runs, never restarts).
+- Not built (yet): chunked/delta payloads, GitHub publishing is manual (`gh` commands in
+  `tools/release.sh`), `legal-info` publishing.

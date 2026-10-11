@@ -647,7 +647,7 @@ pub enum UpdLine {
 }
 
 pub fn parse_update_line(line: &str) -> UpdLine {
-    let t = line.trim().trim_start_matches("yargos-update: ");
+    let t = line.trim().trim_start_matches("yargos-update: ").trim_start_matches("yargos-os-update: ");
     if let Some(n) = t.strip_prefix("PROGRESS ").and_then(|n| n.trim().parse::<u32>().ok()) {
         UpdLine::Progress(n.min(100))
     } else if let Some(n) = t.strip_prefix("UNPACK ").and_then(|n| n.trim().parse::<u32>().ok()) {
@@ -817,14 +817,109 @@ pub fn pad_count() -> usize {
 }
 
 pub fn status(sound_label: &str, upd: &UpdInfo) -> Status {
+    let os = os_info();
+    // One line about updates: a system update waiting for a restart matters most.
+    let update = if os.staged.is_some() {
+        Some("System update ready: restart to use it".to_string())
+    } else if let Some(v) = &os.available {
+        Some(format!("System {v} is available"))
+    } else if upd.available {
+        upd.latest.as_ref().map(|v| format!("YARG {v} is available"))
+    } else {
+        None
+    };
     Status {
         network: net_status(),
         songs: songs_status(),
         sound: sound_label.to_string(),
         yarg: link_target("current").unwrap_or_else(|| "not installed".into()),
-        update: if upd.available { upd.latest.clone() } else { None },
+        update,
+        os_rolled_back: os.rolled_back.clone(),
         pads: pad_count(),
     }
+}
+
+// ---- system updates (yargos-os-update, through the root helper) ----------------------------------------------------
+
+/// `key=value` lines (the updater's status file) -> the values by key; a later line wins.
+pub fn parse_kv(text: &str) -> std::collections::HashMap<String, String> {
+    text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).collect()
+}
+
+pub fn os_info_from(kv: &std::collections::HashMap<String, String>, running: &str, auto: bool) -> OsInfo {
+    let get = |k: &str| kv.get(k).filter(|v| !v.is_empty()).cloned();
+    OsInfo {
+        running: running.to_string(),
+        latest: get("latest"),
+        available: get("available"),
+        staged: get("staged"),
+        notes: get("notes").unwrap_or_default(),
+        rolled_back: get("rolled_back"),
+        previous: get("previous"),
+        auto,
+        error: get("check_error"),
+    }
+}
+
+pub fn os_info() -> OsInfo {
+    let kv = parse_kv(&std::fs::read_to_string(format!("{DATA}/os-update/status")).unwrap_or_default());
+    let running = std::fs::read_to_string("/usr/lib/yargos/version").unwrap_or_default().trim().to_string();
+    let auto = std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| !c.lines().any(|l| l.trim() == "OS_AUTO_UPDATE=no")).unwrap_or(true);
+    os_info_from(&kv, &running, auto)
+}
+
+pub fn write_auto_os(on: bool) -> Result<String, String> {
+    write_conf_flag("OS_AUTO_UPDATE", on)?;
+    Ok(format!("Automatic system updates {}", if on { "on" } else { "off" }))
+}
+
+/// The last message of a failed system update, in words for the screen.
+pub fn os_error(lines: &[String]) -> String {
+    if CANCELLED.load(Ordering::Relaxed) {
+        return "Update cancelled. Nothing was changed.".into();
+    }
+    let last = lines.iter().rev().find(|l| !l.starts_with("error:")).cloned().unwrap_or_else(|| "it did not finish".into());
+    if last.contains("offline") || last.contains("could not reach") {
+        "Could not reach the update server. Check Wi-Fi and try again.".into()
+    } else {
+        let mut c = last.chars();
+        c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or(last)
+    }
+}
+
+/// Ask the root helper to run a system updater command (`os-check`, `os-update`, `os-goback`...). Progress comes back as
+/// lines ("Downloading the update… 40%"); Ok holds the messages, Err the reason.
+pub fn os_run(word: &str, mut on_progress: impl FnMut(String)) -> Result<Vec<String>, String> {
+    CANCELLED.store(false, Ordering::Relaxed);
+    let mut s = std::os::unix::net::UnixStream::connect(CTL_SOCKET).map_err(|e| format!("cannot reach the system helper: {e}"))?;
+    s.write_all(format!("{word}\n").as_bytes()).map_err(|e| e.to_string())?;
+    let (mut phase, mut text, mut ended_ok) = ("Downloading the update".to_string(), vec![], false);
+    for line in std::io::BufReader::new(s).lines().map_while(Result::ok) {
+        let t = line.trim().trim_start_matches("yargos-os-update: ").to_string();
+        if let Some(n) = t.strip_prefix("PROGRESS ").and_then(|n| n.trim().parse::<u32>().ok()) {
+            on_progress(format!("{phase}\u{2026} {}%", n.min(100)));
+        } else if let Some(step) = t.strip_prefix("STEP ") {
+            phase = match step.trim() {
+                "downloading" => "Downloading the update",
+                "checking" => "Checking the download",
+                "writing" => "Installing the update",
+                "verifying" => "Checking the new system",
+                _ => "Finishing",
+            }
+            .to_string();
+            on_progress(format!("{phase}\u{2026}"));
+        } else if t == "ok" {
+            ended_ok = true;
+        } else if !t.is_empty() {
+            text.push(t);
+        }
+    }
+    if ended_ok { Ok(text) } else { Err(os_error(&text)) }
+}
+
+pub fn os_cancel() {
+    CANCELLED.store(true, Ordering::Relaxed);
+    let _ = ctl_request("os-cancel");
 }
 
 pub fn sound_label() -> String {
@@ -1136,6 +1231,22 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
 [NEW] Device 77:77:77:77:77:77 Nintendo RVL-WBC-01\n[DEL] Device 00:1E:35:CC:00:03 Nintendo RVL-CNT-01\n";
         assert_eq!(parse_scan_wiimotes(scan, &known), vec!["00:1E:35:AA:00:01", "00:1E:35:BB:00:02"]);
         assert!(parse_scan_wiimotes("Discovery started\n", &known).is_empty());
+    }
+
+    #[test]
+    fn the_updater_status_file_becomes_what_the_screen_shows() {
+        let kv = parse_kv("running=1\nlatest=3\navailable=3\nnotes=Faster \nstaged=\ncheck_error=offline\nrolled_back=2\nprevious=0\n");
+        let o = os_info_from(&kv, "1", true);
+        assert_eq!((o.available.as_deref(), o.staged.as_deref(), o.rolled_back.as_deref(), o.previous.as_deref()), (Some("3"), None, Some("2"), Some("0")));
+        assert_eq!(o.notes, "Faster");
+        assert_eq!(o.error.as_deref(), Some("offline"));
+        assert!(os_info_from(&parse_kv(""), "1", false).latest.is_none());
+    }
+
+    #[test]
+    fn system_update_errors_are_put_in_words() {
+        assert!(os_error(&["could not reach the update server (offline?)".to_string(), "error: x".to_string()]).contains("Wi-Fi"));
+        assert_eq!(os_error(&["the download is damaged (checksum); not installing".to_string(), "error: the system update did not finish".to_string()]), "The download is damaged (checksum); not installing");
     }
 
     #[test]
