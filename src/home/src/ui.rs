@@ -319,7 +319,7 @@ pub fn draw(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) 
     }
     if let Some(msg) = &m.busy {
         hits.clear();
-        draw_busy(cv, fonts, msg, m.tick, u);
+        draw_busy(cv, fonts, msg, m.tick, m.cancellable, u);
     }
     if let Some(msg) = &m.alert {
         hits.clear();
@@ -591,7 +591,7 @@ fn draw_alert(cv: &mut Canvas, fonts: &mut Fonts, msg: &str, u: f32, hits: &mut 
     hits.push(Hit { x: bx as i32, y: by as i32, w: bw as i32, h: bh as i32, row: 0 });
 }
 
-fn draw_busy(cv: &mut Canvas, fonts: &mut Fonts, msg: &str, tick: u64, u: f32) {
+fn draw_busy(cv: &mut Canvas, fonts: &mut Fonts, msg: &str, tick: u64, cancellable: bool, u: f32) {
     let (w, h) = (cv.w as f32, cv.h as f32);
     cv.rect(0, 0, cv.w as i32, cv.h as i32, rgb(0, 0, 0), 0.62);
     let (cw, ch) = (680.0 * u, 230.0 * u);
@@ -605,6 +605,9 @@ fn draw_busy(cv: &mut Canvas, fonts: &mut Fonts, msg: &str, tick: u64, u: f32) {
     let lines = wrap(fonts, msg, 24.0 * u, cw - 80.0 * u);
     for (i, l) in lines.iter().take(3).enumerate() {
         fonts.draw_centered(cv, l, w / 2.0, cy + 120.0 * u + i as f32 * 32.0 * u, 24.0 * u, false, TEXT, 1.0);
+    }
+    if cancellable {
+        fonts.draw_centered(cv, "BACK  Cancel", w / 2.0, cy + ch - 38.0 * u, 18.0 * u, false, DIM, 0.9);
     }
 }
 

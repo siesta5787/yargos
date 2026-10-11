@@ -75,6 +75,54 @@ fetch_latest() {
     [ -n "$LATEST_URL" ] && [ "$LATEST_URL" != null ]
 }
 
+# One update at a time. A lock left behind by a run that was cut short (reboot, power loss, cancelled) must not block
+# every later try ("another update is running" for ever): it only counts if it belongs to a live process of this boot.
+BOOT_ID=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
+LOCK=$APPS/.lock
+take_lock() {
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        sleep 1   # the owner may be between making the lock and writing its pid
+        owner=$(cat "$LOCK/pid" 2>/dev/null); boot=$(cat "$LOCK/boot" 2>/dev/null)
+        if [ "$boot" = "$BOOT_ID" ] && [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+            die "another update is running"
+        fi
+        log "clearing what an unfinished update left behind"
+        rm -rf "$LOCK" "$APPS"/.stage-* "$APPS/.dl"
+        mkdir "$LOCK" 2>/dev/null || die "another update is running"
+    fi
+    echo $$ > "$LOCK/pid"
+    echo "$BOOT_ID" > "$LOCK/boot"
+}
+# Runs however this script ends, including when it is asked to stop (the dashboard's BACK button).
+cleanup() {
+    [ -n "${cpid:-}" ] && kill "$cpid" 2>/dev/null
+    [ -n "${upid:-}" ] && kill "$upid" 2>/dev/null
+    rm -rf "$LOCK" "${stage:-}" "${dl:-}"
+}
+
+# unpack ZIP DIR: unzip, reporting "UNPACK n" (percent of the unpacked size) while it runs. A slow USB stick takes
+# minutes for this and must not look stuck.
+unpack() {
+    total=$(unzip -l "$1" 2>/dev/null | tail -n 1 | awk '{print $1}')
+    unzip -q "$1" -d "$2" &
+    upid=$!
+    while kill -0 "$upid" 2>/dev/null; do
+        sleep 1
+        case ${total:-x} in
+            *[!0-9]* | 0 | "") ;;
+            *)
+                kb=$(du -sk "$2" 2>/dev/null | cut -f1)
+                pct=$(( ${kb:-0} * 1024 * 100 / total ))
+                [ "$pct" -gt 99 ] && pct=99
+                log "UNPACK $pct" ;;
+        esac
+    done
+    wait "$upid"
+    rc=$?
+    upid=
+    return $rc
+}
+
 # Does this folder look like a YARG that can start? Loads each library's dependencies without running it.
 verify_dir() {
     d=$1
@@ -155,10 +203,11 @@ cmd_apply() {
         *) die "release $VER has no SHA-256 digest in its metadata; refusing to install it" ;;
     esac
 
-    mkdir "$APPS/.lock" 2>/dev/null || die "another update is running"
+    take_lock
     dl=$APPS/.dl
     stage=$APPS/.stage-$VER
-    trap 'rm -rf "$APPS/.lock" "$stage" "$dl"' EXIT
+    trap cleanup EXIT
+    trap 'exit 1' INT TERM HUP
     rm -rf "$stage" "$dl"; mkdir -p "$dl" "$stage"
 
     log "downloading $VER"
@@ -171,11 +220,12 @@ cmd_apply() {
         sleep 1
     done
     wait "$cpid" || die "download failed"
+    cpid=
     got=$(sha256sum "$dl/yarg.zip" | cut -d' ' -f1)
     [ "$got" = "$want" ] || die "checksum mismatch (expected $want, got $got); not installing"
 
     log "STEP unpacking"
-    unzip -q "$dl/yarg.zip" -d "$stage" || die "could not unpack the download"
+    unpack "$dl/yarg.zip" "$stage" || die "could not unpack the download"
     rm -rf "$dl"
     finish_install
     if [ "$restart" = yes ]; then systemctl restart yarg.service; fi
@@ -203,12 +253,13 @@ cmd_install_zip() {
     VER=$(basename "$zip" | sed -n 's/^YARG_v\{0,1\}\([0-9][0-9.]*\)[-_].*\.zip$/\1/p')
     [ -n "$VER" ] || die "cannot tell the version from the file name $(basename "$zip") (expected YARG_v<version>-Linux-x86_64.zip)"
     cur=$(current_version) || cur=
-    mkdir "$APPS/.lock" 2>/dev/null || die "another update is running"
+    take_lock
     stage=$APPS/.stage-$VER
-    trap 'rm -rf "$APPS/.lock" "$stage"' EXIT
+    trap cleanup EXIT
+    trap 'exit 1' INT TERM HUP
     rm -rf "$stage"; mkdir -p "$stage"
     log "STEP unpacking"
-    unzip -q "$zip" -d "$stage" || die "could not unpack $(basename "$zip")"
+    unpack "$zip" "$stage" || die "could not unpack $(basename "$zip")"
     # A zip that holds one folder with the game inside: use that folder.
     if [ ! -e "$stage/YARG" ] && [ "$(ls -A "$stage" | wc -l)" = 1 ] && [ -d "$stage/$(ls -A "$stage")" ]; then
         inner=$stage/$(ls -A "$stage")

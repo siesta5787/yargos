@@ -155,6 +155,7 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
             }),
             Cmd::YargInstall => bg(tx, move |tx| yarg_install_job(tx, None, &upd)),
             Cmd::YargInstallZip(zip) => bg(tx, move |tx| yarg_install_job(tx, Some(zip), &upd)),
+            Cmd::YargCancel => bg(tx, |_| sys::update_cancel()),
             Cmd::Refresh(Screen::Yarg) => bg(tx, |tx| res(tx, Res::YargZips(sys::yarg_zips()))),
             Cmd::UpdRollback => bg(tx, move |tx| {
                 done(tx, sys::upd_rollback());
@@ -226,6 +227,11 @@ pub fn run() -> i32 {
     let mut dirty = true;
     let mut had_toast = false;
     let mut notice: Option<String> = None;
+    let started = Instant::now();
+    // YARGOS_DEBUG_FPS=1: log how fast the dashboard draws and any frame that took long (to the journal).
+    let fps_debug = std::env::var_os("YARGOS_DEBUG_FPS").is_some();
+    let (mut frames, mut fps_since) = (0u32, Instant::now());
+    let mut last_iter = Instant::now();
 
     // Boot to the dashboard: YARG starts when PLAY YARG is chosen. The cursor only shows once a mouse moves.
     active.store(true, Ordering::Relaxed);
@@ -239,6 +245,10 @@ pub fn run() -> i32 {
     }
 
     loop {
+        if fps_debug && last_iter.elapsed() > Duration::from_millis(500) {
+            eprintln!("yargos-home: the loop was away for {} ms", last_iter.elapsed().as_millis());
+        }
+        last_iter = Instant::now();
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Event::YargExited { code, .. }) => {
                 mode = Mode::Dash;
@@ -307,27 +317,44 @@ pub fn run() -> i32 {
                 dirty = true;
             }
             Ok(_) => {}
-            Err(RecvTimeoutError::Timeout) => {
-                model.tick += 1;
-                match mode {
-                    Mode::Dash => {
-                        let toast = model.live_toast().is_some();
-                        dirty |= model.busy.is_some() || toast || had_toast || model.screen == Screen::Password && model.tick % 5 == 0;
-                        had_toast = toast;
-                    }
-                    Mode::Game(since) => dirty |= visible && model.tick % 3 == 0 && since.elapsed() < Duration::from_secs(60),
-                }
-            }
+            Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return 1,
         }
 
+        // Animations run on the clock, not on idle moments: a steady stream of events (a moving mouse, a controller
+        // with a noisy axis) would otherwise freeze the spinner while everything else carries on.
+        let now_tick = started.elapsed().as_millis() as u64 / 100;
+        if now_tick != model.tick {
+            model.tick = now_tick;
+            match mode {
+                Mode::Dash => {
+                    let toast = model.live_toast().is_some();
+                    dirty |= model.busy.is_some() || toast || had_toast || model.screen == Screen::Password && model.tick % 5 == 0;
+                    had_toast = toast;
+                }
+                Mode::Game(since) => dirty |= visible && model.tick % 3 == 0 && since.elapsed() < Duration::from_secs(60),
+            }
+        }
+
         if dirty && visible {
+            let frame_start = Instant::now();
             match mode {
                 Mode::Game(since) => draw_splash(&mut cv, &mut fonts, "Starting YARG\u{2026}", Some(splash_progress(since))),
                 Mode::Dash => ui::draw(&mut cv, &mut fonts, &model, &mut hits),
             }
             disp.present(&cv);
             dirty = false;
+            if fps_debug {
+                frames += 1;
+                if frame_start.elapsed() > Duration::from_millis(150) {
+                    eprintln!("yargos-home: slow frame, {} ms", frame_start.elapsed().as_millis());
+                }
+                if fps_since.elapsed() >= Duration::from_secs(1) {
+                    eprintln!("yargos-home: {frames} frames in {} ms", fps_since.elapsed().as_millis());
+                    frames = 0;
+                    fps_since = Instant::now();
+                }
+            }
         }
     }
 }

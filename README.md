@@ -276,6 +276,17 @@ Verified:
   tried on the laptop; the private "with YARG" variant builds and carries the seed.
 - Fixed in the same round: `firstboot.sh` used `stat`, which this image does not have, so it threw away the Sound choice
   at every boot (it now uses `[ -O file ]`; the choice survives a reboot in QEMU).
+- Install YARG on a slow stick (owner's report: "stuck unpacking", wheel not moving, after a forced reboot every retry said
+  "another update is running"). Fixed, checked in QEMU with throttled disks and a hard kill mid-install: (1) the lock
+  belongs to a process of this boot, so one left by a reboot or power cut is cleared (with the half-unpacked folder and
+  the partial download); (2) unpacking shows a percentage like the download does; (3) BACK cancels a download/install
+  (stops curl/unzip, removes everything, says nothing was changed); (4) the spinner runs on the clock, not on idle
+  moments: any steady stream of events (pointer, a controller) used to freeze it; (5) the gradient backdrop is made once
+  instead of every frame and pixels go to X without a copy (frames were ~170 ms in software); (6) the kernel keeps at
+  most 32 MB of unwritten data (`sysctl.d`), so a ~500 MB unpack cannot leave the stick busy for minutes. The real cause
+  of the owner's freeze is not proven: in QEMU the dashboard never stalled, even with all disk I/O limited to 5 MB/s.
+  `YARGOS_DEBUG_FPS=1` (kernel command line `systemd.setenv=YARGOS_DEBUG_FPS=1`) logs the frame rate, slow frames and
+  any gap in the dashboard loop to the journal.
 - Security hardening (Phase 0 of docs/OTA-PLAN.md), checked in QEMU on a 256 GB drive: the player cannot rename,
   replace or add anything in /data's first level or write asound.conf; links planted where root works (apps/yarg, yarg,
   yargos.conf) are replaced and what they pointed at is untouched; the YARG seed is installed by the player; the daily

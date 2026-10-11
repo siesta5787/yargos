@@ -24,11 +24,13 @@ pub struct Canvas {
     pub w: usize,
     pub h: usize,
     pub px: Vec<u32>,
+    /// The backdrop is the same every frame: made once, then copied.
+    bg: Vec<u32>,
 }
 
 impl Canvas {
     pub fn new(w: usize, h: usize) -> Self {
-        Self { w, h, px: vec![0; w * h] }
+        Self { w, h, px: vec![0; w * h], bg: vec![] }
     }
 
     fn blend(&mut self, x: i32, y: i32, color: Rgb, alpha: f32) {
@@ -76,6 +78,10 @@ impl Canvas {
 
     /// The YARG-like backdrop: teal top-left, near-black navy in the middle, dark red bottom-right.
     pub fn backdrop(&mut self) {
+        if self.bg.len() == self.px.len() {
+            self.px.copy_from_slice(&self.bg);
+            return;
+        }
         let (teal, navy, red) = (rgb(8, 104, 124), rgb(4, 9, 20), rgb(92, 14, 22));
         for y in 0..self.h {
             for x in 0..self.w {
@@ -89,6 +95,7 @@ impl Canvas {
                 self.px[y * self.w + x] = c;
             }
         }
+        self.bg = self.px.clone();
     }
 
     /// Fill polygons (even-odd, so holes work) with 4x4 supersampling. `color_at` gets the pixel's

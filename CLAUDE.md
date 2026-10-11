@@ -70,6 +70,15 @@ test image; a plain `tools/br.sh` switches it back off. Each full build also lea
 `yargos-with-yarg.img`; `images/yargos.img` is just the latest. The busybox image has no `stat`, `nc`, `pgrep` or `python`:
 write image scripts without them (`[ -O f ]`, `wc -c < f`).
 
+## Long jobs on the dashboard
+
+Anything that can outlive a reboot or a power cut (the update lock, staging folders) must be recoverable on the next run:
+`yargos-update`'s lock stores pid and boot id and is cleared when its owner is gone. A long job needs a percentage and,
+if it can be stopped safely, BACK to cancel (`Model.cancellable`, `Cmd::YargCancel`; scripts must trap TERM so their
+cleanup runs). Animations use `model.tick`, which follows the clock in `session.rs`: do not count idle timeouts. The
+system disk is a USB stick: big writes need the small dirty limits in `etc/sysctl.d/yargos.conf`. If the dashboard seems
+stuck on hardware, boot with `systemd.setenv=YARGOS_DEBUG_FPS=1` and read the journal (`yargos-home:` lines).
+
 ## Size
 
 `board/yargos/post-build.sh` removes the Clang/SPIR-V leftovers of Mesa's build. Do NOT compress firmware to `.xz` or

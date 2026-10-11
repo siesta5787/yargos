@@ -119,6 +119,8 @@ pub enum Cmd {
     YargInstall,
     /// Install YARG from a release zip on the song drive (full path).
     YargInstallZip(String),
+    /// Stop the YARG download/install that is running (BACK on the busy overlay).
+    YargCancel,
     UpdRollback,
     UpdAuto(bool),
     SongsRefresh,
@@ -288,6 +290,8 @@ pub struct Model {
     /// Label of the disk being installed on while the install runs.
     target: Option<String>,
     pub busy: Option<String>,
+    /// The busy overlay can be cancelled with BACK (a download or install of YARG).
+    pub cancellable: bool,
     pub toast: Option<(String, Instant)>,
     pub loading: bool,
     pub tick: u64,
@@ -321,6 +325,7 @@ impl Model {
             alert: None,
             target: None,
             busy: None,
+            cancellable: false,
             toast: None,
             loading: false,
             tick: 0,
@@ -407,6 +412,11 @@ impl Model {
             return vec![];
         }
         if self.busy.is_some() {
+            if self.cancellable && nav == Nav::Back {
+                self.cancellable = false;
+                self.busy = Some("Cancelling\u{2026}".into());
+                return vec![Cmd::YargCancel];
+            }
             return vec![]; // ignore input while an action runs
         }
         if let Some(p) = self.confirm {
@@ -597,11 +607,13 @@ impl Model {
             Screen::Yarg => match self.sel {
                 0 => {
                     self.busy = Some("Downloading YARG\u{2026} this can take a few minutes".into());
+                    self.cancellable = true;
                     vec![Cmd::YargInstall]
                 }
                 1 => match self.yarg_zips.first().cloned() {
                     Some(zip) => {
                         self.busy = Some("Installing YARG\u{2026}".into());
+                        self.cancellable = true;
                         vec![Cmd::YargInstallZip(zip)]
                     }
                     None => {
@@ -622,6 +634,7 @@ impl Model {
                         return vec![];
                     }
                     self.busy = Some("Downloading the update… this can take a few minutes".into());
+                    self.cancellable = true;
                     vec![Cmd::UpdApply]
                 }
                 2 => {
@@ -762,6 +775,7 @@ impl Model {
             }
             Res::YargInstalled(r) => {
                 self.busy = None;
+                self.cancellable = false;
                 match r {
                     Ok(msg) => {
                         self.screen = Screen::Home;
@@ -773,6 +787,7 @@ impl Model {
             }
             Res::Done(msg) => {
                 self.busy = None;
+                self.cancellable = false;
                 self.toast(msg);
             }
             Res::DoneRefresh(msg, _) => {
@@ -1027,6 +1042,25 @@ mod tests {
         m.apply(Res::YargInstalled(Ok("YARG is installed. Choose PLAY YARG".into())));
         assert_eq!(m.screen, Screen::Home);
         assert!(m.live_toast().is_some());
+    }
+
+    #[test]
+    fn back_cancels_a_yarg_download_but_not_other_busy_work() {
+        let mut m = without_yarg();
+        m.screen = Screen::Yarg;
+        m.sel = 0;
+        m.handle(Nav::Ok);
+        assert!(m.cancellable);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::YargCancel]);
+        assert!(m.busy.as_ref().unwrap().contains("Cancelling"));
+        assert!(m.handle(Nav::Back).is_empty(), "only once");
+        m.apply(Res::YargInstalled(Err("Installation cancelled.".into())));
+        assert!(m.busy.is_none() && !m.cancellable);
+        // Some other kind of busy: BACK does nothing.
+        m.alert = None;
+        m.busy = Some("Scanning\u{2026}".into());
+        assert!(m.handle(Nav::Back).is_empty());
+        assert!(m.busy.is_some());
     }
 
     #[test]

@@ -4,7 +4,9 @@
 
 use crate::model::*;
 use std::io::{BufRead, Read, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 pub const DATA: &str = "/data";
@@ -639,6 +641,7 @@ pub fn upd_check(prev: &UpdInfo) -> UpdInfo {
 #[derive(Debug, PartialEq)]
 pub enum UpdLine {
     Progress(u32),
+    Unpack(u32),
     Step(String),
     Text(String),
 }
@@ -647,6 +650,8 @@ pub fn parse_update_line(line: &str) -> UpdLine {
     let t = line.trim().trim_start_matches("yargos-update: ");
     if let Some(n) = t.strip_prefix("PROGRESS ").and_then(|n| n.trim().parse::<u32>().ok()) {
         UpdLine::Progress(n.min(100))
+    } else if let Some(n) = t.strip_prefix("UNPACK ").and_then(|n| n.trim().parse::<u32>().ok()) {
+        UpdLine::Unpack(n.min(100))
     } else if let Some(step) = t.strip_prefix("STEP ") {
         UpdLine::Step(step.trim().to_string())
     } else {
@@ -657,17 +662,22 @@ pub fn parse_update_line(line: &str) -> UpdLine {
 /// Run `yargos-update ARGS`, reporting what it is doing ("Downloading YARG… 40%") while it runs.
 /// Ok with its messages, or Err with them when it failed.
 fn update_stream(args: &[&str], mut on_progress: impl FnMut(String)) -> Result<Vec<String>, Vec<String>> {
+    CANCELLED.store(false, Ordering::Relaxed);
+    // Its own process group, so cancelling stops curl and unzip with it.
     let mut child = Command::new("sh")
         .args(["-c", "exec yargos-update \"$@\" 2>&1", "sh"])
         .args(args)
         .stdout(Stdio::piped())
+        .process_group(0)
         .spawn()
         .map_err(|e| vec![format!("yargos-update: {e}")])?;
+    UPDATE_PID.store(child.id(), Ordering::Relaxed);
     let mut text = vec![];
     if let Some(out) = child.stdout.take() {
         for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
             match parse_update_line(&line) {
                 UpdLine::Progress(n) => on_progress(format!("Downloading YARG\u{2026} {n}%")),
+                UpdLine::Unpack(n) => on_progress(format!("Unpacking YARG\u{2026} {n}%")),
                 UpdLine::Step(s) if s == "unpacking" => on_progress("Unpacking YARG\u{2026}".into()),
                 UpdLine::Step(s) if s == "checking" => on_progress("Checking YARG\u{2026}".into()),
                 UpdLine::Step(_) => {}
@@ -676,11 +686,28 @@ fn update_stream(args: &[&str], mut on_progress: impl FnMut(String)) -> Result<V
             }
         }
     }
-    if child.wait().map(|s| s.success()).unwrap_or(false) { Ok(text) } else { Err(text) }
+    let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+    UPDATE_PID.store(0, Ordering::Relaxed);
+    if ok { Ok(text) } else { Err(text) }
+}
+
+static UPDATE_PID: AtomicU32 = AtomicU32::new(0);
+static CANCELLED: AtomicBool = AtomicBool::new(false);
+
+/// Stop the running `yargos-update` (and the download or unpacking under it); it cleans up after itself.
+pub fn update_cancel() {
+    CANCELLED.store(true, Ordering::Relaxed);
+    let pid = UPDATE_PID.load(Ordering::Relaxed);
+    if pid != 0 {
+        let _ = Command::new("kill").args(["-TERM", "--", &format!("-{pid}")]).status();
+    }
 }
 
 /// The last message of a failed run, in words for the screen.
 pub fn update_error(lines: &[String]) -> String {
+    if CANCELLED.load(Ordering::Relaxed) {
+        return "Installation cancelled. Nothing was changed.".into();
+    }
     let last = lines.last().cloned().unwrap_or_else(|| "it did not finish".into());
     if last.contains("offline") || last.contains("could not read the latest release") {
         "Could not reach the internet. Choose WI-FI on the main menu, connect, and try again.".into()
@@ -1115,6 +1142,7 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
     fn update_output_lines_are_told_apart() {
         assert_eq!(parse_update_line("yargos-update: PROGRESS 42"), UpdLine::Progress(42));
         assert_eq!(parse_update_line("yargos-update: PROGRESS 250"), UpdLine::Progress(100));
+        assert_eq!(parse_update_line("yargos-update: UNPACK 64"), UpdLine::Unpack(64));
         assert_eq!(parse_update_line("yargos-update: STEP unpacking"), UpdLine::Step("unpacking".into()));
         assert_eq!(parse_update_line("yargos-update: downloading 0.15.0"), UpdLine::Text("downloading 0.15.0".into()));
         assert!(update_error(&["could not read the latest release (offline?)".to_string()]).contains("WI-FI"));

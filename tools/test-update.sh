@@ -106,6 +106,18 @@ echo "not a zip" > "$T/songs/YARG_v1.0.0-Linux-x86_64.zip"
 check "and leaves no debris" bash -c '[ -z "$(ls -A '"$APPS"'/.stage-* 2>/dev/null)" ]'
 unset YARGOS_SONGS
 
+echo "a lock left by an install that was cut short"
+rm -rf "$APPS"; mkdir -p "$APPS"
+api good.json
+mkdir "$APPS/.lock" "$APPS/.stage-0.99.0"; echo 999999 > "$APPS/.lock/pid"; cat /proc/sys/kernel/random/boot_id > "$APPS/.lock/boot"
+out=$("$UPD" install 2>&1); case $out in *"clearing what an unfinished update left"*) ok "a dead owner's lock is cleared" ;; *) bad "a dead owner's lock is cleared" ;; esac
+check "and the install went through" [ "$(cur)" = 0.99.0 ]
+rm -rf "$APPS"; mkdir -p "$APPS/.lock"; echo $$ > "$APPS/.lock/pid"; cat /proc/sys/kernel/random/boot_id > "$APPS/.lock/boot"
+out=$("$UPD" install 2>&1); case $out in *"another update is running"*) ok "a live owner's lock is respected" ;; *) bad "a live owner's lock is respected" ;; esac
+rm -rf "$APPS"; mkdir -p "$APPS/.lock"; echo $$ > "$APPS/.lock/pid"; echo some-earlier-boot > "$APPS/.lock/boot"
+"$UPD" install >/dev/null 2>&1; check "a lock from an earlier boot is cleared even if the pid is in use again" [ "$(cur)" = 0.99.0 ]
+check "no lock is left after an install" [ ! -e "$APPS/.lock" ]
+
 if [ -n "${1:-}" ]; then
     echo "real YARG folder"
     check "real YARG passes the library check here" "$UPD" verify-dir "$1"

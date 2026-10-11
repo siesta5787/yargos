@@ -100,10 +100,12 @@ impl Display {
         let mut y = 0;
         while y < cv.h {
             let n = rows.min(cv.h - y);
-            let mut data = Vec::with_capacity(cv.w * n * 4);
-            for p in &cv.px[y * cv.w..(y + n) * cv.w] {
-                data.extend_from_slice(&p.to_le_bytes());
-            }
+            let rows_px = &cv.px[y * cv.w..(y + n) * cv.w];
+            // The X server wants little-endian 32-bit pixels, which is what a u32 slice is in memory here.
+            #[cfg(target_endian = "little")]
+            let data: &[u8] = unsafe { std::slice::from_raw_parts(rows_px.as_ptr() as *const u8, rows_px.len() * 4) };
+            #[cfg(not(target_endian = "little"))]
+            let data: Vec<u8> = rows_px.iter().flat_map(|p| p.to_le_bytes()).collect();
             if self.conn.put_image(ImageFormat::Z_PIXMAP, self.win, self.gc, cv.w as u16, n as u16, 0, y as i16, 0, self.depth, &data).is_err() {
                 return;
             }
