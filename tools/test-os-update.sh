@@ -51,7 +51,8 @@ g() {
 }
 reboot_guest() { "$HERE/tools/qemu-sh.sh" 'sync; (sleep 1; reboot) >/dev/null 2>&1 &' >/dev/null 2>&1; sleep 15; }
 newoverlay() { rm -f "$Q/overlay.qcow2"; qemu-img create -q -f qcow2 -b "$1" -F raw "$Q/overlay.qcow2" 64G; }
-serve() { kill $(ps -eo pid,args | awk '/http.server '$PORT'/ && !/awk/ {print $1}') 2>/dev/null; (cd "$1" && python3 -m http.server "$PORT" >"$W/http.log" 2>&1 &); sleep 1; }
+# Served with a redirect on every request, like GitHub does (a plain server hid a missing curl -L).
+serve() { kill $(ps -eo pid,args | awk '/redirect-server.py/ && !/awk/ {print $1}') 2>/dev/null; (python3 "$HERE/tools/redirect-server.py" "$1" "$PORT" >"$W/http.log" 2>&1 &); sleep 1; }
 build() { # build VERSION
     rm -f "$BUILD"/output/images/{rootfs.ext2,rootfs.ext4,yargos.img}
     (cd "$HERE" && YARGOS_TEST_CONSOLE=1 YARGOS_VERSION=$1 tools/br.sh >"$W/build-$1.log" 2>&1) || { echo "build $1 failed"; exit 1; }
@@ -167,5 +168,5 @@ if want nvme; then
 fi
 
 qstop
-kill $(ps -eo pid,args | awk '/http.server '$PORT'/ && !/awk/ {print $1}') 2>/dev/null
+kill $(ps -eo pid,args | awk '/redirect-server.py/ && !/awk/ {print $1}') 2>/dev/null
 [ $fail = 0 ] && echo "ALL PASSED" || { echo "SOME FAILED"; exit 1; }

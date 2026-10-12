@@ -142,8 +142,10 @@ fetch_manifest() {
     url=$(conf_url)
     name=$(conf_channel).json
     rm -f "$RUN/$name" "$RUN/$name.sig"
-    curl -fsS --max-time 30 -o "$RUN/$name" "$url/$name" || return 1
-    curl -fsS --max-time 30 -o "$RUN/$name.sig" "$url/$name.sig" || return 1
+    # -L: GitHub serves release files through a redirect; without it curl "succeeds" with an empty file.
+    curl -fsSL --max-time 30 -o "$RUN/$name" "$url/$name" || return 1
+    curl -fsSL --max-time 30 -o "$RUN/$name.sig" "$url/$name.sig" || return 1
+    [ -s "$RUN/$name" ] && [ -s "$RUN/$name.sig" ] || return 1
     ok=1
     for k in "$KEYS"/*.pem; do
         [ -f "$k" ] || continue

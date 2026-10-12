@@ -61,7 +61,7 @@ is_rejected() { [ -f "$APPS/.rejected" ] && grep -qx "$1" "$APPS/.rejected"; }
 
 # Fills LATEST_VER, LATEST_URL, LATEST_DIGEST from the release metadata.
 fetch_latest() {
-    json=$(curl -fsS --max-time 20 -H 'Accept: application/vnd.github+json' "$API") || return 1
+    json=$(curl -fsSL --max-time 20 -H 'Accept: application/vnd.github+json' "$API") || return 1
     tag=$(printf '%s' "$json" | jq -r '.tag_name // empty') || return 1
     [ -n "$tag" ] || return 1
     LATEST_VER=${tag#v}

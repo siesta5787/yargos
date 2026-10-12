@@ -42,6 +42,11 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
 
 ## Detailed log (QEMU and tests)
 
+- First public release (found by checking the published files from outside): the system updater fetched the update channel
+  without following redirects, and GitHub always redirects, so a device would have saved an empty file and refused it as
+  "not signed by us". Fixed (`curl -L` and an empty-file check) in 2026.10.13; the test server now redirects like GitHub
+  (`tools/redirect-server.py`). The first image (2026.10.12) was withdrawn the same hour.
+
 - The defconfig loads and every symbol takes effect (checked against Buildroot 2026.02.3). This
   Buildroot has no "all linux-firmware" option, so the image uses a broad per-chip firmware list.
 - Dashboard (QEMU, real image): all screens open and show live data (network, sound card and volume,

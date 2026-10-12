@@ -73,6 +73,12 @@ test image; a plain `tools/br.sh` switches it back off. Each full build also lea
 `yargos-with-yarg.img`; `images/yargos.img` is just the latest. The busybox image has no `stat`, `nc`, `pgrep` or `python`:
 write image scripts without them (`[ -O f ]`, `wc -c < f`).
 
+## Talking to GitHub
+
+GitHub serves release downloads through redirects: every `curl` to it needs `-L` (without it curl saves the empty redirect body
+and exits 0; `-s -f` do not catch that), and a download must be checked for a non-empty file. Test servers must redirect too:
+`tools/redirect-server.py` (a plain `python3 -m http.server` hid exactly this bug until the first real release).
+
 ## Long jobs on the dashboard
 
 Anything that can outlive a reboot or a power cut (the update lock, staging folders) must be recoverable on the next run:
