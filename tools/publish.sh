@@ -25,14 +25,16 @@ jq -e --arg b "https://github.com/$REPO/releases/download/os-$VERSION" '.base ==
 [ "$(gh repo view "$REPO" --json visibility -q .visibility)" = PUBLIC ] || { echo "$REPO is not public: devices could not download from it"; exit 1; }
 echo "repo:        $REPO"
 echo "version:     $VERSION ($CHANNEL channel)"
-ASSETS=("$DIR/rootfs-$VERSION.img.xz" "$DIR/legal-$VERSION.tar")
+# The signed manifest goes on the version's own release page too: someone without internet on the device downloads these
+# three files (the manifest, its signature, the image) on another computer and puts them on the song drive.
+ASSETS=("$DIR/rootfs-$VERSION.img.xz" "$DIR/legal-$VERSION.tar" "$DIR/$CHANNEL.json" "$DIR/$CHANNEL.json.sig")
 [ -f "$DIR/yargos-$VERSION.img.xz" ] && ASSETS+=("$DIR/yargos-$VERSION.img.xz")
 echo "release:     os-$VERSION  <- $(for a in "${ASSETS[@]}"; do printf '%s (%s MB) ' "$(basename "$a")" "$(du -m "$a" | cut -f1)"; done)"
 echo "channel:     os-channel  <- $CHANNEL.json, $CHANNEL.json.sig (replaces the old ones)"
 [ "$YES" = yes ] || { echo "(nothing done: add --yes)"; exit 0; }
 NOTES=$(jq -r '.notes // ""' "$DIR/$CHANNEL.json")
 gh release create "os-$VERSION" "${ASSETS[@]}" --repo "$REPO" \
-    --title "YARG OS $VERSION" --notes "${NOTES:-YARG OS $VERSION}. yargos-$VERSION.img.xz is the whole disk image to write to a USB stick (tools/flash.sh takes it as it is); rootfs-$VERSION.img.xz is what installed devices download themselves (SYSTEM > System update); the legal file has the licences and the source of the GPL/LGPL parts."
+    --title "YARG OS $VERSION" --notes "${NOTES:-YARG OS $VERSION}. yargos-$VERSION.img.xz is the whole disk image to write to a USB stick (tools/flash.sh takes it as it is); rootfs-$VERSION.img.xz is what installed devices download themselves (SYSTEM > System update). No internet on the device? Download rootfs-$VERSION.img.xz, $CHANNEL.json and $CHANNEL.json.sig from this page, put the three files on the song drive and choose SYSTEM > System update > Install from the song drive. The legal file has the licences and the source of the GPL/LGPL parts."
 gh release view os-channel --repo "$REPO" >/dev/null 2>&1 ||
     gh release create os-channel --repo "$REPO" --title "Update channel" --notes "Files the devices read to find the newest system. Do not edit by hand." --latest=false
 gh release upload os-channel "$DIR/$CHANNEL.json" "$DIR/$CHANNEL.json.sig" --repo "$REPO" --clobber

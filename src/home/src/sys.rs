@@ -1101,14 +1101,41 @@ pub fn os_info_from(kv: &std::collections::HashMap<String, String>, running: &st
         previous: get("previous"),
         auto,
         error: get("check_error"),
+        why: get("check_why"),
+        offline: None,
+        offline_hint: None,
     }
+}
+
+/// `yargos-os-update find` output -> (version ready to install, a sentence about something unusable on the drive).
+pub fn parse_offline(lines: &[String]) -> (Option<String>, Option<String>) {
+    for l in lines {
+        let l = l.trim();
+        if let Some(v) = l.strip_prefix("offline-old ") {
+            return (None, Some(format!("The update on the song drive ({v}) is not newer than this system.")));
+        } else if let Some(f) = l.strip_prefix("offline-missing ") {
+            return (None, Some(format!("The song drive has the update information but not its image file, {f}. Copy that file next to it.")));
+        } else if l == "offline-bad" {
+            return (None, Some("The update information on the song drive is not signed by us, so it is ignored.".into()));
+        } else if let Some(v) = l.strip_prefix("offline ") {
+            return (Some(v.trim().to_string()), None);
+        }
+    }
+    (None, None)
 }
 
 pub fn os_info() -> OsInfo {
     let kv = parse_kv(&std::fs::read_to_string(format!("{DATA}/os-update/status")).unwrap_or_default());
     let running = std::fs::read_to_string("/usr/lib/yargos/version").unwrap_or_default().trim().to_string();
     let auto = std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| !c.lines().any(|l| l.trim() == "OS_AUTO_UPDATE=no")).unwrap_or(true);
-    os_info_from(&kv, &running, auto)
+    let mut info = os_info_from(&kv, &running, auto);
+    // Is there an update on the song drive? (only asks while the drive is plugged in)
+    if std::path::Path::new("/dev/disk/by-label/YARGSONGS").exists() {
+        if let Ok(lines) = os_run("os-find", |_| {}) {
+            (info.offline, info.offline_hint) = parse_offline(&lines);
+        }
+    }
+    info
 }
 
 pub fn write_auto_os(on: bool) -> Result<String, String> {
@@ -1122,8 +1149,11 @@ pub fn os_error(lines: &[String]) -> String {
         return "Update cancelled. Nothing was changed.".into();
     }
     let last = lines.iter().rev().find(|l| !l.starts_with("error:")).cloned().unwrap_or_else(|| "it did not finish".into());
-    if last.contains("offline") || last.contains("could not reach") {
-        "Could not reach the update server. Check Wi-Fi and try again.".into()
+    if last.contains("could not reach") {
+        // "could not reach the update server: <why>": the reason stays, with what to do about it.
+        let mut c = last.chars();
+        let text = c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or(last);
+        format!("{text}. Check Wi-Fi and try again.")
     } else {
         let mut c = last.chars();
         c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or(last)
@@ -1492,8 +1522,25 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
 
     #[test]
     fn system_update_errors_are_put_in_words() {
-        assert!(os_error(&["could not reach the update server (offline?)".to_string(), "error: x".to_string()]).contains("Wi-Fi"));
+        let e = os_error(&["could not reach the update server: the connection was cut off".to_string(), "error: x".to_string()]);
+        assert!(e.contains("Wi-Fi") && e.contains("the connection was cut off"), "{e}");
+        assert_eq!(
+            os_error(&["the download failed at 41% after 6 tries: the connection timed out or stalled".to_string()]),
+            "The download failed at 41% after 6 tries: the connection timed out or stalled"
+        );
         assert_eq!(os_error(&["the download is damaged (checksum); not installing".to_string(), "error: the system update did not finish".to_string()]), "The download is damaged (checksum); not installing");
+    }
+
+    #[test]
+    fn what_is_on_the_song_drive_is_told_from_the_finder_output() {
+        let l = |s: &str| vec![s.to_string()];
+        assert_eq!(parse_offline(&l("offline 2026.11.1")), (Some("2026.11.1".into()), None));
+        assert!(parse_offline(&l("offline-old 2026.10.13")).1.unwrap().contains("not newer"));
+        assert!(parse_offline(&l("offline-missing rootfs-2026.11.1.img.xz")).1.unwrap().contains("rootfs-2026.11.1.img.xz"));
+        assert!(parse_offline(&l("offline-bad")).1.unwrap().contains("not signed"));
+        assert_eq!(parse_offline(&[]), (None, None));
+        // Other lines in the output (log lines) do not matter.
+        assert_eq!(parse_offline(&["yargos-os-update: x".to_string(), "offline 3".to_string()]).0.as_deref(), Some("3"));
     }
 
     #[test]

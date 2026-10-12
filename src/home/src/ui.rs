@@ -147,6 +147,11 @@ fn rows(m: &Model) -> Vec<Row> {
         Screen::OsUpdate => vec![
             row("Check for a system update"),
             Row { enabled: m.os.available.is_some(), value: m.os.available.clone().unwrap_or_default(), ..row("Install the system update") },
+            Row {
+                enabled: m.os.offline.is_some(),
+                value: m.os.offline.clone().unwrap_or_else(|| if m.os.offline_hint.is_some() { "see right".into() } else { "no file".into() }),
+                ..row("Install from the song drive")
+            },
             Row { enabled: m.os.staged.is_some(), value: m.os.staged.clone().unwrap_or_default(), ..row("Restart to use the update") },
             Row { value: if m.os.auto { "ON".into() } else { "OFF".into() }, ..row("Automatic system updates") },
             Row { enabled: m.os.previous.is_some(), value: m.os.previous.clone().unwrap_or_default(), ..row("Go back to the earlier system") },
@@ -306,9 +311,19 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
                 v.push(m.os.notes.trim().to_string());
             }
             match m.os.error.as_deref() {
-                Some("offline") => v.push("The update server could not be reached. Check Wi-Fi and try again.".into()),
+                Some("offline") => v.push(match &m.os.why {
+                    Some(w) => format!("The update server could not be reached: {w}."),
+                    None => "The update server could not be reached. Check Wi-Fi and try again.".into(),
+                }),
                 Some("signature") => v.push("The update information was not signed by us, so it was ignored.".into()),
                 _ => {}
+            }
+            if let Some(o) = &m.os.offline {
+                v.push(format!("{o} is on the song drive: choose Install from the song drive (no internet needed)."));
+            } else if let Some(h) = &m.os.offline_hint {
+                v.push(h.clone());
+            } else {
+                v.push("No internet? Put the release files (stable.json, stable.json.sig and rootfs-<version>.img.xz, from the release page on GitHub) on the song drive.".into());
             }
             v.push("It never restarts without asking. A new system that does not start is replaced by the earlier one by itself.".into());
             ("SYSTEM UPDATE", v)

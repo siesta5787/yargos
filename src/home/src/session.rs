@@ -169,6 +169,12 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Os(sys::os_info()));
                 res(tx, Res::Status(sys::status(&sys::sound_label(), &upd)));
             }),
+            Cmd::OsInstallOffline => bg(tx, move |tx| {
+                let r = sys::os_run("os-update-offline", |t| res(tx, Res::Progress(t.replace("Downloading the update", "Copying the update"))));
+                res(tx, Res::OsDone(r.map(|_| "The update is installed. Restart to use it".to_string())));
+                res(tx, Res::Os(sys::os_info()));
+                res(tx, Res::Status(sys::status(&sys::sound_label(), &upd)));
+            }),
             Cmd::OsCancel => bg(tx, |_| sys::os_cancel()),
             Cmd::OsGoBack => bg(tx, move |tx| {
                 let r = sys::os_run("os-goback", |_| {});

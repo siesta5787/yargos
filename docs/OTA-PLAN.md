@@ -117,7 +117,16 @@ implementation differs from the first plan.
   going back. `tools/release.sh` makes and signs a release and refuses an image that holds YARG, BASS, Discord or Unity.
 - Dashboard: SYSTEM > System update (check, install with a percentage, BACK cancels, "Restart now?", automatic on/off,
   go back); a rolled-back update raises an ATTENTION box that is acknowledged once; the main menu card says when a system
-  update is waiting. The root helper only accepts the fixed words `os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`.
+  update is waiting. The root helper only accepts the fixed words `os-check`, `os-update`, `os-update-offline`, `os-find`, `os-cancel`, `os-goback`, `os-ack`.
   `yargos-os-update.timer` checks 5 minutes after boot and daily (never while YARG runs, never restarts).
+- **Failures and offline** (added after the first real-hardware update failed with just "Download failed"): curl's exit
+  status and HTTP code are put into words (`curl_why`: DNS, refused, HTTP error, disk full/read-only, timeout/stall,
+  TLS/clock, cut off) and shown on the dashboard; the download retries up to 6 times keeping the partial file (a
+  connection moving less than 2 KB/s for 45 s counts as stalled), and checks free space first. `yargos-os-update find` and
+  `install-offline` (helper words `os-find`, `os-update-offline`) read `<channel>.json`, `.json.sig` and the image the
+  manifest names from the song drive (top level or one folder down): the manifest must carry our signature (it is
+  size-limited because /run is memory), then the same image checks run; the image is copied into /data/os-update first, so
+  nothing on the drive is ever deleted. `tools/publish.sh` also attaches the signed manifest to each version's release
+  page so the three files come from one page.
 - Not built (yet): chunked/delta payloads, GitHub publishing is manual (`gh` commands in
   `tools/release.sh`), `legal-info` publishing.

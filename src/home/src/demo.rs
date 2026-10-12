@@ -135,6 +135,22 @@ pub fn model(name: &str) -> Model {
             m.sel = 1;
             m.os = OsInfo { running: "2026.10.11.2".into(), latest: Some("2026.11.1".into()), available: Some("2026.11.1".into()), notes: "Faster start-up and a fix for Wii guitars.".into(), previous: Some("2026.10.11.1".into()), auto: true, ..Default::default() };
         }
+        "os-offline" => {
+            m.screen = Screen::OsUpdate;
+            m.sel = 2;
+            m.os = OsInfo { running: "2026.10.13".into(), offline: Some("2026.10.14".into()), previous: None, auto: true, error: Some("offline".into()), why: Some("the name of the update server could not be looked up (no internet, or the network gives no DNS)".into()), ..Default::default() };
+        }
+        "os-offline-missing" => {
+            m.screen = Screen::OsUpdate;
+            m.sel = 2;
+            m.os = OsInfo { running: "2026.10.13".into(), offline_hint: Some("The song drive has the update information but not its image file, rootfs-2026.10.14.img.xz. Copy that file next to it.".into()), auto: true, ..Default::default() };
+        }
+        "os-failed" => {
+            m.screen = Screen::OsUpdate;
+            m.sel = 1;
+            m.os = OsInfo { running: "2026.10.13".into(), available: Some("2026.10.14".into()), auto: true, ..Default::default() };
+            m.alert = Some("The download failed at 41% after 6 tries: the connection timed out or stalled".into());
+        }
         "os-busy" => {
             m.screen = Screen::OsUpdate;
             m.os = OsInfo { running: "2026.10.11.2".into(), available: Some("2026.11.1".into()), auto: true, ..Default::default() };

@@ -57,7 +57,11 @@ The first boot grows the data partition to fill the stick. Wired networks work w
   release is written to the other system slot and gets a boot entry that is tried twice; if the new system does not bring
   up the dashboard and keep it running, the boot loader falls back to the old one by itself and the update is not tried
   again. "Go back to the earlier system" is one press. Releases are signed (Ed25519); the public keys are in
-  `board/yargos/rootfs-overlay/usr/lib/yargos/keys/`.
+  `board/yargos/rootfs-overlay/usr/lib/yargos/keys/`. A failed download says why (no DNS, a stalled connection, an HTTP
+  error, a full disk) and is retried, resuming where it stopped.
+- **No internet on the device?** Download `rootfs-<version>.img.xz`, `stable.json` and `stable.json.sig` from the release
+  page (the `os-<version>` release) on another computer, put the three files on the song drive (top level or one folder
+  down) and choose SYSTEM > System update > *Install from the song drive*. Same signature and checksum checks as a download.
 
 Design and the reasoning: [docs/OTA-PLAN.md](docs/OTA-PLAN.md), [docs/DESIGN.md](docs/DESIGN.md).
 

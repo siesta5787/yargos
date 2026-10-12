@@ -202,6 +202,8 @@ pub enum Cmd {
     YargCancel,
     OsCheck,
     OsInstall,
+    /// Install the update found on the song drive (no internet).
+    OsInstallOffline,
     OsCancel,
     OsGoBack,
     OsAck,
@@ -242,6 +244,12 @@ pub struct OsInfo {
     pub auto: bool,
     /// Why the last check failed: "offline" or "signature".
     pub error: Option<String>,
+    /// The reason in words (what the network said), when the check could not reach the server.
+    pub why: Option<String>,
+    /// An update (this version) is on the song drive, ready to install without internet.
+    pub offline: Option<String>,
+    /// Something is on the song drive but cannot be used: a sentence for the side panel.
+    pub offline_hint: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -537,7 +545,7 @@ impl Model {
             Screen::Storage => 2,
             Screen::ImportPick => 1 + self.drives.len(),
             Screen::Manage => 1 + self.browse.entries.len(),
-            Screen::OsUpdate => 5,
+            Screen::OsUpdate => 6,
             Screen::Devices => 1 + self.devices.len(),
             Screen::Yarg => 3,
             Screen::Install => if self.installed.is_some() { 2 } else { 1 + self.disks.len() },
@@ -971,6 +979,19 @@ impl Model {
                     vec![Cmd::OsInstall]
                 }
                 2 => {
+                    if self.os.staged.is_some() {
+                        self.toast("An update is already waiting for a restart");
+                        return vec![];
+                    }
+                    if self.os.offline.is_none() {
+                        self.toast(self.os.offline_hint.clone().unwrap_or_else(|| "No update found on the song drive".into()));
+                        return vec![];
+                    }
+                    self.busy = Some("Copying the update from the song drive\u{2026}".into());
+                    self.cancel = Some(Cmd::OsCancel);
+                    vec![Cmd::OsInstallOffline]
+                }
+                3 => {
                     if self.os.staged.is_none() {
                         self.toast("There is no update waiting");
                         return vec![];
@@ -979,7 +1000,7 @@ impl Model {
                     self.confirm_sel = 0;
                     vec![]
                 }
-                3 => {
+                4 => {
                     self.os.auto = !self.os.auto;
                     vec![Cmd::OsAuto(self.os.auto)]
                 }
@@ -1498,13 +1519,39 @@ mod tests {
         m.sel = 1;
         assert!(m.handle(Nav::Ok).is_empty(), "nothing available");
         m.sel = 2;
+        assert!(m.handle(Nav::Ok).is_empty(), "nothing on the song drive");
+        assert!(m.live_toast().unwrap().contains("No update found"));
+        m.sel = 3;
         assert!(m.handle(Nav::Ok).is_empty(), "nothing waiting");
         assert!(m.confirm.is_none());
-        m.sel = 4;
+        m.sel = 5;
         assert!(m.handle(Nav::Ok).is_empty(), "no earlier system");
-        m.sel = 3;
+        m.sel = 4;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsAuto(false)]);
         assert!(!m.os.auto);
+    }
+
+    #[test]
+    fn an_update_on_the_song_drive_installs_without_internet_and_can_be_cancelled() {
+        let mut m = os_screen();
+        m.os.offline = Some("2".into());
+        m.sel = 2;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsInstallOffline]);
+        assert!(m.busy.as_deref().unwrap().contains("song drive") && m.cancellable());
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::OsCancel]);
+        m.apply(Res::OsDone(Ok("The update is installed. Restart to use it".into())));
+        assert_eq!(m.confirm, Some(Power::Restart));
+        // Something on the drive that cannot be used says why instead of doing anything.
+        let mut m = os_screen();
+        m.os.offline_hint = Some("The file on the song drive is not signed by us.".into());
+        m.sel = 2;
+        assert!(m.handle(Nav::Ok).is_empty() && m.live_toast().unwrap().contains("not signed"));
+        // An update already waiting for a restart is not stacked up with another.
+        let mut m = os_screen();
+        m.os.offline = Some("2".into());
+        m.os.staged = Some("2".into());
+        m.sel = 2;
+        assert!(m.handle(Nav::Ok).is_empty() && m.busy.is_none());
     }
 
     #[test]
@@ -1524,7 +1571,7 @@ mod tests {
         m.confirm = None;
         m.os.staged = Some("2".into());
         m.os.available = None;
-        m.sel = 2;
+        m.sel = 3;
         m.handle(Nav::Ok);
         assert_eq!(m.confirm, Some(Power::Restart), "restart to use it asks first");
     }
@@ -1533,7 +1580,7 @@ mod tests {
     fn going_back_needs_an_earlier_system() {
         let mut m = os_screen();
         m.os.previous = Some("0".into());
-        m.sel = 4;
+        m.sel = 5;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsGoBack]);
     }
 

@@ -5,6 +5,8 @@
 #   yargos-os-update check         is a newer system published? (signed manifest, nothing is changed)
 #   yargos-os-update install       check, download, write it to the OTHER system slot, add a boot entry that tries it
 #                                  twice; it starts at the next restart (this never restarts by itself)
+#   yargos-os-update find          is there an update on the song drive? (no internet: release files copied there by hand)
+#   yargos-os-update install-offline   install that one (same checks as a download: the signature and the checksums)
 #   yargos-os-update auto          what the daily timer runs: check and install, unless AUTO_UPDATE is off or YARG runs
 #   yargos-os-update cancel        stop a running install (what was downloaded is kept)
 #   yargos-os-update go-back       make the system that ran before the default again (restart to use it)
@@ -38,7 +40,9 @@ CMDLINE_FILE=${YARGOS_CMDLINE:-/proc/cmdline}
 VERSION_FILE=${YARGOS_VERSION_FILE:-/usr/lib/yargos/version}
 ENTRIES_LIB=${YARGOS_ENTRIES_LIB:-/usr/lib/yargos/entries.sh}
 DEFAULT_URL=https://github.com/siesta5787/yargos/releases/download/os-channel
+SONGS=${YARGOS_SONGS:-/media/songs}
 TRIES=2
+DL_TRIES=${YARGOS_DL_TRIES:-6}
 
 # shellcheck disable=SC1090
 . "$ENTRIES_LIB"
@@ -135,17 +139,33 @@ is_rejected() { [ -f "$STATE/rejected" ] && grep -qx "$1" "$STATE/rejected"; }
 
 # ---- the manifest ---------------------------------------------------------------------------------------------------
 
-# Download the manifest and its signature, check the signature. Sets M (the manifest file) and BASE.
-fetch_manifest() {
-    mkdir -p "$RUN"
-    chmod 0700 "$RUN"
-    url=$(conf_url)
-    name=$(conf_channel).json
-    rm -f "$RUN/$name" "$RUN/$name.sig"
-    # -L: GitHub serves release files through a redirect; without it curl "succeeds" with an empty file.
-    curl -fsSL --max-time 30 -o "$RUN/$name" "$url/$name" || return 1
-    curl -fsSL --max-time 30 -o "$RUN/$name.sig" "$url/$name.sig" || return 1
-    [ -s "$RUN/$name" ] && [ -s "$RUN/$name.sig" ] || return 1
+# curl_why CODE [HTTP]: what a curl exit status means, in words for the screen.
+curl_why() {
+    case $1 in
+        6) echo "the name of the update server could not be looked up (no internet, or the network gives no DNS)" ;;
+        7) echo "the connection was refused or nothing answered" ;;
+        22) echo "the update server answered with an error (HTTP ${2:-?})" ;;
+        23) echo "could not save the file (is the disk full or read-only?)" ;;
+        28) echo "the connection timed out or stalled" ;;
+        35 | 51 | 58 | 59 | 60 | 77 | 83) echo "the secure connection failed (is the computer's clock right? curl $1)" ;;
+        18 | 52 | 55 | 56) echo "the connection was cut off" ;;
+        *) echo "network error (curl $1)" ;;
+    esac
+}
+
+# fetch FILE URL SECONDS: small download. Sets FETCH_WHY (empty on success). -L: GitHub serves release files through a
+# redirect; without it curl "succeeds" with an empty file.
+fetch() {
+    FETCH_WHY=
+    code=$(curl -fsSL --connect-timeout 15 --max-time "$3" -o "$1" -w '%{http_code}' "$2" 2>/dev/null)
+    rc=$?
+    if [ $rc != 0 ]; then FETCH_WHY=$(curl_why $rc "$code"); return 1; fi
+    [ -s "$1" ] || { FETCH_WHY="the update server sent an empty answer"; return 1; }
+    return 0
+}
+
+# Check the signature of the manifest in $RUN/$name. Sets M (the manifest file) and BASE. Returns 2 if it is not signed by us.
+verify_manifest() {
     ok=1
     for k in "$KEYS"/*.pem; do
         [ -f "$k" ] || continue
@@ -156,6 +176,47 @@ fetch_manifest() {
     BASE=$(jq -r '.base // empty' "$M" 2>/dev/null)
     [ -n "$BASE" ] || BASE=$url
     return 0
+}
+
+# Download the manifest and its signature, check the signature. Sets M, BASE and, on failure, FETCH_WHY. Returns 1 if
+# the server could not be used, 2 if the manifest is not signed by us.
+fetch_manifest() {
+    mkdir -p "$RUN"
+    chmod 0700 "$RUN"
+    url=$(conf_url)
+    name=$(conf_channel).json
+    rm -f "${RUN:?}/${name:?}" "${RUN:?}/${name:?}.sig"
+    fetch "$RUN/$name" "$url/$name" 30 || return 1
+    fetch "$RUN/$name.sig" "$url/$name.sig" 30 || return 1
+    verify_manifest
+}
+
+# The folder on the song drive that holds release files copied there by hand: <channel>.json, <channel>.json.sig and the
+# image the manifest names (top level of the drive, or one folder down). Nothing if there is no song drive: touching the
+# empty automount would make the system wait for a drive that is not there.
+offline_dir() {
+    if [ "$SONGS" = /media/songs ] && [ ! -e /dev/disk/by-label/YARGSONGS ]; then return 1; fi
+    n=$(conf_channel).json
+    for d in "$SONGS" "$SONGS"/*/; do
+        d=${d%/}
+        [ -f "$d/$n" ] && [ -f "$d/$n.sig" ] && { echo "$d"; return 0; }
+    done
+    return 1
+}
+
+# Like fetch_manifest, from a folder (OFFLINE_DIR). The same signature check: a file anyone can put on a drive is only
+# believed if we signed it.
+local_manifest() {
+    mkdir -p "$RUN"
+    chmod 0700 "$RUN"
+    url=
+    name=$(conf_channel).json
+    rm -f "${RUN:?}/${name:?}" "${RUN:?}/${name:?}.sig"
+    # (small files only: /run is memory, and anyone can put anything on a drive)
+    [ "$(fsize "$OFFLINE_DIR/$name")" -le 65536 ] && [ "$(fsize "$OFFLINE_DIR/$name.sig")" -le 1024 ] || return 1
+    cp "$OFFLINE_DIR/$name" "$RUN/$name" 2>/dev/null && cp "$OFFLINE_DIR/$name.sig" "$RUN/$name.sig" 2>/dev/null || return 1
+    [ -s "$RUN/$name" ] && [ -s "$RUN/$name.sig" ] || return 1
+    verify_manifest
 }
 
 # Fill LATEST and the image fields from the (verified) manifest, with every value checked.
@@ -176,11 +237,11 @@ cmd_check() {
     fetch_manifest
     rc=$?
     if [ $rc -ne 0 ]; then
-        write_status "checked_at=$(date +%s)" "check_error=$([ $rc = 2 ] && echo signature || echo offline)"
-        die "$([ $rc = 2 ] && echo 'the update information is not signed by us' || echo 'could not reach the update server (offline?)')"
+        write_status "checked_at=$(date +%s)" "check_error=$([ $rc = 2 ] && echo signature || echo offline)" "check_why=${FETCH_WHY:-}"
+        die "$([ $rc = 2 ] && echo 'the update information is not signed by us' || echo "could not reach the update server: $FETCH_WHY")"
     fi
     read_manifest || die "the update information is incomplete"
-    write_status "checked_at=$(date +%s)" "check_error=" "latest=$LATEST" "notes=$NOTES"
+    write_status "checked_at=$(date +%s)" "check_error=" "check_why=" "latest=$LATEST" "notes=$NOTES"
     log "running $cur, latest $LATEST"
     if is_rejected "$LATEST"; then
         write_status "available="
@@ -218,6 +279,17 @@ drop_entries_for() {
     sync
 }
 
+# What is on the song drive: "offline VERSION" (ready to install), "offline-old VERSION" (not newer than this system),
+# "offline-missing FILE" (its image file is not beside the manifest or is the wrong size), "offline-bad" (not signed by us).
+cmd_find() {
+    OFFLINE_DIR=$(offline_dir) || return 0
+    local_manifest
+    case $? in 0) ;; 2) echo "offline-bad"; return 0 ;; *) return 0 ;; esac
+    read_manifest || { echo "offline-bad"; return 0; }
+    [ "$(fsize "$OFFLINE_DIR/$IMG_FILE")" = "$IMG_SIZE" ] || { echo "offline-missing $IMG_FILE"; return 0; }
+    if is_rejected "$LATEST" || ! ver_gt "$LATEST" "$(current_version)"; then echo "offline-old $LATEST"; else echo "offline $LATEST"; fi
+}
+
 cmd_install() {
     cur=$(current_version)
     exec 9> "$RUN.lock"
@@ -231,9 +303,16 @@ cmd_install() {
 
     on_trial && die "this system has not been confirmed as good yet; try again after it has run for a while"
     [ -n "$(status_get staged)" ] && die "an update ($(status_get staged)) is already waiting for a restart"
-    fetch_manifest
-    rc=$?
-    [ $rc = 0 ] || die "$([ $rc = 2 ] && echo 'the update information is not signed by us' || echo 'could not reach the update server (offline?)')"
+    if [ -n "${OFFLINE:-}" ]; then
+        OFFLINE_DIR=$(offline_dir) || die "no update was found on the song drive"
+        local_manifest
+        rc=$?
+        [ $rc = 0 ] || die "$([ $rc = 2 ] && echo 'the update information on the drive is not signed by us' || echo 'the update files on the drive could not be read')"
+    else
+        fetch_manifest
+        rc=$?
+        [ $rc = 0 ] || die "$([ $rc = 2 ] && echo 'the update information is not signed by us' || echo "could not reach the update server: $FETCH_WHY")"
+    fi
     read_manifest || die "the update information is incomplete"
     is_rejected "$LATEST" && die "$LATEST failed to start here before; not installing it again"
     ver_gt "$LATEST" "$cur" || { write_status available=; log "up to date ($cur)"; return 0; }
@@ -246,32 +325,61 @@ cmd_install() {
     [ "$(blockdev --getsize64 "$OTHER_DEV")" -ge "$RAW_SIZE" ] || die "the second system partition is too small for $LATEST"
     ls "$ESP/loader" >/dev/null 2>&1 || die "cannot reach the boot partition"
 
-    # 1. Download (resumes where an earlier try stopped; if the server cannot resume, starts over).
+    # 1. Download (resumes where an earlier try stopped; if the server cannot resume, starts over), or copy from the drive.
     xzf=$STATE/$IMG_FILE
     if [ -f "$xzf" ] && [ "$(sha256sum < "$xzf" | cut -d' ' -f1)" = "$IMG_SHA" ]; then
         log "the download from an earlier try is complete"
     else
-        rm -f "$xzf"
-        [ "$(fsize "$xzf.part")" -gt "$IMG_SIZE" ] && rm -f "$xzf.part"
+        rm -f "${xzf:?}"
+        [ "$(fsize "$xzf.part")" -gt "$IMG_SIZE" ] && rm -f "${xzf:?}.part"
+        have=$(df -k "$STATE" 2>/dev/null | awk 'NR == 2 { print $4 }')
+        need=$(( (IMG_SIZE - $(fsize "$xzf.part")) / 1024 + 100000 ))
+        if valid_num "$have" && [ "$have" -lt "$need" ]; then
+            die "not enough free space on the data drive: the update needs $((need / 1024)) MB and $((have / 1024)) MB is free (delete some internal songs to make room)"
+        fi
         log "STEP downloading"
-        log "downloading $LATEST"
-        for attempt in 1 2; do
-            curl -fsSL -C - --max-time 7200 -o "$xzf.part" "$BASE/$IMG_FILE" &
+        if [ -n "${OFFLINE:-}" ]; then
+            [ "$(fsize "$OFFLINE_DIR/$IMG_FILE")" = "$IMG_SIZE" ] || die "the image $IMG_FILE is not on the drive beside the update information, or is incomplete (it should be $((IMG_SIZE / 1048576)) MB)"
+            log "copying $LATEST from the song drive"
+            rm -f "${xzf:?}.part"
+            cp "$OFFLINE_DIR/$IMG_FILE" "$xzf.part" &
             dlpid=$!
             while kill -0 "$dlpid" 2>/dev/null; do
-                got=$(fsize "$xzf.part")
-                log "PROGRESS $((got * 100 / IMG_SIZE))"
+                log "PROGRESS $(($(fsize "$xzf.part") * 100 / IMG_SIZE))"
                 sleep 1
             done
-            wait "$dlpid" && break
+            wait "$dlpid" || { dlpid=; rm -f "${xzf:?}.part"; die "could not copy the update from the song drive (was it unplugged?)"; }
             dlpid=
-            [ $attempt = 2 ] && die "download failed"
-            rm -f "$xzf.part"   # a server that cannot resume answers a resume with an error: once more from the start
-        done
-        dlpid=
-        [ "$(wc -c < "$xzf.part")" = "$IMG_SIZE" ] || { rm -f "$xzf.part"; die "the download has the wrong size"; }
+        else
+            log "downloading $LATEST"
+            tries=0
+            while :; do
+                tries=$((tries + 1))
+                # Resumes a partial file; gives up on a connection that moves less than 2 KB/s for 45 s (a stalled Wi-Fi).
+                curl -fsSL -C - --connect-timeout 20 --speed-limit 2000 --speed-time 45 --max-time 7200 \
+                    -o "$xzf.part" -w '%{http_code}' "$BASE/$IMG_FILE" > "$RUN/http" 2>/dev/null &
+                dlpid=$!
+                while kill -0 "$dlpid" 2>/dev/null; do
+                    log "PROGRESS $(($(fsize "$xzf.part") * 100 / IMG_SIZE))"
+                    sleep 1
+                done
+                wait "$dlpid"
+                rc=$?
+                dlpid=
+                [ $rc = 0 ] && break
+                http=$(cat "$RUN/http" 2>/dev/null)
+                why=$(curl_why $rc "$http")
+                got=$(fsize "$xzf.part")
+                log "the download stopped at $((got * 100 / IMG_SIZE))%: $why (try $tries of $DL_TRIES)"
+                # A server that cannot resume answers a resume with an error: then once more from the start.
+                case $rc in 33) rm -f "${xzf:?}.part" ;; 22) [ "$http" = 416 ] && rm -f "${xzf:?}.part" ;; esac
+                [ $tries -ge "$DL_TRIES" ] && die "the download failed at $((got * 100 / IMG_SIZE))% after $tries tries: $why"
+                sleep 3
+            done
+        fi
+        [ "$(wc -c < "$xzf.part")" = "$IMG_SIZE" ] || { rm -f "${xzf:?}.part"; die "the download has the wrong size"; }
         log "STEP checking"
-        [ "$(sha256sum < "$xzf.part" | cut -d' ' -f1)" = "$IMG_SHA" ] || { rm -f "$xzf.part"; die "the download is damaged (checksum); not installing"; }
+        [ "$(sha256sum < "$xzf.part" | cut -d' ' -f1)" = "$IMG_SHA" ] || { rm -f "${xzf:?}.part"; die "the download is damaged (checksum); not installing"; }
         mv "$xzf.part" "$xzf"
     fi
 
@@ -452,6 +560,8 @@ case ${1:-} in
     status) cmd_status ;;
     check) cmd_check ;;
     install | update) cmd_install ;;
+    install-offline) OFFLINE=1; cmd_install ;;
+    find) cmd_find ;;
     auto) cmd_auto ;;
     cancel) cmd_cancel ;;
     go-back) cmd_go_back ;;

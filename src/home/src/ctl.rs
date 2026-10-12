@@ -13,7 +13,7 @@ pub enum Request {
     Install(String),
     /// `sound CARD DEV`: write /data/asound.conf (root-owned: root's own audio tools read it).
     Sound(u32, u32),
-    /// `os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`: the system updater, always without arguments (the
+    /// `os-check`, `os-update`, `os-update-offline`, `os-find`, `os-cancel`, `os-goback`, `os-ack`: the system updater, always without arguments (the
     /// word picks the command; progress lines stream back, then "ok" or "error").
     Os(&'static str),
     /// `songs-mount /dev/NAME`: mount a portable drive read-only for importing its songs (yargos-songs checks the device).
@@ -43,6 +43,8 @@ pub fn parse(line: &str) -> Option<Request> {
         "os-cancel" => Some(Request::Os("cancel")),
         "os-goback" => Some(Request::Os("go-back")),
         "os-ack" => Some(Request::Os("ack")),
+        "os-find" => Some(Request::Os("find")),
+        "os-update-offline" => Some(Request::Os("install-offline")),
         "songs-umount" => Some(Request::SongsUmount),
         _ => {
             if let Some(dev) = line.strip_prefix("songs-mount ") {
@@ -143,6 +145,10 @@ mod tests {
         assert_eq!(parse("os-cancel"), Some(Request::Os("cancel")));
         assert_eq!(parse("os-goback"), Some(Request::Os("go-back")));
         assert_eq!(parse("os-ack"), Some(Request::Os("ack")));
+        assert_eq!(parse("os-find"), Some(Request::Os("find")));
+        assert_eq!(parse("os-update-offline"), Some(Request::Os("install-offline")));
+        assert_eq!(parse("os-update-offline /tmp/x"), None);
+        assert_eq!(parse("os-find; reboot"), None);
         assert_eq!(parse("os-update --url http://evil"), None);
         assert_eq!(parse("os-settle"), None);
         assert_eq!(parse("os-boot-ok"), None);
