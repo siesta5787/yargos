@@ -3,7 +3,7 @@
 # connected). Each top-level folder that has songs in it becomes its own source, so a drive organised into folders
 # (for sorting) shows up as separate sources in YARG. A flat drive, where the top-level folders are songs
 # themselves (or there are song files at the top), is one source: the whole drive.
-# A song is a folder with song.ini, notes.chart or notes.mid; a .sng file is a packed song.
+# A song is a folder with song.ini, notes.chart or notes.mid; a .sng file is a packed song; a Rock Band CON/LIVE file is one too.
 ROOT=${YARGOS_SONGS:-/media/songs}
 
 # Looking inside makes the automount mount the drive; if nothing is mounted, there is no drive.
@@ -13,10 +13,16 @@ if [ -z "${YARGOS_SONGS_TEST:-}" ]; then
     awk -v r="$ROOT" '$2 == r && $3 != "autofs" { found = 1 } END { exit !found }' "${YARGOS_MOUNTS:-/proc/mounts}" || exit 0
 fi
 
-is_song() { [ -e "$1/song.ini" ] || [ -e "$1/notes.chart" ] || [ -e "$1/notes.mid" ]; }
+is_song() { find "$1" -maxdepth 1 \( -iname song.ini -o -iname notes.chart -o -iname notes.mid \) -print 2>/dev/null | head -n 1 | grep -q .; }
 
-has_songs() { # has_songs DIR: any song or .sng file within six levels (stops at the first)
-    find "$1" -maxdepth 6 \( -name song.ini -o -name notes.chart -o -name notes.mid -o -name '*.sng' \) -print 2>/dev/null | head -n 1 | grep -q .
+has_songs() { # has_songs DIR: any song within eight levels (stops at the first). Names are matched without regard to case
+    # (Windows-made drives have Song.ini and NOTES.MID); Rock Band files (CON/LIVE) have no marker file, they are told by
+    # the first four bytes.
+    find "$1" -maxdepth 8 \( -iname song.ini -o -iname notes.chart -o -iname notes.mid -o -iname '*.sng' \) -print 2>/dev/null | head -n 1 | grep -q . && return 0
+    find "$1" -maxdepth 8 -type f \( -iname '*.con' -o -iname '*.live' -o -iname '*.rb3con' -o ! -name '*.*' \) -size +64k -print 2>/dev/null | head -n 40 |
+        while IFS= read -r f; do
+            case $(dd if="$f" bs=4 count=1 2>/dev/null) in 'CON ' | LIVE | PIRS) echo "$f"; break ;; esac
+        done | grep -q .
 }
 
 skip() { # Windows and filesystem housekeeping folders, hidden folders
