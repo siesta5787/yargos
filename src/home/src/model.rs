@@ -106,7 +106,12 @@ pub struct StorageInfo {
     pub reserve_kib: u64,
     /// Imported drives (folders directly in the library).
     pub folders: usize,
+    /// Room on the drive after the data partition that is not in use (the partition did not grow to fill it).
+    pub slack_kib: u64,
 }
+
+/// Unused room worth offering to grow into.
+pub const SLACK_WORTH_KIB: u64 = 512 * 1024;
 
 /// Where the song browser is: names below /data/songs, and what is in that folder.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -220,6 +225,8 @@ pub enum Cmd {
     ImportRun(ImportPlan),
     /// Stop the looking or the copying that is running.
     ImportCancel,
+    /// Make the data partition fill the drive (it should have at boot).
+    GrowData,
     /// List this folder of the internal songs (names below /data/songs).
     SongsBrowse(Vec<String>),
     /// Delete this song or folder of the internal songs; no names = everything.
@@ -542,7 +549,7 @@ impl Model {
             Screen::Updates => 4,
             Screen::Songs => 2 + usize::from(self.songs.mounted),
             Screen::System => 6,
-            Screen::Storage => 2,
+            Screen::Storage => 2 + usize::from(self.storage.slack_kib >= SLACK_WORTH_KIB),
             Screen::ImportPick => 1 + self.drives.len(),
             Screen::Manage => 1 + self.browse.entries.len(),
             Screen::OsUpdate => 6,
@@ -927,6 +934,10 @@ impl Model {
             Screen::System if self.sel == 4 => self.enter(Screen::OsUpdate),
             Screen::System if self.sel == 5 => self.enter(Screen::Storage),
             Screen::Storage if self.sel == 0 => self.enter(Screen::ImportPick),
+            Screen::Storage if self.sel == 2 => {
+                self.busy = Some("Using the rest of the drive\u{2026}".into());
+                vec![Cmd::GrowData]
+            }
             Screen::Storage => {
                 self.browse = Browse::default();
                 self.enter(Screen::Manage)
@@ -1815,6 +1826,24 @@ mod tests {
         assert_eq!(m.screen, Screen::Storage);
         assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
         assert_eq!((m.screen, m.sel), (Screen::System, 5));
+    }
+
+    #[test]
+    fn unused_room_on_the_drive_is_offered_and_growing_runs_once_asked() {
+        let mut m = Model::new();
+        m.screen = Screen::Storage;
+        assert_eq!(m.row_count(), 2);
+        m.apply(Res::Storage(StorageInfo { slack_kib: 233_000_000, ..Default::default() }));
+        assert_eq!(m.row_count(), 3);
+        m.sel = 2;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::GrowData]);
+        assert!(m.busy.is_some());
+        m.apply(Res::Done("The rest of the drive is now in use".into()));
+        m.apply(Res::Storage(StorageInfo::default()));
+        assert_eq!(m.row_count(), 2, "the row goes away once the room is used");
+        // A little leftover (a few MB) is not worth a row.
+        m.apply(Res::Storage(StorageInfo { slack_kib: 4096, ..Default::default() }));
+        assert_eq!(m.row_count(), 2);
     }
 
     #[test]

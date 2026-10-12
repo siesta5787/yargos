@@ -335,7 +335,7 @@ cmd_install() {
         have=$(df -k "$STATE" 2>/dev/null | awk 'NR == 2 { print $4 }')
         need=$(( (IMG_SIZE - $(fsize "$xzf.part")) / 1024 + 100000 ))
         if valid_num "$have" && [ "$have" -lt "$need" ]; then
-            die "not enough free space on the data drive: the update needs $((need / 1024)) MB and $((have / 1024)) MB is free (delete some internal songs to make room)"
+            die "not enough free space on the data drive: the update needs $((need / 1024)) MB and $((have / 1024)) MB is free (SYSTEM > Storage can use the rest of the drive, or delete some internal songs)"
         fi
         log "STEP downloading"
         if [ -n "${OFFLINE:-}" ]; then

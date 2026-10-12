@@ -219,6 +219,13 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Storage(sys::storage_info()));
             }),
             Cmd::ImportCancel => bg(tx, |_| sys::import_cancel()),
+            Cmd::GrowData => bg(tx, |tx| {
+                match sys::grow_data() {
+                    Ok(m) => res(tx, Res::Done(m)),
+                    Err(e) => res(tx, Res::Alert(e)),
+                }
+                res(tx, Res::Storage(sys::storage_info()));
+            }),
             Cmd::SongsDelete(path) => bg(tx, move |tx| {
                 done(tx, sys::songs_delete(&path));
                 // Show the folder the deleted thing was in (or the nearest one that is left).
@@ -288,6 +295,17 @@ pub fn run() -> i32 {
     let fps_debug = std::env::var_os("YARGOS_DEBUG_FPS").is_some();
     let (mut frames, mut fps_since) = (0u32, Instant::now());
     let mut last_iter = Instant::now();
+
+    // The data partition should have grown to fill the drive at boot. If room is still unused (that step failed, or the
+    // drive was not ready then), try again now, once, while nothing else is running.
+    bg(&tx, |tx| {
+        if sys::data_slack_kib() >= SLACK_WORTH_KIB {
+            eprintln!("yargos-home: {} MB of the drive is unused after /data; asking for it to be used", sys::data_slack_kib() / 1024);
+            if let Ok(m) = sys::grow_data() {
+                res(tx, Res::Done(m));
+            }
+        }
+    });
 
     // Boot to the dashboard: YARG starts when PLAY YARG is chosen. The cursor only shows once a mouse moves.
     active.store(true, Ordering::Relaxed);

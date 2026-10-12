@@ -939,10 +939,50 @@ fn data_space() -> (u64, u64) {
     run("df", &["-k", DATA]).ok().and_then(|o| parse_df(&o)).unwrap_or((0, 0))
 }
 
+/// The data partition's PARTUUID from the kernel command line (`systemd.mount-extra=PARTUUID=<id>:/data:...`).
+pub fn parse_data_partuuid(cmdline: &str) -> Option<String> {
+    cmdline.split_whitespace().find_map(|w| {
+        let rest = w.strip_prefix("systemd.mount-extra=PARTUUID=")?;
+        let (id, tail) = rest.split_once(':')?;
+        tail.starts_with("/data:").then(|| id.to_string())
+    })
+}
+
+/// Sectors left unused after a partition: the disk's size minus where the partition ends.
+pub fn slack_sectors(disk: u64, part_start: u64, part_size: u64) -> u64 {
+    disk.saturating_sub(part_start + part_size)
+}
+
+/// KiB of the drive after the data partition that nothing uses (0 when the partition fills it, or it cannot be told).
+pub fn data_slack_kib() -> u64 {
+    let slack = || -> Option<u64> {
+        let id = parse_data_partuuid(&std::fs::read_to_string("/proc/cmdline").ok()?)?;
+        let dev = std::fs::canonicalize(format!("/dev/disk/by-partuuid/{id}")).ok()?;
+        let name = dev.file_name()?.to_str()?.to_string();
+        let num = |p: String| std::fs::read_to_string(p).ok()?.trim().parse::<u64>().ok();
+        let disk = std::fs::canonicalize(format!("/sys/class/block/{name}/..")).ok()?.file_name()?.to_str()?.to_string();
+        Some(slack_sectors(num(format!("/sys/class/block/{disk}/size"))?, num(format!("/sys/class/block/{name}/start"))?, num(format!("/sys/class/block/{name}/size"))?) / 2)
+    };
+    slack().unwrap_or(0)
+}
+
+/// Ask the system to make the data partition fill its drive (what the boot step does; see growdata.sh).
+pub fn grow_data() -> Result<String, String> {
+    ctl_request_for("grow-data", 120).map_err(|e| format!("Could not use the rest of the drive: {}", e.trim_start_matches("error:").trim()))?;
+    Ok("The rest of the drive is now in use".into())
+}
+
 pub fn storage_info() -> StorageInfo {
     let (total, free) = data_space();
     let used = run("du", &["-sk", songcopy::ROOT]).ok().and_then(|o| o.split_whitespace().next().and_then(|n| n.parse().ok())).unwrap_or(0);
-    StorageInfo { used_kib: used, free_kib: free, total_kib: total, reserve_kib: reserve_kib(total), folders: songcopy::list(std::path::Path::new(songcopy::ROOT)).len() }
+    StorageInfo {
+        used_kib: used,
+        free_kib: free,
+        total_kib: total,
+        reserve_kib: reserve_kib(total),
+        folders: songcopy::list(std::path::Path::new(songcopy::ROOT)).len(),
+        slack_kib: data_slack_kib(),
+    }
 }
 
 fn mount_drive(dev: &str) -> Result<(), String> {
@@ -1602,6 +1642,18 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!((d[0].dev.as_str(), d[0].label.as_str(), d[0].fs.as_str(), d[0].bytes), ("/dev/sda1", "My Songs", "EXFAT", 1_000_200_000_000));
         assert_eq!((d[1].fs.as_str(), d[1].name()), ("FAT", "USB drive".to_string()));
         assert_eq!(d[2].uuid, "");
+    }
+
+    #[test]
+    fn unused_room_after_the_data_partition_is_found() {
+        let cmd = "root=PARTUUID=aaa systemd.mount-extra=PARTUUID=6d5a1c52-0002:/data:ext4:rw,noatime quiet";
+        assert_eq!(parse_data_partuuid(cmd).as_deref(), Some("6d5a1c52-0002"));
+        assert_eq!(parse_data_partuuid("root=/dev/sda2 systemd.mount-extra=PARTUUID=x:/other:ext4"), None);
+        assert_eq!(parse_data_partuuid("quiet"), None);
+        // A 256 GB stick (500,118,192 sectors) with the image's 700 MB data partition at the end of a 5 GiB layout.
+        assert_eq!(slack_sectors(500_118_192, 10_000_000, 1_433_600) / 2 / 1024 / 1024, 233);
+        assert_eq!(slack_sectors(11_433_600, 10_000_000, 1_433_600), 0);
+        assert_eq!(slack_sectors(5, 10, 10), 0);
     }
 
     #[test]

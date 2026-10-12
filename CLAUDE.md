@@ -160,6 +160,14 @@ updater). `asound.conf` is root-owned because `alsactl` (root) parses it and an 
 Sound screen writes it through the helper (`sound CARD DEV`). Anything new that root reads from /data must be root-owned.
 Test: as root plant links (`ln -s /etc /data/apps/yarg`), run `/usr/lib/yargos/firstboot.sh`, check /etc is untouched.
 
+## The data partition must fill the drive
+
+A flashed stick has a 700 MB data partition that `growdata.sh` grows at boot. A real stick once stayed at 700 MB (YARG filled it,
+updates and imports failed with "No space left on device"; the cause is unknown, QEMU cannot reproduce it). So the dashboard
+retries (`sys::data_slack_kib`, helper word `grow-data`) and the updater checks free space. Never assume /data is big: check
+`df` before writing something large. `BOOT_USB=1 tools/qemu-run.sh` boots the image as a USB stick; add
+`CMDLINE="systemd.mask=yargos-growdata.service ..."` to test the dashboard's retry.
+
 ## Internal songs (SYSTEM > Storage)
 
 Read docs/DESIGN.md ("The internal song library"). Rules: songs live in `/data/songs/<drive name>/` on the data partition (no

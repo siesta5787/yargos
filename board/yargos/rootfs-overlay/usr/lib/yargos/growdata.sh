@@ -1,8 +1,13 @@
 #!/bin/sh
 # Grow the data partition (the last one on the drive) to fill the drive, then its filesystem.
 # The image ships with a small data partition so it flashes quickly; this makes it use the whole stick/SSD.
-# Safe to run on every boot: it does nothing when there is no free space after the partition.
+# Safe to run on every boot, and again at any time (the dashboard runs it when it finds unused room after the data
+# partition: `grow-data` through the helper): it does nothing when there is no free space after the partition.
 set -eu
+
+# One at a time (the boot step and the dashboard may meet).
+exec 9> /run/yargos-growdata.lock
+flock -n 9 || exit 0
 
 # The data partition as the boot entry names it (systemd.mount-extra=PARTUUID=<guid>:/data:...), by GUID.
 SPEC=$(tr ' ' '\n' < /proc/cmdline | sed -n 's|^systemd.mount-extra=\(PARTUUID=[^:]*\):/data:.*|\1|p' | head -n 1)
@@ -30,12 +35,19 @@ DISK_SECTORS=$(cat "/sys/class/block/$(basename "$DISK")/size")
 PART_END=$(( $(cat "/sys/class/block/$NAME/start") + $(cat "/sys/class/block/$NAME/size") ))
 FREE=$(( DISK_SECTORS - PART_END ))
 if [ "$FREE" -le 32768 ]; then   # less than 16 MiB after the partition: nothing worth doing
+    echo "yargos-growdata: $PART already fills $DISK ($FREE sectors free after it)"
     exit 0
 fi
 
 echo "yargos-growdata: growing partition $NUM of $DISK by $((FREE / 2048)) MiB"
 # sfdisk also moves the backup GPT header to the real end of the drive.
-echo ", +" | sfdisk --no-reread --no-tell-kernel -N "$NUM" "$DISK" >/dev/null
+# (sfdisk's complaints stay visible in the journal; a stick can answer "busy" for a moment right after it appears)
+n=0
+until echo ", +" | sfdisk --no-reread --no-tell-kernel -N "$NUM" "$DISK" >/dev/null; do
+    n=$((n + 1))
+    [ $n -ge 3 ] && { echo "yargos-growdata: could not change the partition table of $DISK" >&2; exit 1; }
+    sleep 2
+done
 partx -u "$DISK"          # tell the kernel the partition got bigger (works while it is mounted)
 resize2fs "$PART"
 echo "yargos-growdata: done"

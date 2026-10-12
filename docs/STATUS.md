@@ -23,14 +23,20 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   the newest dashboard screens, a Rii 2.4 GHz keyboard receiver (its keys did nothing; cause unknown), drums in every lane,
   the guitar's touch bar, pitch detection from a real microphone, eMMC / SD readers / Intel VMD disks, Secure Boot machines
   (not supported: turn it off), the mini PC.
+- A laptop disk installed with the pre-A/B installer has no second system slot: system updates cannot work there until it is
+  reinstalled from a current stick (SYSTEM > Install on this computer's disk). Running from the USB stick needs no install.
 - SYSTEM > Storage (import a portable drive to the internal songs, browse, delete): unit-tested, and `tools/test-songs.sh`
   drives the real dashboard in QEMU with three fake ext4 USB drives (import, same-name drives, a drive already mounted as
   the song drive, YARG's folder list, deleting a folder, a song and everything: all pass). Not tried on real hardware: real
   exFAT/NTFS drives, an SD card, a big library (copy speed, how long reading a 1 TB drive takes before the question),
   cutting the power mid-copy, and the guitar as the only controller.
-- System update on real hardware: the first try, 2026.10.13 -> 2026.10.14 on the laptop, failed with "Download failed" (cause
-  not known: the same download command works from a PC against the live release). The updater now retries, resumes, says why
-  it failed, and can install from the song drive; all of that is only tested in QEMU/on a PC.
+- System update on real hardware: the first try, 2026.10.13 -> 2026.10.14 from the USB stick, failed with "Download failed".
+  The real cause (seen on the console): "No space left on device": the stick's data partition was still the image's 700 MB (full
+  with YARG), so the boot step that grows it to fill the stick had not worked on that stick. Why it did not is NOT known: it
+  grows fine in QEMU, on a virtual disk, an NVMe disk and a USB-attached disk. Now: the dashboard notices unused room after the
+  data partition, asks the system to use it (once at start, and SYSTEM > Storage > Use the rest of this drive), and the
+  updater checks free space first and says so. The updater also retries, resumes, says why it failed, and can install from the
+  song drive. Tested in QEMU (including a boot with the boot-time grow switched off); not yet on the real stick.
 - YARG's "Failed to initialize audio device" on the laptop: the suspected cause (ALSA's default is card 0 device 0, an
   HDMI-only card on AMD, or the saved card number moved when USB devices came and went) is a guess. Fix written (the
   output is saved by card id, and one is chosen before YARG starts if the saved one is gone) and unit-tested only.

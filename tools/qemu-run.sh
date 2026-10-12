@@ -21,6 +21,7 @@
 #                                  attach a blank (created on first use, NVME_SIZE=12G) NVMe disk, like a laptop's internal SSD
 #   BOOT_NVME=1 IMG=/path/nvme.img WORK=<other dir> tools/qemu-run.sh fresh
 #                                  boot from that image attached as NVMe (tests an installed disk with no USB stick around)
+#   BOOT_USB=1 tools/qemu-run.sh   boot from the image attached as a USB stick (a real stick shows up as sdX, not vda)
 #   MAX_OUTPUTS=2 tools/qemu-run.sh   a second virtual screen (with HEADLESS=1) to try the mirroring
 #   USB_AUDIO=1 tools/qemu-run.sh   a USB sound card (48 kHz only, like many real ones) whose output is recorded to
 #                                  $WORK/usb-audio.wav, to look at what the system does to the sound
@@ -75,6 +76,7 @@ if [ -n "${NVME_IMG:-}" ]; then
     NVMEARGS=(-drive "file=$NVME_IMG,format=raw,if=none,id=nvm0" -device nvme,serial=yargos-nvme0,drive=nvm0)
 fi
 BOOTDISK=(-drive "file=$WORK/overlay.qcow2,format=qcow2,if=virtio${DISK_OPTS:+,$DISK_OPTS}")
+[ -n "${BOOT_USB:-}" ] && BOOTDISK=(-drive "file=$WORK/overlay.qcow2,format=qcow2,if=none,id=bootusb${DISK_OPTS:+,$DISK_OPTS}" -device usb-storage,drive=bootusb,bootindex=1)
 [ -n "${BOOT_NVME:-}" ] && BOOTDISK=(-drive "file=$WORK/overlay.qcow2,format=qcow2,if=none,id=bootnvm${DISK_OPTS:+,$DISK_OPTS}" -device nvme,serial=yargos-boot,drive=bootnvm,bootindex=0)
 
 DISK2ARGS=()
@@ -92,8 +94,9 @@ exec qemu-system-x86_64 \
     -machine q35,accel=$ACCEL -cpu max -smp 4 -m 4G \
     -drive if=pflash,format=raw,readonly=on,file="$CODE" \
     -drive if=pflash,format=raw,file="$WORK/OVMF_VARS.fd" \
+    -device qemu-xhci \
     "${BOOTDISK[@]}" \
-    -device qemu-xhci -device usb-kbd -device usb-mouse \
+    -device usb-kbd -device usb-mouse \
     -audiodev none,id=hda -device intel-hda -device hda-duplex,audiodev=hda \
     "${USBAUDIOARGS[@]}" \
     -nic user,model=virtio-net-pci \

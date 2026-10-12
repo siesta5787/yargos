@@ -116,10 +116,16 @@ fn rows(m: &Model) -> Vec<Row> {
             Row { tag: m.os.staged.as_ref().map(|_| ("READY", GREEN)).or(m.os.available.as_ref().map(|_| ("NEW", AMBER))), ..row("System update") },
             row("Storage"),
         ],
-        Screen::Storage => vec![
-            row("Import from a portable drive"),
-            Row { value: if m.storage.used_kib > 0 { human_kib(m.storage.used_kib) } else { String::new() }, ..row("Manage internal songs") },
-        ],
+        Screen::Storage => {
+            let mut v = vec![
+                row("Import from a portable drive"),
+                Row { value: if m.storage.used_kib > 0 { human_kib(m.storage.used_kib) } else { String::new() }, ..row("Manage internal songs") },
+            ];
+            if m.storage.slack_kib >= crate::model::SLACK_WORTH_KIB {
+                v.push(Row { value: human_kib(m.storage.slack_kib), tag: Some(("NOT IN USE", AMBER)), ..row("Use the rest of this drive") });
+            }
+            v
+        }
         Screen::ImportPick => {
             let mut v = vec![row("Look for drives again")];
             for d in &m.drives {
@@ -274,6 +280,11 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
                     human_kib(s.total_kib)
                 ));
                 v.push(format!("{} is always kept free for YARG and for system updates.", human_kib(s.reserve_kib)));
+            }
+            if s.slack_kib >= crate::model::SLACK_WORTH_KIB {
+                v.push(format!("{} of this drive is not in use: the data area did not grow to fill it. Choose Use the rest of this drive.", human_kib(s.slack_kib)));
+            } else if s.total_kib > 0 && s.free_kib < 1_000_000 {
+                v.push("The data area is nearly full: system updates and imports need room. Delete internal songs, or use a bigger drive.".into());
             }
             v.push("Import copies a portable drive as it is. Nothing on that drive is changed.".into());
             ("INTERNAL DRIVE", v)

@@ -16,6 +16,10 @@ docs/STATUS.md says what has and has not been verified.
 - The song drive: label it `YARGSONGS` (ext4, exFAT, NTFS or FAT). It mounts read-only at
   `/media/songs` with `nofail`, so a missing drive never blocks boot. Point YARG's song folder at
   `/media/songs` once; the path never changes after that.
+- The data partition of a flashed stick starts at 700 MB and `growdata.sh` grows it (partition and file system, online) to
+  fill the stick at boot. It is safe to repeat and takes a lock, so the dashboard also runs it (helper word `grow-data`) when
+  `/sys` shows room left after the data partition (once at start, and from SYSTEM > Storage), in case the boot step missed it.
+  The installer gives an installed disk a data partition that fills it from the start.
 - The internal song library: `/data/songs/<name>/...` (SYSTEM > Storage). The data partition already fills the whole disk
   (the installer gives it everything after the two system slots, `growdata` does the same on a stick), so there is nothing to
   format: songs are a folder on it, owned by the player (a first-level exception next to `apps/yarg` and `yarg`, made by
@@ -74,7 +78,7 @@ per folder on it) and System (restart, shut down, install to this computer's dis
 storage: import songs to the internal drive, browse them and delete a song, a folder or everything with LEFT). Instruments navigate like YARG's menus: strum or cymbals move up/down, green
 fret/pad = OK, red = Back, the two outer frets/pads = left/right. Everything that needs root goes through a helper
 (`yargos-ctl.socket`, `yargos-home ctl`) that accepts only a few fixed requests: `poweroff`, `reboot`, `install /dev/<disk>`,
-`sound <card> <device>`, `songs-mount /dev/<partition>`, `songs-umount` and the system update words (`os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`).
+`sound <card> <device>`, `songs-mount /dev/<partition>`, `songs-umount`, `grow-data` and the system update words (`os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`).
 
 `yargos-home screenshot <screen> out.png` renders any screen with demo data (home, wifi, password, sound,
 bluetooth, updates, songs, system, devices, yarg, os-update, storage, import, import-confirm, manage, manage-songs,
