@@ -418,6 +418,22 @@ fn btctl(args: &[&str], secs: u64) -> Result<String, String> {
     run_timeout("bluetoothctl", args, secs)
 }
 
+/// Devices with the same name (two Wii guitars are both "Nintendo RVL-CNT-01") get " (2)", " (3)"... after the first. The
+/// numbers follow the addresses in order, not the list's order, so a device keeps its number while the list re-sorts
+/// itself (connected ones first) and while the same devices are present.
+pub fn number_duplicates(devs: &mut [BtDevice]) {
+    let mut order: Vec<usize> = (0..devs.len()).collect();
+    order.sort_by_key(|&i| devs[i].mac.to_uppercase());
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for i in order {
+        let n = seen.entry(devs[i].name.clone()).or_insert(0);
+        *n += 1;
+        if *n > 1 {
+            devs[i].name = format!("{} ({})", devs[i].name, n);
+        }
+    }
+}
+
 pub fn bt_list() -> Res {
     if !bt_present() {
         return Res::Bt { present: false, devs: vec![] };
@@ -433,6 +449,7 @@ pub fn bt_list() -> Res {
         })
         .filter(|d| d.paired || !is_mac_like(&d.name))
         .collect();
+    number_duplicates(&mut out);
     out.sort_by(|a, b| (b.connected, b.paired).cmp(&(a.connected, a.paired)).then(a.name.cmp(&b.name)));
     Res::Bt { present: true, devs: out }
 }
@@ -1332,6 +1349,26 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!(parse_asound(&conf, &[]), None);
         assert_eq!(parse_asound(&asound_text(None, 0, 3), &cards), Some((0, 3)));
         assert_eq!(parse_asound("# nothing here", &cards), None);
+    }
+
+    #[test]
+    fn same_named_devices_are_numbered_by_address() {
+        let d = |mac: &str, name: &str| BtDevice { mac: mac.into(), name: name.into(), paired: true, connected: false, ready: true };
+        let mut a = vec![d("00:22:D7:00:00:09", "Nintendo RVL-CNT-01"), d("11:11:11:11:11:11", "Speaker"), d("00:1E:35:00:00:01", "Nintendo RVL-CNT-01"), d("00:22:D7:00:00:02", "Nintendo RVL-CNT-01")];
+        number_duplicates(&mut a);
+        assert_eq!(a[2].name, "Nintendo RVL-CNT-01");
+        assert_eq!(a[3].name, "Nintendo RVL-CNT-01 (2)");
+        assert_eq!(a[0].name, "Nintendo RVL-CNT-01 (3)");
+        assert_eq!(a[1].name, "Speaker");
+        assert!(a[0].is_wiimote());
+        // The same devices in another order get the same numbers.
+        let mut b = vec![a[3].clone(), a[0].clone(), a[2].clone()];
+        for x in &mut b {
+            x.name = "Nintendo RVL-CNT-01".into();
+        }
+        number_duplicates(&mut b);
+        assert_eq!(b[0].name, "Nintendo RVL-CNT-01 (2)");
+        assert_eq!(b[1].name, "Nintendo RVL-CNT-01 (3)");
     }
 
     #[test]
