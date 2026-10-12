@@ -3,7 +3,7 @@
 #
 # Rule: root never follows a path the player can change. /data and the folders directly under it (apps, home,
 # bluetooth, iwd, alsa) belong to root, so the player cannot swap them for links. Only the leaf folders the
-# player's programs write to belong to the player (apps/yarg, yarg, home/player), and root only ever chowns those
+# player's programs write to belong to the player (apps/yarg, yarg, songs, home/player), and root only ever chowns those
 # leaves themselves, never what is inside them (a link planted in there would hand over whatever it points at).
 # Installing the seeded YARG into apps/yarg is the player's job (yargos-seed.service), not root's.
 #
@@ -45,6 +45,7 @@ for d in apps home bluetooth iwd alsa; do dir "$DATA/$d" root:root 0755; done
 chmod 0700 "$DATA/bluetooth" "$DATA/iwd"
 dir "$DATA/apps/yarg" player:player 0755
 dir "$DATA/yarg" player:player 0755
+dir "$DATA/songs" player:player 0755   # the internal song library (SYSTEM > Storage), written by the player
 dir "$DATA/home/player" player:player 0755
 
 if [ ! -f "$DATA/yargos.conf" ] || [ -L "$DATA/yargos.conf" ]; then

@@ -1,19 +1,12 @@
 #!/bin/sh
 # song-sources: print the folders YARG should scan on the song drive, one per line (nothing if no drive is
-# connected). Each top-level folder that has songs in it becomes its own source, so a drive organised into folders
+# connected), then those of the internal song library (/data/songs, SYSTEM > Storage), one imported drive at a time.
+# Each top-level folder that has songs in it becomes its own source, so a drive organised into folders
 # (for sorting) shows up as separate sources in YARG. A flat drive, where the top-level folders are songs
 # themselves (or there are song files at the top), is one source: the whole drive.
 # A song is a folder with song.ini, notes.chart or notes.mid; a .sng file is a packed song; a Rock Band CON/LIVE file is one too.
 ROOT=${YARGOS_SONGS:-/media/songs}
-
-# Looking inside makes the automount mount the drive; if nothing is mounted, there is no drive.
-ls "$ROOT" >/dev/null 2>&1
-# The automount leaves an "autofs" entry behind even once the drive is mounted over it, so look for a real one.
-if [ -z "${YARGOS_SONGS_TEST:-}" ]; then
-    awk -v r="$ROOT" '$2 == r && $3 != "autofs" { found = 1 } END { exit !found }' "${YARGOS_MOUNTS:-/proc/mounts}" || exit 0
-fi
-
-is_song() { find "$1" -maxdepth 1 \( -iname song.ini -o -iname notes.chart -o -iname notes.mid \) -print 2>/dev/null | head -n 1 | grep -q .; }
+INTERNAL=${YARGOS_INTERNAL:-/data/songs}
 
 has_songs() { # has_songs DIR: any song within eight levels (stops at the first). Names are matched without regard to case
     # (Windows-made drives have Song.ini and NOTES.MID); Rock Band files (CON/LIVE) have no marker file, they are told by
@@ -25,33 +18,51 @@ has_songs() { # has_songs DIR: any song within eight levels (stops at the first)
         done | grep -q .
 }
 
+is_song() { find "$1" -maxdepth 1 \( -iname song.ini -o -iname notes.chart -o -iname notes.mid \) -print 2>/dev/null | head -n 1 | grep -q .; }
+
 skip() { # Windows and filesystem housekeeping folders, hidden folders
     case $1 in .* | '$'* | 'System Volume Information' | 'lost+found' | RECYCLER | 'found.'*) return 0 ;; esac
     return 1
 }
 
-flat=no
-for d in "$ROOT"/*/; do
-    [ -d "$d" ] || continue
-    skip "$(basename "$d")" && continue
-    if is_song "${d%/}"; then flat=yes; break; fi
-done
-for f in "$ROOT"/*.sng; do [ -e "$f" ] && flat=yes && break; done
-if [ "$flat" = yes ]; then
-    echo "$ROOT"
-    exit 0
+scan() { # scan DIR: the sources inside one drive (or one imported drive's folder)
+    root=$1
+    flat=no
+    for d in "$root"/*/; do
+        [ -d "$d" ] || continue
+        skip "$(basename "$d")" && continue
+        if is_song "${d%/}"; then flat=yes; break; fi
+    done
+    find "$root" -maxdepth 1 -iname '*.sng' 2>/dev/null | head -n 1 | grep -q . && flat=yes
+    if [ "$flat" = yes ]; then
+        echo "$root"
+        return
+    fi
+    found=no
+    for d in "$root"/*/; do
+        [ -d "$d" ] || continue
+        name=$(basename "$d")
+        skip "$name" && continue
+        if has_songs "${d%/}"; then
+            echo "$root/$name"
+            found=yes
+        fi
+    done
+    # Songs nowhere we could see (or deeper than eight levels): scan the whole drive rather than nothing.
+    [ "$found" = yes ] || echo "$root"
+}
+
+# The song drive. Looking inside makes the automount mount it; if nothing is mounted, there is no drive.
+ls "$ROOT" >/dev/null 2>&1
+# The automount leaves an "autofs" entry behind even once the drive is mounted over it, so look for a real one.
+if [ -n "${YARGOS_SONGS_TEST:-}" ] || awk -v r="$ROOT" '$2 == r && $3 != "autofs" { found = 1 } END { exit !found }' "${YARGOS_MOUNTS:-/proc/mounts}"; then
+    scan "$ROOT"
 fi
 
-found=no
-for d in "$ROOT"/*/; do
+# The internal library: every folder in it is an imported drive, scanned like a drive of its own.
+for d in "$INTERNAL"/*/; do
     [ -d "$d" ] || continue
-    name=$(basename "$d")
-    skip "$name" && continue
-    if has_songs "${d%/}"; then
-        echo "$ROOT/$name"
-        found=yes
-    fi
+    skip "$(basename "$d")" && continue
+    scan "${d%/}"
 done
-# Songs nowhere we could see (or deeper than six levels): scan the whole drive rather than nothing.
-[ "$found" = yes ] || echo "$ROOT"
 exit 0

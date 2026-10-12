@@ -54,7 +54,77 @@ pub fn model(name: &str) -> Model {
         Disk { path: "/dev/sdb".into(), bytes: 1_000_204_886_016, model: "Samsung Portable SSD".into(), removable: true },
     ];
     m.tick = 3;
+    m.storage = StorageInfo { used_kib: 46_000_000, free_kib: 180_000_000, total_kib: 235_000_000, reserve_kib: 4_000_000, folders: 2 };
+    m.drives = vec![
+        ImportDrive { dev: "/dev/sdb1".into(), label: "YARGSONGS".into(), fs: "EXFAT".into(), bytes: 931_000_000_000, uuid: "1234-ABCD".into() },
+        ImportDrive { dev: "/dev/sdc1".into(), label: String::new(), fs: "NTFS".into(), bytes: 64_000_000_000, uuid: "ZZ".into() },
+    ];
+    let browse_top = vec![
+        SongEntry { name: "YARGSONGS".into(), kind: SongKind::Folder },
+        SongEntry { name: "Rock Band DLC".into(), kind: SongKind::Folder },
+    ];
+    let plan = ImportPlan {
+        drive: m.drives[0].clone(),
+        dest: "YARGSONGS".into(),
+        files: 18_400,
+        bytes: 46_000_000_000,
+        todo_files: 18_400,
+        todo_bytes: 46_000_000_000,
+        unreadable: 0,
+        free_kib: 180_000_000,
+        reserve_kib: 4_000_000,
+    };
     match name {
+        "storage" => { m.screen = Screen::Storage; m.sel = 1; }
+        "import" => { m.screen = Screen::ImportPick; m.sel = 1; }
+        "import-none" => { m.screen = Screen::ImportPick; m.drives.clear(); }
+        "import-confirm" => {
+            m.screen = Screen::ImportPick;
+            m.sel = 1;
+            m.apply(Res::ImportPlan(Ok(plan)));
+        }
+        "import-busy" => {
+            m.screen = Screen::ImportPick;
+            m.busy = Some("Copying YARGSONGS\u{2026} 37%  (17 GB of 46 GB)".into());
+            m.cancel = Some(Cmd::ImportCancel);
+        }
+        "import-full" => {
+            m.screen = Screen::ImportPick;
+            let mut p = plan;
+            p.free_kib = 30_000_000;
+            m.apply(Res::ImportPlan(Ok(p)));
+        }
+        "manage" => {
+            m.screen = Screen::Manage;
+            m.sel = 1;
+            m.browse = Browse { path: vec![], entries: browse_top };
+        }
+        "manage-empty" => { m.screen = Screen::Manage; }
+        "manage-songs" => {
+            m.screen = Screen::Manage;
+            m.sel = 2;
+            m.browse = Browse {
+                path: vec!["YARGSONGS".into(), "Rock".into()],
+                entries: vec![
+                    SongEntry { name: "AC-DC - Back in Black".into(), kind: SongKind::Song },
+                    SongEntry { name: "Aerosmith - Walk This Way".into(), kind: SongKind::Song },
+                    SongEntry { name: "Extras".into(), kind: SongKind::Folder },
+                    SongEntry { name: "readme.txt".into(), kind: SongKind::File },
+                ],
+            };
+        }
+        "manage-confirm" => {
+            m.screen = Screen::Manage;
+            m.sel = 1;
+            m.browse = Browse { path: vec![], entries: browse_top };
+            m.handle(Nav::Left);
+            m.confirm_sel = 0;
+        }
+        "manage-confirm-all" => {
+            m.screen = Screen::Manage;
+            m.browse = Browse { path: vec![], entries: browse_top };
+            m.handle(Nav::Ok);
+        }
         "system" => {
             m.screen = Screen::System;
             m.sel = 4;

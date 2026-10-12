@@ -152,13 +152,25 @@ use the verbose entry (third in the menu) when you need `tools/qemu-sh.sh`.
 The device has no root login and no ssh; the remaining risk is code running as `player` (YARG with a bad song or mod)
 reaching root. So: root never sources, runs, or `chown -R`s anything the player can write, and never follows a path
 through a player-writable folder. `/data` and its first-level folders (`apps`, `home`, `bluetooth`, `iwd`, `alsa`) are
-root-owned (the player cannot swap them for links); only `apps/yarg`, `yarg`, `home/player` and the file `yargos.conf`
+root-owned (the player cannot swap them for links); only `apps/yarg`, `yarg`, `songs`, `home/player` and the file `yargos.conf`
 belong to the player. `firstboot.sh` (root) chowns only those leaves themselves and replaces links with real folders;
 the seeded YARG is installed by the player (`yargos-seed.service`); the daily `yargos-update.service` runs as `player`
 and `yargos.conf` is read with `grep -x` for exact lines, never sourced (do the same in any new root code, e.g. the OS
 updater). `asound.conf` is root-owned because `alsactl` (root) parses it and an ALSA config can load a program: the
 Sound screen writes it through the helper (`sound CARD DEV`). Anything new that root reads from /data must be root-owned.
 Test: as root plant links (`ln -s /etc /data/apps/yarg`), run `/usr/lib/yargos/firstboot.sh`, check /etc is untouched.
+
+## Internal songs (SYSTEM > Storage)
+
+Read docs/DESIGN.md ("The internal song library"). Rules: songs live in `/data/songs/<drive name>/` on the data partition (no
+formatting, no extra partition: the data partition already fills the disk); the copying, listing and deleting is plain Rust
+as the player (`songcopy.rs`), root only mounts the portable drive (`yargos-songs`, helper words `songs-mount /dev/X` and
+`songs-umount`), read-only with `nosuid,nodev,noexec`, and only a USB/SD drive that is not the system's own. A copy goes to
+`<file>.yargos-part` and is renamed when whole, same-size files are skipped, so every import can be repeated to resume. The
+free-space reserve (`sys::reserve_kib`) protects YARG's data and the system update download: never copy past it. Deleting
+never follows links and refuses names with `/` or `..`. Anything new that writes under /data/songs does it as the player.
+`SONGS_IMG="a.img b.img" tools/qemu-run.sh` attaches several fake USB drives (`mkfs.ext4 -L NAME -d folder img 64M` makes
+one without root).
 
 ## Style
 

@@ -2,7 +2,7 @@
 
 use crate::gfx::{rgb, Canvas, Fonts, Rgb};
 use crate::logo::{draw_logo, GOLD};
-use crate::model::{Key, Model, Power, Screen, HOME_ITEMS};
+use crate::model::{human_kib, Key, Model, Power, Screen, SongKind, HOME_ITEMS};
 
 const TEXT: Rgb = rgb(232, 236, 244);
 const DIM: Rgb = rgb(160, 172, 190);
@@ -114,7 +114,36 @@ fn rows(m: &Model) -> Vec<Row> {
             row("Install on this computer's disk"),
             row("Connected devices"),
             Row { tag: m.os.staged.as_ref().map(|_| ("READY", GREEN)).or(m.os.available.as_ref().map(|_| ("NEW", AMBER))), ..row("System update") },
+            row("Storage"),
         ],
+        Screen::Storage => vec![
+            row("Import from a portable drive"),
+            Row { value: if m.storage.used_kib > 0 { human_kib(m.storage.used_kib) } else { String::new() }, ..row("Manage internal songs") },
+        ],
+        Screen::ImportPick => {
+            let mut v = vec![row("Look for drives again")];
+            for d in &m.drives {
+                let mut r = row(d.name());
+                r.value = human_kib(d.bytes / 1024);
+                r.tag = Some((fs_tag(&d.fs), BLUE));
+                v.push(r);
+            }
+            v
+        }
+        Screen::Manage => {
+            let top = m.browse.path.is_empty();
+            let mut v = vec![Row { enabled: !(top && m.browse.entries.is_empty()), ..row(if top { "Delete ALL internal songs" } else { "Delete this whole folder" }) }];
+            for e in &m.browse.entries {
+                let mut r = row(e.name.clone());
+                r.tag = Some(match e.kind {
+                    SongKind::Folder => ("FOLDER", BLUE),
+                    SongKind::Song => ("SONG", GREEN),
+                    SongKind::File => ("FILE", AMBER),
+                });
+                v.push(r);
+            }
+            v
+        }
         Screen::OsUpdate => vec![
             row("Check for a system update"),
             Row { enabled: m.os.available.is_some(), value: m.os.available.clone().unwrap_or_default(), ..row("Install the system update") },
@@ -152,6 +181,18 @@ fn rows(m: &Model) -> Vec<Row> {
             v
         }
         _ => vec![],
+    }
+}
+
+fn fs_tag(fs: &str) -> &'static str {
+    match fs {
+        "EXFAT" => "EXFAT",
+        "NTFS" => "NTFS",
+        "FAT" => "FAT",
+        "EXT4" => "EXT4",
+        "EXT3" => "EXT3",
+        "EXT2" => "EXT2",
+        _ => "DRIVE",
     }
 }
 
@@ -215,6 +256,44 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             v
         }),
         Screen::System => ("SYSTEM", m.sysinfo.clone()),
+        Screen::Storage => {
+            let s = &m.storage;
+            let mut v = vec!["Songs kept on the drive YARG OS runs from. YARG scans them each time it starts, like the song drive.".to_string()];
+            if s.total_kib > 0 {
+                v.push(format!(
+                    "Internal songs: {} in {} folder{}. Free: {} of {}.",
+                    human_kib(s.used_kib),
+                    s.folders,
+                    if s.folders == 1 { "" } else { "s" },
+                    human_kib(s.free_kib),
+                    human_kib(s.total_kib)
+                ));
+                v.push(format!("{} is always kept free for YARG and for system updates.", human_kib(s.reserve_kib)));
+            }
+            v.push("Import copies a portable drive as it is. Nothing on that drive is changed.".into());
+            ("INTERNAL DRIVE", v)
+        }
+        Screen::ImportPick => {
+            let mut v = vec!["Pick a portable drive. Everything on it is copied, folders exactly as they are. A stopped copy carries on where it left off.".to_string()];
+            if m.drives.is_empty() && !m.loading {
+                v.push("No portable drive found. Plug one in, then Look for drives again.".into());
+            }
+            if m.storage.total_kib > 0 {
+                v.push(format!("Room for songs: {}.", human_kib(m.storage.free_kib.saturating_sub(m.storage.reserve_kib))));
+            }
+            ("IMPORT SONGS", v)
+        }
+        Screen::Manage => {
+            let mut where_ = vec!["Internal songs".to_string()];
+            where_.extend(m.browse.path.iter().cloned());
+            let mut v = vec![where_.join(" / ")];
+            if m.browse.entries.is_empty() && !m.loading {
+                v.push(if m.browse.path.is_empty() { "No internal songs yet. Use Import from a portable drive.".into() } else { "This folder is empty.".to_string() });
+            }
+            v.push("OK opens a folder (or asks to delete a song). LEFT deletes the highlighted song or folder: it always asks first. BACK goes up one level.".into());
+            v.push(if m.browse.path.is_empty() { "The top row deletes everything in the internal library. Songs on portable drives are never touched.".into() } else { "The top row deletes this whole folder.".to_string() });
+            ("INTERNAL SONGS", v)
+        }
         Screen::OsUpdate => {
             let mut v = vec![format!("Running: {}", if m.os.running.is_empty() { "?" } else { &m.os.running })];
             v.push(format!("Latest known: {}", m.os.latest.as_deref().unwrap_or("not checked")));
@@ -293,6 +372,9 @@ fn title_of(s: Screen) -> &'static str {
         Screen::Install => "INSTALL",
         Screen::Yarg => "INSTALL YARG",
         Screen::OsUpdate => "SYSTEM UPDATE",
+        Screen::Storage => "STORAGE",
+        Screen::ImportPick => "IMPORT SONGS",
+        Screen::Manage => "INTERNAL SONGS",
     }
 }
 
@@ -331,6 +413,7 @@ pub fn draw(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) 
     // Controls hint.
     let hint = match m.screen {
         Screen::Password => "Arrows: move    OK: type the key    BACK: cancel    A keyboard works too",
+        Screen::Manage => "\u{25B2}\u{25BC} Move     OK Open     \u{25C0} Delete     BACK Up",
         _ => "\u{25B2}\u{25BC} Move     OK Select     BACK Return",
     };
     fonts.draw_centered(cv, hint, w / 2.0, cv.h as f32 - 50.0 * u, 18.0 * u, false, DIM, 0.8);
@@ -344,11 +427,15 @@ pub fn draw(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) 
     if let Some(p) = m.confirm {
         hits.clear();
         let (q, go) = if p == Power::Shutdown { ("Shut down now?", "Shut down") } else { ("Restart now?", "Restart") };
-        draw_confirm(cv, fonts, m, q, "", go, u, hits);
+        draw_confirm(cv, fonts, m, q, "", go, true, u, hits);
+    }
+    if let Some(a) = &m.ask {
+        hits.clear();
+        draw_confirm(cv, fonts, m, &a.question, &a.note, &a.go, a.danger, u, hits);
     }
     if let Some(d) = m.erase.and_then(|i| m.disks.get(i)) {
         hits.clear();
-        draw_confirm(cv, fonts, m, "Erase this disk and install?", &format!("{}\nEverything on it will be lost.", d.label()), "Erase and install", u, hits);
+        draw_confirm(cv, fonts, m, "Erase this disk and install?", &format!("{}\nEverything on it will be lost.", d.label()), "Erase and install", true, u, hits);
     }
     if let Some(msg) = &m.busy {
         hits.clear();
@@ -582,7 +669,7 @@ fn draw_password(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &m
     }
 }
 
-fn draw_confirm(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, question: &str, note: &str, go: &str, u: f32, hits: &mut Vec<Hit>) {
+fn draw_confirm(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, question: &str, note: &str, go: &str, danger: bool, u: f32, hits: &mut Vec<Hit>) {
     let (w, h) = (cv.w as f32, cv.h as f32);
     cv.rect(0, 0, cv.w as i32, cv.h as i32, rgb(0, 0, 0), 0.6);
     let (cw, ch) = (640.0 * u, 290.0 * u);
@@ -598,7 +685,7 @@ fn draw_confirm(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, question: &str, n
         let (bw, bh) = (270.0 * u, 62.0 * u);
         let bx = cx + 40.0 * u + i as f32 * (bw + 20.0 * u);
         let sel = m.confirm_sel == i;
-        cv.rrect(bx as i32, (cy + 170.0 * u) as i32, bw as i32, bh as i32, 14.0 * u, if i == 1 { rgb(220, 60, 60) } else { rgb(255, 255, 255) }, if sel { 0.95 } else { 0.14 });
+        cv.rrect(bx as i32, (cy + 170.0 * u) as i32, bw as i32, bh as i32, 14.0 * u, if i == 1 && danger { rgb(220, 60, 60) } else if i == 1 { GREEN } else { rgb(255, 255, 255) }, if sel { 0.95 } else { 0.14 });
         fonts.draw_centered(cv, label, bx + bw / 2.0, cy + 170.0 * u + 16.0 * u, 26.0 * u, true, if sel { rgb(10, 16, 30) } else { TEXT }, 1.0);
         hits.push(Hit { x: bx as i32, y: (cy + 170.0 * u) as i32, w: bw as i32, h: bh as i32, row: i });
     }

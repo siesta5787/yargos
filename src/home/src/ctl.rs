@@ -16,6 +16,10 @@ pub enum Request {
     /// `os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`: the system updater, always without arguments (the
     /// word picks the command; progress lines stream back, then "ok" or "error").
     Os(&'static str),
+    /// `songs-mount /dev/NAME`: mount a portable drive read-only for importing its songs (yargos-songs checks the device).
+    SongsMount(String),
+    /// `songs-umount`: unmount it again.
+    SongsUmount,
 }
 
 /// A whole-disk device path: /dev/ and then letters and digits only (sda, vdb, nvme0n1, mmcblk0).
@@ -39,7 +43,11 @@ pub fn parse(line: &str) -> Option<Request> {
         "os-cancel" => Some(Request::Os("cancel")),
         "os-goback" => Some(Request::Os("go-back")),
         "os-ack" => Some(Request::Os("ack")),
+        "songs-umount" => Some(Request::SongsUmount),
         _ => {
+            if let Some(dev) = line.strip_prefix("songs-mount ") {
+                return disk_path(dev).map(|d| Request::SongsMount(d.to_string()));
+            }
             if let Some(rest) = line.strip_prefix("sound ") {
                 let (c, d) = rest.split_once(' ')?;
                 return Some(Request::Sound(index(c, 31)?, index(d, 255)?));
@@ -88,6 +96,15 @@ pub fn run() -> i32 {
                 println!("error: the system update did not finish");
                 1
             }
+        },
+        // The script prints "ok" or "error: why" itself.
+        Some(Request::SongsMount(dev)) => match Command::new("/usr/bin/yargos-songs").args(["mount", &dev]).status() {
+            Ok(s) if s.success() => 0,
+            _ => 1,
+        },
+        Some(Request::SongsUmount) => match Command::new("/usr/bin/yargos-songs").arg("umount").status() {
+            Ok(s) if s.success() => 0,
+            _ => 1,
         },
         Some(Request::Sound(card, dev)) => match write_sound(card, dev) {
             Ok(()) => {
@@ -143,6 +160,19 @@ mod tests {
         assert_eq!(parse("sound 1; reboot 0"), None);
         assert_eq!(parse("sound 0x1 0"), None);
         assert_eq!(parse("sound  1 0"), None);
+    }
+
+    #[test]
+    fn mounting_a_song_drive_takes_only_a_plain_device_path() {
+        assert_eq!(parse("songs-mount /dev/sdb1\n"), Some(Request::SongsMount("/dev/sdb1".into())));
+        assert_eq!(parse("songs-mount /dev/nvme0n1p2"), Some(Request::SongsMount("/dev/nvme0n1p2".into())));
+        assert_eq!(parse("songs-umount"), Some(Request::SongsUmount));
+        assert_eq!(parse("songs-mount /dev/sdb1; reboot"), None);
+        assert_eq!(parse("songs-mount /dev/../etc"), None);
+        assert_eq!(parse("songs-mount /tmp/x"), None);
+        assert_eq!(parse("songs-mount sdb1"), None);
+        assert_eq!(parse("songs-mount"), None);
+        assert_eq!(parse("songs-umount /run"), None);
     }
 
     #[test]

@@ -12,6 +12,7 @@ use crate::x::Display;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+use crate::songcopy::Stop;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -104,7 +105,7 @@ fn done(tx: &Sender<Event>, r: Result<String, String>) {
 
 /// Install YARG for the first time and refresh the status (so PLAY YARG appears).
 fn yarg_install_job(tx: &Sender<Event>, zip: Option<String>, upd: &UpdInfo) {
-    let r = sys::yarg_install(zip.as_deref(), |t| res(tx, Res::YargProgress(t)));
+    let r = sys::yarg_install(zip.as_deref(), |t| res(tx, Res::Progress(t)));
     res(tx, Res::YargInstalled(r));
     res(tx, Res::Status(sys::status(&sys::sound_label(), upd)));
 }
@@ -149,7 +150,7 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
             Cmd::Refresh(Screen::Updates) => bg(tx, move |tx| res(tx, Res::Upd(sys::upd_info(&upd)))),
             Cmd::UpdCheck => bg(tx, move |tx| res(tx, Res::Upd(sys::upd_check(&upd)))),
             Cmd::UpdApply => bg(tx, move |tx| {
-                done(tx, sys::upd_apply(|t| res(tx, Res::YargProgress(t))));
+                done(tx, sys::upd_apply(|t| res(tx, Res::Progress(t))));
                 let mut u = sys::upd_info(&upd);
                 u.available = false;
                 res(tx, Res::Upd(u));
@@ -163,7 +164,7 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Os(sys::os_info()));
             }),
             Cmd::OsInstall => bg(tx, move |tx| {
-                let r = sys::os_run("os-update", |t| res(tx, Res::YargProgress(t)));
+                let r = sys::os_run("os-update", |t| res(tx, Res::Progress(t)));
                 res(tx, Res::OsDone(r.map(|_| "The update is installed. Restart to use it".to_string())));
                 res(tx, Res::Os(sys::os_info()));
                 res(tx, Res::Status(sys::status(&sys::sound_label(), &upd)));
@@ -193,6 +194,33 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
             }),
             Cmd::Refresh(Screen::Songs) | Cmd::SongsRefresh => bg(tx, |tx| res(tx, Res::Songs(sys::songs_refresh()))),
             Cmd::Refresh(Screen::System) => bg(tx, |tx| res(tx, Res::SysInfo(sys::sys_info()))),
+            Cmd::Refresh(Screen::Storage) => bg(tx, |tx| res(tx, Res::Storage(sys::storage_info()))),
+            Cmd::Refresh(Screen::ImportPick) => bg(tx, |tx| res(tx, Res::Drives(sys::import_drives()))),
+            Cmd::Refresh(Screen::Manage) => {
+                let path = m.browse.path.clone();
+                bg(tx, move |tx| res(tx, sys::songs_browse(path)));
+            }
+            Cmd::SongsBrowse(path) => bg(tx, move |tx| res(tx, sys::songs_browse(path))),
+            Cmd::ImportScan(drive) => bg(tx, move |tx| match sys::import_scan(&drive) {
+                Ok(plan) => res(tx, Res::ImportPlan(Ok(plan))),
+                Err(Stop::Cancelled) => res(tx, Res::Done("Cancelled".into())),
+                Err(Stop::Other(e)) => res(tx, Res::ImportPlan(Err(e))),
+                Err(_) => res(tx, Res::ImportPlan(Err("Could not read the drive".into()))),
+            }),
+            Cmd::ImportRun(plan) => bg(tx, move |tx| {
+                let r = sys::import_run(&plan, |t| res(tx, Res::Progress(t)));
+                res(tx, Res::ImportDone(r));
+                res(tx, Res::Storage(sys::storage_info()));
+            }),
+            Cmd::ImportCancel => bg(tx, |_| sys::import_cancel()),
+            Cmd::SongsDelete(path) => bg(tx, move |tx| {
+                done(tx, sys::songs_delete(&path));
+                // Show the folder the deleted thing was in (or the nearest one that is left).
+                let mut parent = path.clone();
+                parent.pop();
+                res(tx, sys::songs_browse(parent));
+                res(tx, Res::Storage(sys::storage_info()));
+            }),
             Cmd::Refresh(_) => {}
             Cmd::Power(p) => bg(tx, move |tx| {
                 if let Err(e) = sys::power(p) {

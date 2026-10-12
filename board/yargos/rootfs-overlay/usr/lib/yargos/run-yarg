@@ -6,10 +6,12 @@ xset s off -dpms
 # (it is already screen-sized) so the focus sticks.
 export SDL_VIDEO_X11_LEGACY_FULLSCREEN=0
 
-# The song drive (any drive labelled YARGSONGS) mounts at /media/songs. Every top-level folder on it that has songs
-# becomes its own song source in YARG (song-sources decides), so nobody adds folders by hand. Sources YARG already
-# has outside /media/songs are kept; the ones under /media/songs are replaced by what is on the drive now. With no
-# drive connected the list is left alone. AUTO_SONG_SOURCES=no in /data/yargos.conf turns this off.
+# The song drive (any drive labelled YARGSONGS) mounts at /media/songs, and songs imported to the internal drive live in
+# /data/songs (SYSTEM > Storage). Every top-level folder of either that has songs becomes its own song source in YARG
+# (song-sources decides), so nobody adds folders by hand. Sources YARG already has outside those two places are kept; the
+# ones under them are replaced by what is there now. With no song drive connected its entries are left alone, unless
+# there are internal songs (the list is then rebuilt); entries for internal folders that are gone are dropped.
+# AUTO_SONG_SOURCES=no in /data/yargos.conf turns this off.
 SETTINGS=/data/yarg/settings.json
 AUTO_SONG_SOURCES=yes
 [ -f /data/yargos.conf ] && grep -qx 'AUTO_SONG_SOURCES=no' /data/yargos.conf && AUTO_SONG_SOURCES=no
@@ -20,9 +22,12 @@ if [ "$AUTO_SONG_SOURCES" != no ]; then
         if [ ! -f "$SETTINGS" ]; then
             printf '{"SongFolders":%s}\n' "$NEW" > "$SETTINGS"
         elif jq -e . "$SETTINGS" >/dev/null 2>&1; then
-            jq --argjson new "$NEW" '.SongFolders = (((.SongFolders // []) | map(select(startswith("/media/songs") | not))) + $new)' \
+            jq --argjson new "$NEW" '.SongFolders = (((.SongFolders // []) | map(select((startswith("/media/songs") or startswith("/data/songs")) | not))) + $new)' \
                 "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
         fi
+    elif [ -f "$SETTINGS" ] && jq -e . "$SETTINGS" >/dev/null 2>&1; then
+        jq '.SongFolders = ((.SongFolders // []) | map(select(startswith("/data/songs") | not)))' \
+            "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
     fi
 fi
 # YARG's audio library (BASS) loads its add-ons (Opus decoding, the effects used for the microphone) by bare

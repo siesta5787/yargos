@@ -4,6 +4,8 @@
 
 use std::time::{Duration, Instant};
 
+pub use crate::songcopy::{Entry as SongEntry, Kind as SongKind};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Nav {
     Up,
@@ -34,6 +36,12 @@ pub enum Screen {
     OsUpdate,
     /// First install of YARG itself (an image without it): download, or install from a zip on the song drive.
     Yarg,
+    /// The internal drive: songs kept on the drive the system runs from.
+    Storage,
+    /// Pick a portable drive to copy its songs to the internal drive.
+    ImportPick,
+    /// Browse the internal songs and delete a song, a folder or everything.
+    Manage,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -50,6 +58,75 @@ pub struct Output {
     pub card: u32,
     pub dev: u32,
     pub label: String,
+}
+
+/// A portable drive that can be imported (see `yargos-songs list`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportDrive {
+    pub dev: String,
+    pub label: String,
+    pub fs: String,
+    pub bytes: u64,
+    pub uuid: String,
+}
+
+impl ImportDrive {
+    pub fn name(&self) -> String {
+        if self.label.is_empty() { "USB drive".into() } else { self.label.clone() }
+    }
+}
+
+/// What copying a drive would do: found by looking at the drive and the internal drive, shown before anything is copied.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportPlan {
+    pub drive: ImportDrive,
+    /// The folder it goes into, below /data/songs.
+    pub dest: String,
+    pub files: u64,
+    pub bytes: u64,
+    pub todo_files: u64,
+    pub todo_bytes: u64,
+    pub unreadable: u64,
+    /// Space on the internal drive and the part of it that is kept free for the system (KiB).
+    pub free_kib: u64,
+    pub reserve_kib: u64,
+}
+
+impl ImportPlan {
+    pub fn fits(&self) -> bool {
+        self.todo_bytes / 1024 + self.reserve_kib <= self.free_kib
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StorageInfo {
+    pub used_kib: u64,
+    pub free_kib: u64,
+    pub total_kib: u64,
+    pub reserve_kib: u64,
+    /// Imported drives (folders directly in the library).
+    pub folders: usize,
+}
+
+/// Where the song browser is: names below /data/songs, and what is in that folder.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Browse {
+    pub path: Vec<String>,
+    pub entries: Vec<SongEntry>,
+}
+
+/// A question with Cancel (the default) and a button that runs `cmd`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ask {
+    pub question: String,
+    pub note: String,
+    pub go: String,
+    /// The second button is drawn red (it throws something away).
+    pub danger: bool,
+    /// What the busy overlay says while `cmd` runs, and what BACK does there (if it can be stopped).
+    pub busy: String,
+    pub cancel: Option<Cmd>,
+    pub cmd: Cmd,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -135,6 +212,16 @@ pub enum Cmd {
     SongsAuto(bool),
     /// Erase this disk (a /dev path) and install the system on it.
     Install(String),
+    /// Mount this portable drive and work out what copying it would do.
+    ImportScan(ImportDrive),
+    /// Copy it (the plan the user agreed to).
+    ImportRun(ImportPlan),
+    /// Stop the looking or the copying that is running.
+    ImportCancel,
+    /// List this folder of the internal songs (names below /data/songs).
+    SongsBrowse(Vec<String>),
+    /// Delete this song or folder of the internal songs; no names = everything.
+    SongsDelete(Vec<String>),
     Power(Power),
 }
 
@@ -206,13 +293,20 @@ pub enum Res {
     SysInfo(Vec<String>),
     Disks(Vec<Disk>),
     Devices(Vec<DeviceEntry>),
+    Storage(StorageInfo),
+    Drives(Vec<ImportDrive>),
+    /// What copying a drive would do, or why that could not be worked out.
+    ImportPlan(Result<ImportPlan, String>),
+    /// A copy finished: what was copied (a toast), or why it stopped / what went wrong (an alert).
+    ImportDone(Result<String, String>),
+    Browse { path: Vec<String>, entries: Vec<SongEntry> },
     Os(OsInfo),
     /// A system update (or going back) finished: a message that asks for a restart, or why it failed.
     OsDone(Result<String, String>),
     /// YARG release zips found on the song drive.
     YargZips(Vec<String>),
-    /// Progress text of a YARG download/install (only shown while the busy overlay is up).
-    YargProgress(String),
+    /// Progress text of a long job (only shown while the busy overlay is up).
+    Progress(String),
     /// A YARG install finished: the message to show, or why it failed.
     YargInstalled(Result<String, String>),
     /// One progress line from the installer.
@@ -225,6 +319,33 @@ pub enum Res {
     /// A finished action whose screen data should also be reloaded.
     DoneRefresh(String, Screen),
     Log(String),
+}
+
+/// 18400 -> "18,400".
+pub fn thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Sizes in the units drives are sold in (decimal), from KiB.
+pub fn human_kib(kib: u64) -> String {
+    let b = kib as f64 * 1024.0;
+    if b >= 1e12 {
+        format!("{:.1} TB", b / 1e12)
+    } else if b >= 1e10 {
+        format!("{:.0} GB", b / 1e9)
+    } else if b >= 1e9 {
+        format!("{:.1} GB", b / 1e9)
+    } else {
+        format!("{:.0} MB", b / 1e6)
+    }
 }
 
 // ---- on-screen keyboard ----------------------------------------------------------------------
@@ -314,6 +435,12 @@ pub struct Model {
     pub devices: Vec<DeviceEntry>,
     /// YARG release zips on the song drive (full paths).
     pub yarg_zips: Vec<String>,
+    pub storage: StorageInfo,
+    pub drives: Vec<ImportDrive>,
+    pub browse: Browse,
+    /// The folder just left with BACK: highlighted again when the list above it comes back.
+    back_to: Option<String>,
+    pub ask: Option<Ask>,
     /// The disk the user is being asked to confirm erasing (index into `disks`).
     pub erase: Option<usize>,
     /// Set once the install finished: what it was installed on.
@@ -355,6 +482,11 @@ impl Model {
             disks: vec![],
             devices: vec![],
             yarg_zips: vec![],
+            storage: StorageInfo::default(),
+            drives: vec![],
+            browse: Browse::default(),
+            back_to: None,
+            ask: None,
             erase: None,
             installed: None,
             install_error: None,
@@ -401,7 +533,10 @@ impl Model {
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
             Screen::Songs => 2 + usize::from(self.songs.mounted),
-            Screen::System => 5,
+            Screen::System => 6,
+            Screen::Storage => 2,
+            Screen::ImportPick => 1 + self.drives.len(),
+            Screen::Manage => 1 + self.browse.entries.len(),
             Screen::OsUpdate => 5,
             Screen::Devices => 1 + self.devices.len(),
             Screen::Yarg => 3,
@@ -427,7 +562,7 @@ impl Model {
         if self.busy.is_some() || self.alert.is_some() {
             return;
         }
-        if self.confirm.is_some() || self.erase.is_some() {
+        if self.confirm.is_some() || self.erase.is_some() || self.ask.is_some() {
             self.confirm_sel = id.min(1);
         } else if self.screen == Screen::Password {
             let (r, c) = (id / 16, id % 16);
@@ -466,6 +601,9 @@ impl Model {
             }
             return vec![]; // ignore input while an action runs
         }
+        if self.ask.is_some() {
+            return self.handle_ask(nav);
+        }
         if let Some(p) = self.confirm {
             return self.handle_confirm(p, nav);
         }
@@ -492,6 +630,30 @@ impl Model {
             _ => {}
         }
         vec![]
+    }
+
+    /// A question with Cancel as the default: only OK on the second button runs it.
+    fn handle_ask(&mut self, nav: Nav) -> Vec<Cmd> {
+        match nav {
+            Nav::Left | Nav::Right | Nav::Up | Nav::Down => self.confirm_sel = 1 - self.confirm_sel,
+            Nav::Back => self.ask = None,
+            Nav::Ok | Nav::Submit => {
+                if let Some(a) = self.ask.take() {
+                    if self.confirm_sel == 1 {
+                        self.busy = Some(a.busy);
+                        self.cancel = a.cancel;
+                        return vec![a.cmd];
+                    }
+                }
+            }
+            _ => {}
+        }
+        vec![]
+    }
+
+    fn ask(&mut self, question: impl Into<String>, note: impl Into<String>, go: &str, danger: bool, busy: &str, cmd: Cmd) {
+        self.ask = Some(Ask { question: question.into(), note: note.into(), go: go.into(), danger, busy: busy.into(), cancel: None, cmd });
+        self.confirm_sel = 0;
     }
 
     /// The "erase this disk?" question: Cancel is the default.
@@ -559,13 +721,21 @@ impl Model {
         match nav {
             Nav::Up if n > 0 => self.sel = (self.sel + n - 1) % n,
             Nav::Down if n > 0 => self.sel = (self.sel + 1) % n,
-            Nav::Back => {
-                if self.screen != Screen::Home {
+            Nav::Back => match self.screen {
+                Screen::Home => {}
+                Screen::ImportPick => return self.enter(Screen::Storage),
+                Screen::Manage => return self.manage_up(),
+                Screen::Storage => {
+                    let cmds = self.enter(Screen::System);
+                    self.sel = 5;
+                    return cmds;
+                }
+                _ => {
                     self.screen = Screen::Home;
                     self.sel = 0;
                     return vec![Cmd::Refresh(Screen::Home)];
                 }
-            }
+            },
             Nav::Left | Nav::Right => return self.adjust(nav == Nav::Right),
             Nav::Ok | Nav::Submit => return self.activate(),
             _ => {}
@@ -573,9 +743,44 @@ impl Model {
         vec![]
     }
 
-    /// Left/Right on a row: volume, or forgetting a Bluetooth device.
+    /// BACK in the song browser: up one folder (the one left is highlighted again), or out to Storage from the top.
+    fn manage_up(&mut self) -> Vec<Cmd> {
+        match self.browse.path.pop() {
+            Some(name) => {
+                self.back_to = Some(name);
+                self.loading = true;
+                vec![Cmd::SongsBrowse(self.browse.path.clone())]
+            }
+            None => self.enter(Screen::Storage),
+        }
+    }
+
+    /// Ask before deleting `name` (a song or folder inside the folder being browsed), or, with None, the folder being
+    /// browsed (everything, at the top).
+    fn ask_delete(&mut self, name: Option<usize>) {
+        let mut target = self.browse.path.clone();
+        let (question, note) = match name.and_then(|i| self.browse.entries.get(i)).cloned() {
+            Some(e) => {
+                target.push(e.name.clone());
+                match e.kind {
+                    SongKind::Song => ("Delete this song?".to_string(), e.name),
+                    SongKind::Folder => ("Delete this folder?".to_string(), format!("{}\nEverything inside it is deleted.", e.name)),
+                    SongKind::File => ("Delete this file?".to_string(), e.name),
+                }
+            }
+            None if target.is_empty() => ("Delete ALL internal songs?".to_string(), "The whole internal library is deleted.\nSongs on portable drives are not touched.".to_string()),
+            None => ("Delete this whole folder?".to_string(), format!("{}\nEverything inside it is deleted.", target.join(" / "))),
+        };
+        self.ask(question, note, "Delete", true, "Deleting\u{2026}", Cmd::SongsDelete(target));
+    }
+
+    /// Left/Right on a row: volume, forgetting a Bluetooth device, deleting an internal song or folder.
     fn adjust(&mut self, right: bool) -> Vec<Cmd> {
         match self.screen {
+            Screen::Manage if !right && self.sel >= 1 => {
+                self.ask_delete(Some(self.sel - 1));
+                vec![]
+            }
             Screen::Sound if self.volume.is_some() && self.sel == self.outputs.len() => {
                 let (card, v) = self.volume.unwrap();
                 let nv = (v as i32 + if right { 5 } else { -5 }).clamp(0, 100) as u8;
@@ -712,6 +917,45 @@ impl Model {
             Screen::System if self.sel == 2 => self.enter(Screen::Install),
             Screen::System if self.sel == 3 => self.enter(Screen::Devices),
             Screen::System if self.sel == 4 => self.enter(Screen::OsUpdate),
+            Screen::System if self.sel == 5 => self.enter(Screen::Storage),
+            Screen::Storage if self.sel == 0 => self.enter(Screen::ImportPick),
+            Screen::Storage => {
+                self.browse = Browse::default();
+                self.enter(Screen::Manage)
+            }
+            Screen::ImportPick if self.sel == 0 => {
+                self.busy = Some("Looking for drives\u{2026}".into());
+                vec![Cmd::Refresh(Screen::ImportPick)]
+            }
+            Screen::ImportPick => {
+                let d = self.drives[self.sel - 1].clone();
+                self.busy = Some(format!("Reading {}\u{2026} a big drive can take a minute", d.name()));
+                self.cancel = Some(Cmd::ImportCancel);
+                vec![Cmd::ImportScan(d)]
+            }
+            Screen::Manage if self.sel == 0 => {
+                if self.browse.path.is_empty() && self.browse.entries.is_empty() {
+                    self.toast("There are no internal songs to delete");
+                } else {
+                    self.ask_delete(None);
+                }
+                vec![]
+            }
+            Screen::Manage => {
+                let i = self.sel - 1;
+                match self.browse.entries[i].kind {
+                    SongKind::Folder => {
+                        self.browse.path.push(self.browse.entries[i].name.clone());
+                        self.sel = 0;
+                        self.loading = true;
+                        vec![Cmd::SongsBrowse(self.browse.path.clone())]
+                    }
+                    _ => {
+                        self.ask_delete(Some(i));
+                        vec![]
+                    }
+                }
+            }
             Screen::OsUpdate => match self.sel {
                 0 => {
                     self.busy = Some("Checking for a system update\u{2026}".into());
@@ -837,6 +1081,63 @@ impl Model {
                 self.busy = None;
                 self.sel = self.sel.min(self.row_count().saturating_sub(1));
             }
+            Res::Storage(info) => {
+                self.storage = info;
+                self.loading = false;
+            }
+            Res::Drives(d) => {
+                self.drives = d;
+                self.loading = false;
+                self.busy = None;
+                self.sel = self.sel.min(self.row_count().saturating_sub(1));
+            }
+            Res::ImportPlan(r) => {
+                self.busy = None;
+                self.cancel = None;
+                match r {
+                    Err(e) => self.alert = Some(e),
+                    Ok(p) if p.todo_files == 0 => self.toast(format!("Everything on {} is already on the internal drive", p.drive.name())),
+                    Ok(p) if !p.fits() => {
+                        let usable = p.free_kib.saturating_sub(p.reserve_kib);
+                        self.alert = Some(format!(
+                            "There is not enough room on the internal drive. Copying needs {}, but only {} can be used ({} is kept free for the system).",
+                            human_kib(p.todo_bytes / 1024),
+                            human_kib(usable),
+                            human_kib(p.reserve_kib)
+                        ));
+                    }
+                    Ok(p) => {
+                        let mut note = format!("{} in {} files", human_kib(p.todo_bytes / 1024), thousands(p.todo_files));
+                        if p.todo_files < p.files {
+                            note.push_str(&format!(" ({} already there)", thousands(p.files - p.todo_files)));
+                        }
+                        note.push_str(&format!("\n{} left for songs afterwards", human_kib((p.free_kib - p.todo_bytes / 1024).saturating_sub(p.reserve_kib))));
+                        let q = format!("Copy \"{}\"?", p.drive.name());
+                        self.ask(q, note, "Copy", false, &format!("Copying {}\u{2026} 0%", p.drive.name()), Cmd::ImportRun(p));
+                        if let Some(a) = &mut self.ask {
+                            a.cancel = Some(Cmd::ImportCancel);
+                        }
+                    }
+                }
+            }
+            Res::ImportDone(r) => {
+                self.busy = None;
+                self.cancel = None;
+                match r {
+                    Ok(msg) => self.toast(msg),
+                    Err(e) => self.alert = Some(e),
+                }
+            }
+            Res::Browse { path, entries } => {
+                let back = self.back_to.take();
+                self.browse = Browse { path, entries };
+                self.loading = false;
+                self.busy = None;
+                self.sel = match back.and_then(|n| self.browse.entries.iter().position(|e| e.name == n)) {
+                    Some(i) => i + 1,
+                    None => self.sel.min(self.row_count().saturating_sub(1)),
+                };
+            }
             Res::InstallStep(text) => {
                 if self.busy.is_some() {
                     self.busy = Some(text);
@@ -878,7 +1179,7 @@ impl Model {
                 self.yarg_zips = z;
                 self.loading = false;
             }
-            Res::YargProgress(t) => {
+            Res::Progress(t) => {
                 if self.busy.is_some() {
                     self.busy = Some(t);
                 }
@@ -1128,10 +1429,10 @@ mod tests {
         m.sel = 0;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::YargInstall]);
         assert!(m.busy.as_ref().unwrap().contains("Downloading"));
-        m.apply(Res::YargProgress("Downloading YARG\u{2026} 40%".into()));
+        m.apply(Res::Progress("Downloading YARG\u{2026} 40%".into()));
         assert!(m.busy.as_ref().unwrap().contains("40%"));
         m.busy = None;
-        m.apply(Res::YargProgress("late line".into()));
+        m.apply(Res::Progress("late line".into()));
         assert!(m.busy.is_none(), "progress after the end does not bring the overlay back");
         m.sel = 2;
         m.handle(Nav::Ok);
@@ -1434,5 +1735,180 @@ mod tests {
         assert!(m.live_toast().unwrap().contains("P-143"));
         m.sel = 0;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Devices)]);
+    }
+
+    fn drive(label: &str) -> ImportDrive {
+        ImportDrive { dev: "/dev/sdb1".into(), label: label.into(), fs: "EXFAT".into(), bytes: 500_000_000_000, uuid: "AB-CD".into() }
+    }
+
+    fn plan(todo_gb: u64, free_gb: u64) -> ImportPlan {
+        ImportPlan {
+            drive: drive("MySongs"),
+            dest: "MySongs".into(),
+            files: 120,
+            bytes: todo_gb * 1_000_000_000,
+            todo_files: 120,
+            todo_bytes: todo_gb * 1_000_000_000,
+            unreadable: 0,
+            free_kib: free_gb * 1_000_000_000 / 1024,
+            reserve_kib: 4_000_000,
+        }
+    }
+
+    fn entry(name: &str, kind: SongKind) -> SongEntry {
+        SongEntry { name: name.into(), kind }
+    }
+
+    #[test]
+    fn storage_is_a_row_of_the_system_screen_and_back_returns_to_it() {
+        let mut m = Model::new();
+        m.screen = Screen::System;
+        m.sel = 5;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Storage)]);
+        assert_eq!(m.screen, Screen::Storage);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
+        assert_eq!((m.screen, m.sel), (Screen::System, 5));
+    }
+
+    #[test]
+    fn importing_picks_a_drive_reads_it_then_asks_before_copying() {
+        let mut m = Model::new();
+        m.screen = Screen::Storage;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::ImportPick)]);
+        m.apply(Res::Drives(vec![drive("MySongs")]));
+        // Back from the drive list goes to Storage, not Home.
+        m.handle(Nav::Down);
+        let cmds = m.handle(Nav::Ok);
+        assert_eq!(cmds, vec![Cmd::ImportScan(drive("MySongs"))]);
+        assert!(m.busy.is_some() && m.cancellable());
+        // BACK while reading stops it.
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::ImportCancel]);
+        m.apply(Res::Done("Cancelled".into()));
+        assert!(m.busy.is_none() && !m.cancellable());
+        // The plan comes back: a question, Cancel first, and nothing runs until the second button.
+        m.apply(Res::ImportPlan(Ok(plan(40, 300))));
+        let a = m.ask.clone().expect("a question is asked");
+        assert!(a.question.contains("MySongs") && a.note.contains("40 GB") && !a.danger);
+        assert_eq!(m.confirm_sel, 0);
+        assert!(m.handle(Nav::Ok).is_empty() && m.ask.is_none() && m.busy.is_none());
+        m.apply(Res::ImportPlan(Ok(plan(40, 300))));
+        m.handle(Nav::Right);
+        let cmds = m.handle(Nav::Ok);
+        assert_eq!(cmds, vec![Cmd::ImportRun(plan(40, 300))]);
+        assert!(m.busy.as_deref().unwrap().contains("Copying MySongs") && m.cancellable());
+        m.apply(Res::Progress("Copying MySongs\u{2026} 50%".into()));
+        assert!(m.busy.as_deref().unwrap().contains("50%"));
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::ImportCancel]);
+        m.apply(Res::ImportDone(Ok("Copied 120 files".into())));
+        assert!(m.busy.is_none() && m.live_toast().unwrap().contains("Copied"));
+    }
+
+    #[test]
+    fn a_copy_that_does_not_fit_or_has_nothing_new_is_not_offered() {
+        let mut m = Model::new();
+        m.screen = Screen::ImportPick;
+        m.apply(Res::ImportPlan(Ok(plan(100, 50))));
+        assert!(m.ask.is_none());
+        assert!(m.alert.as_deref().unwrap().contains("not enough room"));
+        m.alert = None;
+        // Exactly the free space minus the part kept for the system fits; one byte more does not.
+        let mut p = plan(10, 20);
+        p.todo_bytes = (p.free_kib - p.reserve_kib) * 1024;
+        assert!(p.fits());
+        p.todo_bytes += 1024;
+        assert!(!p.fits());
+        let mut same = plan(10, 300);
+        same.todo_files = 0;
+        same.todo_bytes = 0;
+        m.apply(Res::ImportPlan(Ok(same)));
+        assert!(m.ask.is_none() && m.live_toast().unwrap().contains("already on the internal drive"));
+        m.apply(Res::ImportPlan(Err("The drive would not open".into())));
+        assert_eq!(m.alert.as_deref(), Some("The drive would not open"));
+    }
+
+    #[test]
+    fn a_copy_that_went_wrong_is_an_alert_not_a_toast() {
+        let mut m = Model::new();
+        m.busy = Some("Copying".into());
+        m.apply(Res::ImportDone(Err("The internal drive is nearly full".into())));
+        assert!(m.busy.is_none() && m.alert.is_some());
+    }
+
+    fn at_browser() -> Model {
+        let mut m = Model::new();
+        m.screen = Screen::Manage;
+        m.apply(Res::Browse { path: vec![], entries: vec![entry("Drive A", SongKind::Folder), entry("Drive B", SongKind::Folder)] });
+        m
+    }
+
+    #[test]
+    fn deleting_can_be_asked_for_a_song_a_folder_or_everything() {
+        let mut m = at_browser();
+        // Everything: the top row at the top level.
+        m.sel = 0;
+        assert!(m.handle(Nav::Ok).is_empty());
+        let a = m.ask.clone().unwrap();
+        assert!(a.question.contains("ALL internal songs") && a.danger && a.cmd == Cmd::SongsDelete(vec![]));
+        // Cancel is the default and does nothing.
+        assert!(m.handle(Nav::Ok).is_empty() && m.ask.is_none() && m.busy.is_none());
+        // A folder: LEFT on its row.
+        m.sel = 2;
+        m.handle(Nav::Left);
+        assert_eq!(m.ask.as_ref().unwrap().cmd, Cmd::SongsDelete(vec!["Drive B".into()]));
+        assert!(m.ask.as_ref().unwrap().question.contains("folder"));
+        m.handle(Nav::Back);
+        assert!(m.ask.is_none());
+        // Inside a folder: a song is asked about with OK, the whole folder with the top row.
+        m.sel = 1;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::SongsBrowse(vec!["Drive A".into()])]);
+        m.apply(Res::Browse { path: vec!["Drive A".into()], entries: vec![entry("Band - Song", SongKind::Song), entry("notes.txt", SongKind::File)] });
+        m.sel = 1;
+        assert!(m.handle(Nav::Ok).is_empty());
+        let a = m.ask.clone().unwrap();
+        assert!(a.question.contains("song") && a.cmd == Cmd::SongsDelete(vec!["Drive A".into(), "Band - Song".into()]));
+        m.handle(Nav::Right);
+        let cmds = m.handle(Nav::Ok);
+        assert_eq!(cmds, vec![Cmd::SongsDelete(vec!["Drive A".into(), "Band - Song".into()])]);
+        assert!(m.busy.is_some() && !m.cancellable());
+        m.apply(Res::Done("Deleted".into()));
+        m.sel = 0;
+        m.handle(Nav::Ok);
+        let a = m.ask.clone().unwrap();
+        assert!(a.question.contains("whole folder") && a.cmd == Cmd::SongsDelete(vec!["Drive A".into()]));
+        // A file is asked about with the file wording.
+        m.ask = None;
+        m.sel = 2;
+        m.handle(Nav::Left);
+        assert!(m.ask.as_ref().unwrap().question.contains("file"));
+    }
+
+    #[test]
+    fn back_in_the_browser_goes_up_and_finds_the_folder_again() {
+        let mut m = at_browser();
+        m.sel = 2;
+        m.handle(Nav::Ok); // into Drive B
+        m.apply(Res::Browse { path: vec!["Drive B".into()], entries: vec![entry("x", SongKind::Song)] });
+        assert_eq!(m.sel, 0);
+        let cmds = m.handle(Nav::Back);
+        assert_eq!(cmds, vec![Cmd::SongsBrowse(vec![])]);
+        m.apply(Res::Browse { path: vec![], entries: vec![entry("Drive A", SongKind::Folder), entry("Drive B", SongKind::Folder)] });
+        assert_eq!(m.sel, 2, "Drive B is highlighted again");
+        // From the top, BACK leaves the browser for Storage.
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::Storage)]);
+        assert_eq!(m.screen, Screen::Storage);
+    }
+
+    #[test]
+    fn an_empty_library_has_nothing_to_delete_and_the_list_follows_the_session() {
+        let mut m = Model::new();
+        m.screen = Screen::Manage;
+        m.apply(Res::Browse { path: vec![], entries: vec![] });
+        assert!(m.handle(Nav::Ok).is_empty());
+        assert!(m.ask.is_none() && m.live_toast().unwrap().contains("no internal songs"));
+        // After a delete the session sends the folder above: the model follows its path.
+        let mut m = at_browser();
+        m.browse.path = vec!["Drive A".into()];
+        m.apply(Res::Browse { path: vec![], entries: vec![entry("Drive B", SongKind::Folder)] });
+        assert!(m.browse.path.is_empty() && m.row_count() == 2);
     }
 }

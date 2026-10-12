@@ -12,7 +12,8 @@
 #   DISK2=~/yargos-build/qemu/target.img tools/qemu-run.sh
 #                                  attach a second (blank, created on first use, DISK2_SIZE=12G) disk to try the installer on
 #   SONGS_IMG=/path/songs.img tools/qemu-run.sh
-#                                  attach that raw image as a USB drive (label it YARGSONGS to test the song drive)
+#                                  attach that raw image as a USB drive (label it YARGSONGS to test the song drive);
+#                                  several, space separated, give several drives (to try SYSTEM > Storage > Import)
 #   DISK_OPTS=throttling.bps-total=15000000 tools/qemu-run.sh
 #                                  extra options for the boot disk (here: a slow, USB-stick-like 15 MB/s). To try a big
 #                                  stick: qemu-img create -f qcow2 -b <image> -F raw $WORK/overlay.qcow2 126G first.
@@ -59,7 +60,11 @@ else
 fi
 
 SONGSARGS=()
-[ -n "${SONGS_IMG:-}" ] && SONGSARGS=(-drive "if=none,id=songs,file=$SONGS_IMG,format=raw" -device usb-storage,drive=songs)
+n=0
+for img in ${SONGS_IMG:-}; do
+    SONGSARGS+=(-drive "if=none,id=songs$n,file=$img,format=raw" -device "usb-storage,drive=songs$n")
+    n=$((n + 1))
+done
 
 USBAUDIOARGS=()
 [ -n "${USB_AUDIO:-}" ] && USBAUDIOARGS=(-audiodev "wav,id=usbwav,path=$WORK/usb-audio.wav,out.frequency=48000,out.channels=2,out.format=s16" -device usb-audio,audiodev=usbwav)
@@ -80,7 +85,7 @@ fi
 
 KERNEL_ARGS=()
 if [ -n "${CMDLINE:-}" ]; then
-    KERNEL_ARGS=(-kernel "$(dirname "$IMG")/bzImage" -append "root=PARTUUID=6d5a1c52-0d4e-4c5b-9a3f-7e3b8a1f0001 rootwait rw console=ttyS0,115200 loglevel=4 $CMDLINE")
+    KERNEL_ARGS=(-kernel "$(dirname "$IMG")/bzImage" -append "root=PARTUUID=6d5a1c52-0d4e-4c5b-9a3f-7e3b8a1f0001 systemd.mount-extra=PARTUUID=6d5a1c52-0d4e-4c5b-9a3f-7e3b8a1f0002:/data:ext4:rw,noatime,nofail,x-systemd.device-timeout=10s rootwait rw console=ttyS0,115200 loglevel=4 $CMDLINE")
 fi
 
 exec qemu-system-x86_64 \

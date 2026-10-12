@@ -3,6 +3,7 @@
 // unit tested on sample output; the wrappers themselves only run on the appliance.
 
 use crate::model::*;
+use crate::songcopy;
 use std::io::{BufRead, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -847,14 +848,22 @@ pub fn human(kib: u64) -> String {
     if gb >= 10.0 { format!("{gb:.0} GB") } else if gb >= 1.0 { format!("{gb:.1} GB") } else { format!("{} MB", kib / 1024) }
 }
 
-/// `song-sources` output (paths under /media/songs) -> the names to show: folder names, or "the whole drive".
+/// `song-sources` output (paths under /media/songs or /data/songs) -> the names to show: folder names, "the whole drive",
+/// or, for the internal drive, "internal: <folder>".
 pub fn parse_sources(out: &str) -> Vec<String> {
     out.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
-        .map(|l| match l.trim_end_matches('/').strip_prefix("/media/songs/") {
-            Some(name) => name.to_string(),
-            None => "the whole drive".to_string(),
+        .map(|l| {
+            let l = l.trim_end_matches('/');
+            if let Some(name) = l.strip_prefix("/data/songs/") {
+                format!("internal: {name}")
+            } else {
+                match l.strip_prefix("/media/songs/") {
+                    Some(name) => name.to_string(),
+                    None => "the whole drive".to_string(),
+                }
+            }
         })
         .collect()
 }
@@ -881,8 +890,157 @@ pub fn songs_refresh() -> SongsInfo {
                 auto: read_auto_songs(),
             }
         }
-        None => SongsInfo { mounted: false, detail: "No song drive found. Plug in a drive labelled YARGSONGS.".into(), auto: read_auto_songs(), ..SongsInfo::default() },
+        None => SongsInfo {
+            mounted: false,
+            detail: "No song drive found. Plug in a drive labelled YARGSONGS.".into(),
+            sources: run("/usr/lib/yargos/song-sources", &[]).map(|o| parse_sources(&o)).unwrap_or_default(),
+            auto: read_auto_songs(),
+            ..SongsInfo::default()
+        },
     }
+}
+
+// ---- internal songs (SYSTEM > Storage) ----------------------------------------------------------
+
+static IMPORT_CANCEL: AtomicBool = AtomicBool::new(false);
+
+pub fn import_cancel() {
+    IMPORT_CANCEL.store(true, Ordering::Relaxed);
+}
+
+/// `yargos-songs list` -> the portable drives that can be imported.
+pub fn parse_import_drives(out: &str) -> Vec<ImportDrive> {
+    out.lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('|').collect();
+            if f.len() < 5 || !f[0].starts_with("/dev/") {
+                return None;
+            }
+            let fs = match f[3] {
+                "vfat" => "FAT".to_string(),
+                other => other.to_uppercase(),
+            };
+            Some(ImportDrive { dev: f[0].into(), bytes: f[1].parse().ok()?, label: f[2].trim().into(), fs, uuid: f[4].trim().into() })
+        })
+        .collect()
+}
+
+pub fn import_drives() -> Vec<ImportDrive> {
+    run("yargos-songs", &["list"]).map(|o| parse_import_drives(&o)).unwrap_or_default()
+}
+
+/// What stays free on the internal drive when songs are copied to it: a tenth of it, between 1.5 and 4 GB. YARG's own
+/// files, its updates and the system update download live on the same drive and must always fit.
+pub fn reserve_kib(total_kib: u64) -> u64 {
+    (total_kib / 10).clamp(1_500_000, 4_000_000)
+}
+
+fn data_space() -> (u64, u64) {
+    run("df", &["-k", DATA]).ok().and_then(|o| parse_df(&o)).unwrap_or((0, 0))
+}
+
+pub fn storage_info() -> StorageInfo {
+    let (total, free) = data_space();
+    let used = run("du", &["-sk", songcopy::ROOT]).ok().and_then(|o| o.split_whitespace().next().and_then(|n| n.parse().ok())).unwrap_or(0);
+    StorageInfo { used_kib: used, free_kib: free, total_kib: total, reserve_kib: reserve_kib(total), folders: songcopy::list(std::path::Path::new(songcopy::ROOT)).len() }
+}
+
+fn mount_drive(dev: &str) -> Result<(), String> {
+    ctl_request_for(&format!("songs-mount {dev}"), 90).map_err(|e| {
+        let e = e.trim().trim_start_matches("error:").trim().to_string();
+        if e.is_empty() { "Could not open the drive".to_string() } else { e }
+    })
+}
+
+fn unmount_drive() {
+    let _ = ctl_request_for("songs-umount", 20);
+}
+
+fn dest_for(drive: &ImportDrive) -> String {
+    let root = std::path::Path::new(songcopy::ROOT);
+    songcopy::dest_name(&drive.label, &drive.uuid, &|n| songcopy::read_marker(root, n))
+}
+
+/// Mount the drive and work out what copying it would do (nothing is copied).
+pub fn import_scan(drive: &ImportDrive) -> Result<ImportPlan, songcopy::Stop> {
+    use songcopy::Stop;
+    IMPORT_CANCEL.store(false, Ordering::Relaxed);
+    mount_drive(&drive.dev).map_err(Stop::Other)?;
+    let dest = dest_for(drive);
+    let plan = songcopy::plan(std::path::Path::new(songcopy::MOUNT), &std::path::Path::new(songcopy::ROOT).join(&dest), &IMPORT_CANCEL);
+    unmount_drive();
+    let p = plan?;
+    if p.files == 0 {
+        return Err(Stop::Other(format!("There is nothing to copy on {}: it has no files.", drive.name())));
+    }
+    let (total, free) = data_space();
+    Ok(ImportPlan {
+        drive: drive.clone(),
+        dest,
+        files: p.files,
+        bytes: p.bytes,
+        todo_files: p.todo_files,
+        todo_bytes: p.todo_bytes,
+        unreadable: p.unreadable,
+        free_kib: free,
+        reserve_kib: reserve_kib(total),
+    })
+}
+
+/// Copy the drive into the internal library. The message is a toast (Ok) or an alert (Err).
+pub fn import_run(plan: &ImportPlan, mut on_progress: impl FnMut(String)) -> Result<String, String> {
+    use songcopy::Stop;
+    IMPORT_CANCEL.store(false, Ordering::Relaxed);
+    mount_drive(&plan.drive.dev)?;
+    let name = plan.drive.name();
+    let dest = std::path::Path::new(songcopy::ROOT).join(&plan.dest);
+    let mut last = Instant::now() - Duration::from_secs(1);
+    let r = songcopy::run(
+        std::path::Path::new(songcopy::MOUNT),
+        &dest,
+        &plan.drive.uuid,
+        plan.todo_bytes,
+        plan.reserve_kib,
+        &|| Some(data_space().1),
+        &IMPORT_CANCEL,
+        &mut |done, total| {
+            if last.elapsed() >= Duration::from_millis(300) {
+                last = Instant::now();
+                let pct = if total == 0 { 0 } else { (done * 100 / total).min(100) };
+                on_progress(format!("Copying {name}\u{2026} {pct}%  ({} of {})", human_kib(done / 1024), human_kib(total / 1024)));
+            }
+        },
+    );
+    unmount_drive();
+    let _ = run("sync", &[]);
+    match r {
+        Ok(rep) if rep.failed_files == 0 => Ok(format!("Copied {} files ({}) from {name}", rep.copied_files, human_kib(rep.copied_bytes / 1024))),
+        Ok(rep) => Err(format!(
+            "Copied {} files, but {} could not be copied (unreadable, or the drive was disturbed). Import the drive again to retry them.",
+            rep.copied_files, rep.failed_files
+        )),
+        Err(Stop::Cancelled) => Ok("Stopped. What was copied is kept: import the drive again to carry on".into()),
+        Err(Stop::Full) => Err("The internal drive is nearly full, so the copy stopped. Delete some songs to make room, then import the drive again to carry on.".into()),
+        Err(Stop::Gone) => Err("The drive stopped answering. Was it unplugged? Plug it in and import it again to carry on.".into()),
+        Err(Stop::Other(e)) => Err(e),
+    }
+}
+
+/// The internal songs in a folder; a folder that is gone (just deleted) shows the nearest one above it.
+pub fn songs_browse(mut path: Vec<String>) -> Res {
+    let root = std::path::Path::new(songcopy::ROOT);
+    loop {
+        if let Some(dir) = songcopy::library_path(root, &path).filter(|p| p.is_dir()) {
+            return Res::Browse { entries: songcopy::list(&dir), path };
+        }
+        if path.pop().is_none() {
+            return Res::Browse { path, entries: vec![] };
+        }
+    }
+}
+
+pub fn songs_delete(path: &[String]) -> Result<String, String> {
+    songcopy::remove(std::path::Path::new(songcopy::ROOT), path).map(|_| if path.is_empty() { "All internal songs deleted".to_string() } else { "Deleted".to_string() })
 }
 
 pub fn songs_status() -> String {
@@ -1034,8 +1192,13 @@ pub fn sys_info() -> Vec<String> {
 
 /// One request to the root helper (see ctl.rs); Ok if it answered "ok".
 fn ctl_request(line: &str) -> Result<(), String> {
+    ctl_request_for(line, 5)
+}
+
+/// Like `ctl_request`, for a request that may take longer than a few seconds to answer (mounting a big drive).
+fn ctl_request_for(line: &str, secs: u64) -> Result<(), String> {
     let mut s = std::os::unix::net::UnixStream::connect(CTL_SOCKET).map_err(|e| format!("cannot reach the system helper: {e}"))?;
-    s.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    s.set_read_timeout(Some(Duration::from_secs(secs))).ok();
     s.write_all(format!("{line}\n").as_bytes()).map_err(|e| e.to_string())?;
     let mut reply = String::new();
     let _ = s.read_to_string(&mut reply);
@@ -1382,6 +1545,28 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         let mut two = vec![d("00:22:D7:AA:BE:D4", "Nintendo RVL-CNT-01"), d("00:22:D7:BB:BE:D4", "Nintendo RVL-CNT-01")];
         tag_duplicates(&mut two);
         assert_eq!((two[0].name.as_str(), two[1].name.as_str()), ("Nintendo RVL-CNT-01 (AA:BE:D4)", "Nintendo RVL-CNT-01 (BB:BE:D4)"));
+    }
+
+    #[test]
+    fn portable_drives_are_read_from_the_script_output() {
+        let out = "/dev/sda1|1000200000000|My Songs|exfat|1234-ABCD\n/dev/sdb|64000000000||vfat|9999-9999\n/dev/sdc1|5|X|ntfs|\nnot a drive\n/dev/sdd1|abc|X|ext4|u\n";
+        let d = parse_import_drives(out);
+        assert_eq!(d.len(), 3);
+        assert_eq!((d[0].dev.as_str(), d[0].label.as_str(), d[0].fs.as_str(), d[0].bytes), ("/dev/sda1", "My Songs", "EXFAT", 1_000_200_000_000));
+        assert_eq!((d[1].fs.as_str(), d[1].name()), ("FAT", "USB drive".to_string()));
+        assert_eq!(d[2].uuid, "");
+    }
+
+    #[test]
+    fn the_space_kept_free_is_a_tenth_between_one_and_a_half_and_four_gb() {
+        assert_eq!(reserve_kib(8_000_000), 1_500_000);
+        assert_eq!(reserve_kib(30_000_000), 3_000_000);
+        assert_eq!(reserve_kib(900_000_000), 4_000_000);
+    }
+
+    #[test]
+    fn internal_song_sources_are_shown_with_their_folder() {
+        assert_eq!(parse_sources("/data/songs/MyDrive\n/data/songs/MyDrive/Rock\n/media/songs/Songs\n/media/songs\n"), vec!["internal: MyDrive", "internal: MyDrive/Rock", "Songs", "the whole drive"]);
     }
 
     #[test]

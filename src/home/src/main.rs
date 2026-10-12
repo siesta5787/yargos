@@ -6,6 +6,7 @@ mod input;
 mod logo;
 mod model;
 mod session;
+mod songcopy;
 mod splash;
 mod screens;
 mod sys;

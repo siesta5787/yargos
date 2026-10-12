@@ -1,0 +1,80 @@
+#!/bin/sh
+# yargos-songs: portable drives whose songs can be copied to the internal drive (SYSTEM > Storage).
+#
+#   yargos-songs list           one line per drive: /dev/NAME|bytes|label|filesystem|uuid   (any user)
+#   yargos-songs mount /dev/X   mount that drive read-only at /run/yargos-import/mnt (root; through the helper)
+#   yargos-songs umount         unmount it again (root)
+#
+# Only a USB or SD drive that is not the one the system runs from is offered, and `mount` insists the device is one
+# of those, so the dashboard cannot use this to mount anything else. The drive is mounted read-only with no
+# programs and no device files: it is only ever read by the unprivileged player.
+set -u
+
+M=/run/yargos-import/mnt
+
+# The disk the running system lives on, e.g. "sda" or "nvme0n1" (as in yargos-install).
+root_disk() {
+    src=$(findmnt -no SOURCE /)
+    case $src in
+        /dev/root | "")
+            uuid=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' /proc/cmdline)
+            src=$(readlink -f "/dev/disk/by-partuuid/$uuid")
+            ;;
+    esac
+    lsblk -no PKNAME "$src" 2>/dev/null | head -n 1
+}
+
+# No regex in this image's jq. Labels are cleaned of control characters and the separator; they come from the drive.
+list() {
+    rd=$(root_disk)
+    [ -n "$rd" ] || return 0   # cannot tell which drive is the system's own: offer nothing
+    ${YARGOS_LSBLK:-lsblk} -Jlbo NAME,SIZE,TYPE,FSTYPE,LABEL,UUID,PKNAME,RM,TRAN,RO 2>/dev/null | jq -r --arg rd "$rd" '
+        def clean: if . == null then "" else (explode | map(select(. >= 32 and . != 124 and . != 127)) | implode) end;
+        def yes: (. // false | tostring) as $s | $s == "true" or $s == "1";
+        .blockdevices as $all
+        | ($all | map({key: .name, value: .}) | from_entries) as $by
+        | $all[]
+        | (if .type == "part" then ($by[.pkname] // .) else . end) as $disk
+        | select(
+            (.type == "part" or .type == "disk")
+            and ((.fstype // "") | IN("exfat", "ntfs", "vfat", "ext2", "ext3", "ext4"))
+            and ($disk.name != $rd)
+            and (.name | startswith("zram") | not) and (.name | startswith("loop") | not) and (.name | startswith("sr") | not)
+            and (.name | startswith("nbd") | not) and (.name | startswith("ram") | not)
+            and (($disk.rm | yes) or (($disk.tran // "") == "usb") or (.name | startswith("mmcblk"))))
+        | "/dev/\(.name)|\(.size | tonumber)|\(.label | clean)|\(.fstype)|\(.uuid | clean)"' 2>/dev/null
+}
+
+unmount_ours() {
+    mountpoint -q "$M" 2>/dev/null || return 0
+    umount "$M" 2>/dev/null || umount -l "$M" 2>/dev/null
+}
+
+case ${1:-} in
+    list) list ;;
+    mount)
+        [ "$(id -u)" = 0 ] || { echo "error: this needs the system helper"; exit 1; }
+        dev=${2:-}
+        list | cut -d'|' -f1 | grep -qx -- "$dev" || { echo "error: that is not a drive that can be imported"; exit 1; }
+        unmount_ours
+        mkdir -p "$M" && chmod 0755 /run/yargos-import "$M" || { echo "error: could not prepare the mount point"; exit 1; }
+        # A drive that is already mounted (the song drive, at /media/songs) cannot always be mounted a second time
+        # (NTFS): show the same files through a second view instead.
+        there=$(findmnt -rno TARGET -S "$dev" 2>/dev/null | grep -v '^/run/yargos-import' | head -n 1)
+        if [ -n "$there" ]; then
+            mount --bind "$there" "$M" || { echo "error: could not open the drive"; exit 1; }
+            mount -o remount,bind,ro,nosuid,nodev,noexec "$M" 2>/dev/null
+        else
+            mount -o ro,nosuid,nodev,noexec,noatime "$dev" "$M" || { echo "error: could not open the drive (is it damaged or still being checked by another computer?)"; exit 1; }
+        fi
+        echo ok
+        ;;
+    umount)
+        unmount_ours
+        echo ok
+        ;;
+    *)
+        sed -n '2,9p' "$0"
+        exit 2
+        ;;
+esac

@@ -16,6 +16,20 @@ docs/STATUS.md says what has and has not been verified.
 - The song drive: label it `YARGSONGS` (ext4, exFAT, NTFS or FAT). It mounts read-only at
   `/media/songs` with `nofail`, so a missing drive never blocks boot. Point YARG's song folder at
   `/media/songs` once; the path never changes after that.
+- The internal song library: `/data/songs/<name>/...` (SYSTEM > Storage). The data partition already fills the whole disk
+  (the installer gives it everything after the two system slots, `growdata` does the same on a stick), so there is nothing to
+  format: songs are a folder on it, owned by the player (a first-level exception next to `apps/yarg` and `yarg`, made by
+  `firstboot.sh`). Importing copies a portable drive into `/data/songs/<its label>/` (folders exactly as they are, minus
+  Windows housekeeping folders, links and special files). `songcopy.rs` does the copying as the player; root only mounts the
+  drive: `yargos-songs mount /dev/X` (through the helper request `songs-mount /dev/X`) mounts it read-only with no
+  exec/dev/suid at `/run/yargos-import/mnt`, after checking that the device is a USB/SD drive other than the system's own
+  (`yargos-songs list`); a drive already mounted (the YARGSONGS drive) is bind-mounted instead, since NTFS cannot be mounted
+  twice. Copies go to `<file>.yargos-part` and are renamed when complete; a file with the same size is skipped, so a stopped
+  or cut copy simply carries on when the import is repeated. A folder is named after the drive's label; a different drive
+  (another filesystem UUID, recorded in `.yargos-source`) with the same label gets `label (2)`. The last 10% of the disk
+  (at least 1.5 GB, at most 4 GB) always stays free: YARG's data, YARG updates and the system update download share it. The
+  installer does not carry `/data/songs` to a new disk (it can be huge): import again there. `song-sources` scans each
+  imported folder like a drive of its own, and `run-yarg` puts the results into YARG's `SongFolders`.
 - Wii guitars: the kernel config leaves `CONFIG_HID_WIIMOTE` off (it is only blacklisted in the dev setup). udev starts `yargos-bridge wii /dev/hidrawN` per Wiimote
   (`057E:0306` / `057E:0330`). It initialises the extension, reads the guitar, and creates a uhid
   device impersonating a PS3 Guitar Hero World Tour guitar (`12BA:0100`) using the PlasticBand
@@ -56,13 +70,15 @@ The dashboard is software-rendered (no GPU needed), works with a keyboard, mouse
 has these screens: Wi-Fi (scan, join, an on-screen keyboard for passwords), Sound (pick the output, volume,
 test tone; writes `/data/asound.conf`), Bluetooth (scan, pair/connect, forget; Wiimotes get their own
 hold-1+2 flow), Updates (YARG: check, install, automatic on/off, go back), Songs (the drive, and one YARG song source
-per folder on it) and System (restart, shut down, install to this computer's disk, connected devices, system update). Instruments navigate like YARG's menus: strum or cymbals move up/down, green
+per folder on it) and System (restart, shut down, install to this computer's disk, connected devices, system update,
+storage: import songs to the internal drive, browse them and delete a song, a folder or everything with LEFT). Instruments navigate like YARG's menus: strum or cymbals move up/down, green
 fret/pad = OK, red = Back, the two outer frets/pads = left/right. Everything that needs root goes through a helper
 (`yargos-ctl.socket`, `yargos-home ctl`) that accepts only a few fixed requests: `poweroff`, `reboot`, `install /dev/<disk>`,
-`sound <card> <device>` and the system update words (`os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`).
+`sound <card> <device>`, `songs-mount /dev/<partition>`, `songs-umount` and the system update words (`os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`).
 
 `yargos-home screenshot <screen> out.png` renders any screen with demo data (home, wifi, password, sound,
-bluetooth, updates, songs, system, devices, yarg, os-update, busy, confirm, splash) without a display.
+bluetooth, updates, songs, system, devices, yarg, os-update, storage, import, import-confirm, manage, manage-songs,
+manage-confirm, busy, confirm, splash) without a display.
 
 The boot splash (`yargos-home splash`) draws the logo straight onto `/dev/fb0` early in boot; the kernel
 needs `CONFIG_DRM_FBDEV_EMULATION` for that.

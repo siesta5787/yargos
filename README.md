@@ -23,6 +23,10 @@ updates itself like a console.
   - USB microphones and USB MIDI pianos/drums/keys work as in YARG on any Linux.
 - **Song drive:** any drive labelled `YARGSONGS` (exFAT, NTFS, FAT, ext4) mounts itself; each top-level folder that holds songs
   becomes its own song source in YARG.
+- **Internal songs:** SYSTEM > Storage copies a whole portable drive (folders exactly as they are) onto the computer's
+  own disk, so the songs are there without the drive. Imported songs become YARG song sources like the song drive does,
+  and a song, a folder or everything can be deleted again from the same screen, all with a game controller. No formatting:
+  the songs go in a folder on the data partition, which already fills the disk; the last few GB stay free for the system.
 - **Screens:** HDMI/TV mirroring, and a closed laptop lid keeps the external screen on.
 - **System updates over the air:** two system slots (A/B), signed releases, automatic fallback if a new system does not come up.
   It never restarts by itself. See [Updates](#updates).
@@ -111,7 +115,8 @@ own, and keep your private key out of the repository. Details in [docs/LICENSING
 
 `cargo test` in `src/home` and `src/bridge`; `tools/test-update.sh` (YARG updater against a fake release server);
 `tools/test-os-update.sh` (system updates in QEMU: good update, bad update with automatic fallback, power cut mid-write, going
-back, install to a second disk; about 35 minutes). `tools/qemu-run.sh` boots the image in QEMU (`HEADLESS=1` for a serial
+back, install to a second disk; about 35 minutes); `tools/test-songs.sh` (importing portable drives and deleting internal songs in QEMU,
+with key presses on the real dashboard; about 10 minutes). `tools/qemu-run.sh` boots the image in QEMU (`HEADLESS=1` for a serial
 console; see its header) and `yargos-home screenshot <screen> out.png` renders any dashboard screen without a display.
 
 ## Status

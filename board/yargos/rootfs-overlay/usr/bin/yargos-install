@@ -9,7 +9,7 @@
 # first update is written there) and a data partition for the rest. Every partition gets a fresh random GUID and the
 # boot entries are written to match, so the USB drive and the installed disk can be plugged in together without
 # confusing each other. What is on the running drive's data partition (YARG, its settings, Bluetooth pairings) is
-# copied across.
+# copied across (not the internal song library, /data/songs: it can be huge; import the songs again on the new disk).
 
 set -u
 
@@ -126,7 +126,7 @@ EOF
     # Everything except a half-downloaded system update and the filesystem's own lost+found.
     for f in /data/* /data/.[!.]*; do
         [ -e "$f" ] || continue
-        case $f in /data/os-update | /data/lost+found) continue ;; esac
+        case $f in /data/os-update | /data/songs | /data/lost+found) continue ;; esac
         cp -a "$f" "$W/data/" || fail "Copying your data failed (is the disk big enough?)"
     done
 
