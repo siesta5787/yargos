@@ -52,7 +52,10 @@ pub fn parse(line: &str) -> Option<Request> {
 fn write_sound(card: u32, dev: u32) -> std::io::Result<()> {
     // Written beside the target and renamed over it: /data is root's, so nothing can be swapped under us.
     let tmp = format!("{}.new", crate::sys::ASOUND);
-    std::fs::write(&tmp, crate::sys::asound_text(card, dev))?;
+    // By the card's id, not its number: USB sound cards (the piano, a microphone) renumber the cards from boot to boot.
+    let id = std::fs::read_to_string(format!("/proc/asound/card{card}/id")).ok().map(|s| s.trim().to_string());
+    let id = id.filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    std::fs::write(&tmp, crate::sys::asound_text(id.as_deref(), card, dev))?;
     std::fs::rename(&tmp, crate::sys::ASOUND)
 }
 

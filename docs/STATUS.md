@@ -23,6 +23,9 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   the newest dashboard screens, a Rii 2.4 GHz keyboard receiver (its keys did nothing; cause unknown), drums in every lane,
   the guitar's touch bar, pitch detection from a real microphone, eMMC / SD readers / Intel VMD disks, Secure Boot machines
   (not supported: turn it off), the mini PC.
+- YARG's "Failed to initialize audio device" on the laptop: the suspected cause (ALSA's default is card 0 device 0, an
+  HDMI-only card on AMD, or the saved card number moved when USB devices came and went) is a guess. Fix written (the
+  output is saved by card id, and one is chosen before YARG starts if the saved one is gone) and unit-tested only.
 - Whether `hid-sony` claims the virtual `12BA:0100` / `12BA:0210` devices on every kernel (fallback: impersonate a Santroller
   device, `1209:2882`).
 - Playing songs with the virtual drums in every lane (pads, cymbals, kick, kick2) and drum velocity for yellow and green

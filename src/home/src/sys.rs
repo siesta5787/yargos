@@ -242,18 +242,73 @@ pub fn parse_aplay(out: &str) -> Vec<Output> {
         .collect()
 }
 
-pub fn parse_asound(conf: &str) -> Option<(u32, u32)> {
+/// `/proc/asound/cards` -> (card number, card id): " 0 [PCH            ]: HDA-Intel - HDA Intel PCH".
+pub fn parse_card_ids(text: &str) -> Vec<(u32, String)> {
+    text.lines()
+        .filter_map(|l| {
+            let (n, rest) = l.split_once('[')?;
+            let id = rest.split_once(']')?.0.trim();
+            Some((n.trim().parse().ok()?, id.to_string()))
+        })
+        .collect()
+}
+
+/// The output named in asound.conf: `hw:CARD=<id>,DEV=<n>` (what the Sound screen writes; the id is stable when USB
+/// sound cards come and go, the number is not) or an older `hw:<card>,<n>`. None if it is not there or names a card that is
+/// not connected.
+pub fn parse_asound(conf: &str, cards: &[(u32, String)]) -> Option<(u32, u32)> {
     let line = conf.lines().find(|l| l.contains("slave.pcm"))?;
     let hw = line.split("hw:").nth(1)?;
     let (c, d) = hw.split_once(',')?;
-    Some((c.trim().parse().ok()?, d.trim_matches(|ch: char| !ch.is_ascii_digit()).parse().ok()?))
+    let dev = d.trim_start_matches("DEV=").trim_matches(|ch: char| !ch.is_ascii_digit()).parse().ok()?;
+    let card = match c.trim().strip_prefix("CARD=") {
+        Some(id) => cards.iter().find(|(_, i)| i == id)?.0,
+        None => c.trim().parse().ok()?,
+    };
+    Some((card, dev))
 }
 
-pub fn asound_text(card: u32, dev: u32) -> String {
+/// What to play on when nothing was chosen (or the chosen card is gone): the first output that is not a screen's sound
+/// (HDMI / DisplayPort), else the first. ALSA's own default is card 0 device 0, which on an AMD laptop is an HDMI card
+/// that has no device 0: YARG then says it cannot initialise an audio device.
+pub fn best_output(outs: &[Output]) -> Option<&Output> {
+    let screen = |o: &Output| {
+        let l = o.label.to_lowercase();
+        l.contains("hdmi") || l.contains("displayport") || l.contains(" dp")
+    };
+    outs.iter().find(|o| !screen(o)).or_else(|| outs.first())
+}
+
+pub fn read_cards() -> Vec<(u32, String)> {
+    parse_card_ids(&std::fs::read_to_string("/proc/asound/cards").unwrap_or_default())
+}
+
+/// The saved choice if it is still a real output.
+pub fn saved_output(outs: &[Output]) -> Option<(u32, u32)> {
+    let cur = std::fs::read_to_string(ASOUND).ok().and_then(|c| parse_asound(&c, &read_cards()))?;
+    outs.iter().any(|o| (o.card, o.dev) == cur).then_some(cur)
+}
+
+/// Before YARG starts: if the saved output is missing, or none was ever chosen, choose one, so YARG's default device exists.
+pub fn ensure_sound() {
+    let outs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
+    if saved_output(&outs).is_none() {
+        if let Some(o) = best_output(&outs) {
+            let _ = ctl_request(&format!("sound {} {}", o.card, o.dev));
+        }
+    }
+}
+
+/// `card_id`: the card's id when known (the card number can change between boots, the id does not).
+pub fn asound_text(card_id: Option<&str>, card: u32, dev: u32) -> String {
+    let (hw, ctl) = match card_id {
+        Some(id) => (format!("hw:CARD={id},DEV={dev}"), id.to_string()),
+        None => (format!("hw:{card},{dev}"), card.to_string()),
+    };
     format!(
         "# Written by the YARGOS dashboard (Sound screen). Delete this file to return to the default output.\n\
-         pcm.!default {{\n    type plug\n    slave.pcm \"hw:{card},{dev}\"\n}}\n\
-         ctl.!default {{\n    type hw\n    card {card}\n}}\n"
+         pcm.!default {{\n    type plug\n    slave.pcm \"{hw}\"\n}}\n\
+         ctl.!default {{\n    type hw\n    card {ctl}\n}}\n"
     )
 }
 
@@ -280,7 +335,7 @@ fn volume_control(card: u32) -> Option<String> {
 
 pub fn sound_refresh() -> Res {
     let outputs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
-    let current = std::fs::read_to_string(ASOUND).ok().and_then(|c| parse_asound(&c)).or_else(|| outputs.first().map(|o| (o.card, o.dev)));
+    let current = saved_output(&outputs).or_else(|| best_output(&outputs).map(|o| (o.card, o.dev)));
     let volume = current.and_then(|(card, _)| {
         let ctl = volume_control(card)?;
         let out = run("amixer", &["-c", &card.to_string(), "sget", &ctl]).ok()?;
@@ -924,10 +979,9 @@ pub fn os_cancel() {
 
 pub fn sound_label() -> String {
     let outs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
-    let cur = std::fs::read_to_string(ASOUND).ok().and_then(|c| parse_asound(&c));
-    match cur {
-        Some((c, d)) => outs.iter().find(|o| o.card == c && o.dev == d).map(|o| o.label.clone()).unwrap_or_else(|| format!("card {c}, device {d}")),
-        None => outs.first().map(|o| o.label.clone()).unwrap_or_else(|| "no sound device".into()),
+    match saved_output(&outs).and_then(|(c, d)| outs.iter().find(|o| o.card == c && o.dev == d)).or_else(|| best_output(&outs)) {
+        Some(o) => o.label.clone(),
+        None => "no sound device".into(),
     }
 }
 
@@ -1267,10 +1321,26 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!(outs.len(), 3);
         assert_eq!(outs[1], Output { card: 0, dev: 3, label: "HDMI 0 (HDA Intel PCH)".into() });
         assert_eq!(outs[2].card, 1);
-        let conf = asound_text(0, 3);
-        assert_eq!(parse_asound(&conf), Some((0, 3)));
-        assert!(conf.contains("card 0"));
-        assert_eq!(parse_asound("# nothing here"), None);
+        let cards = parse_card_ids(" 0 [Generic        ]: HDA-Intel - HDA ATI HDMI\n                      HDA ATI HDMI at 0xfd7e8000\n 1 [Audio          ]: USB-Audio - USB Audio\n");
+        assert_eq!(cards, vec![(0, "Generic".to_string()), (1, "Audio".to_string())]);
+        // The id keeps pointing at the same card when the numbers move; an old numeric file still reads; a missing card is None.
+        let conf = asound_text(Some("Audio"), 1, 0);
+        assert!(conf.contains("hw:CARD=Audio,DEV=0") && conf.contains("card Audio"));
+        assert_eq!(parse_asound(&conf, &cards), Some((1, 0)));
+        let moved = vec![(0, "Audio".to_string())];
+        assert_eq!(parse_asound(&conf, &moved), Some((0, 0)));
+        assert_eq!(parse_asound(&conf, &[]), None);
+        assert_eq!(parse_asound(&asound_text(None, 0, 3), &cards), Some((0, 3)));
+        assert_eq!(parse_asound("# nothing here", &cards), None);
+    }
+
+    #[test]
+    fn default_output_avoids_screens() {
+        let out = "card 0: Generic [HDA ATI HDMI], device 3: HDMI 0 [HDMI 0]\ncard 1: Generic_1 [HD-Audio Generic], device 0: ALC285 Analog [ALC285 Analog]\n";
+        let outs = parse_aplay(out);
+        assert_eq!(best_output(&outs).map(|o| o.card), Some(1));
+        assert_eq!(best_output(&outs[..1]).map(|o| o.card), Some(0));
+        assert_eq!(best_output(&[]), None);
     }
 
     #[test]

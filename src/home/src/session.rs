@@ -36,6 +36,7 @@ fn launch_yarg(tx: Sender<Event>) {
                 let _ = tx.send(Event::Notice("The last YARG update did not work, so the previous version was restored".into()));
             }
         }
+        sys::ensure_sound();
         let start = Instant::now();
         let mut child = match Command::new(&cmd).spawn() {
             Ok(c) => c,
