@@ -42,6 +42,14 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
 
 ## Detailed log (QEMU and tests)
 
+- Published release (2026-10-12 UTC): `os-2026.10.13` (system image for updates, the flashable disk image, the legal bundle) and
+  the `os-channel` release holding `stable.json` + signature. Checked from outside, anonymously: the channel files download and
+  the signature verifies against the key in the repo; the updater shipped inside the image (extracted from it) reports "update
+  available" for an older version and "up to date" for 2026.10.13; the update payload downloads through GitHub's redirect and
+  matches the signed manifest; the flashable disk image decompresses to exactly the built image and boots to the dashboard
+  (QEMU). Not yet run: a real device installing an update from GitHub (2026.10.13 is the first version there is to update
+  from; the first real update will be the next release).
+
 - First public release (found by checking the published files from outside): the system updater fetched the update channel
   without following redirects, and GitHub always redirects, so a device would have saved an empty file and refused it as
   "not signed by us". Fixed (`curl -L` and an empty-file check) in 2026.10.13; the test server now redirects like GitHub

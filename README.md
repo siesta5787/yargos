@@ -117,7 +117,8 @@ console; see its header) and `yargos-home screenshot <screen> out.png` renders a
 ## Status
 
 Tested on a 2020 HP laptop (Ryzen 4000) from a USB stick and installed to its disk: boot, Wi-Fi, sound, YARG, NTFS song
-drive, Wii guitar, ION drums, microphone, USB piano, HDMI mirroring. System updates have so far only run in QEMU. The full,
+drive, Wii guitar, ION drums, microphone, USB piano, HDMI mirroring. System updates have so far only run in QEMU (the first
+release, 2026.10.13, is published; the first real update will be the next one). The full,
 honest list of what is and is not verified is in [docs/STATUS.md](docs/STATUS.md).
 
 ## License
