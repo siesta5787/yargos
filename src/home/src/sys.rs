@@ -948,6 +948,18 @@ pub fn parse_data_partuuid(cmdline: &str) -> Option<String> {
     })
 }
 
+/// The device mounted at /data, from /proc/mounts (None if it is not a /dev device or not mounted).
+pub fn parse_data_mount_source(mounts: &str) -> Option<String> {
+    mounts
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            let (src, dir) = (f.next()?, f.next()?);
+            (dir == "/data" && src.starts_with("/dev/")).then(|| src.to_string())
+        })
+        .last()
+}
+
 /// Sectors left unused after a partition: the disk's size minus where the partition ends.
 pub fn slack_sectors(disk: u64, part_start: u64, part_size: u64) -> u64 {
     disk.saturating_sub(part_start + part_size)
@@ -956,8 +968,14 @@ pub fn slack_sectors(disk: u64, part_start: u64, part_size: u64) -> u64 {
 /// KiB of the drive after the data partition that nothing uses (0 when the partition fills it, or it cannot be told).
 pub fn data_slack_kib() -> u64 {
     let slack = || -> Option<u64> {
-        let id = parse_data_partuuid(&std::fs::read_to_string("/proc/cmdline").ok()?)?;
-        let dev = std::fs::canonicalize(format!("/dev/disk/by-partuuid/{id}")).ok()?;
+        // What is mounted at /data is the truth; the boot entry's GUID is only how it got there.
+        let dev = match parse_data_mount_source(&std::fs::read_to_string("/proc/mounts").unwrap_or_default()) {
+            Some(src) => std::fs::canonicalize(src).ok()?,
+            None => {
+                let id = parse_data_partuuid(&std::fs::read_to_string("/proc/cmdline").ok()?)?;
+                std::fs::canonicalize(format!("/dev/disk/by-partuuid/{id}")).ok()?
+            }
+        };
         let name = dev.file_name()?.to_str()?.to_string();
         let num = |p: String| std::fs::read_to_string(p).ok()?.trim().parse::<u64>().ok();
         let disk = std::fs::canonicalize(format!("/sys/class/block/{name}/..")).ok()?.file_name()?.to_str()?.to_string();
@@ -1642,6 +1660,15 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!((d[0].dev.as_str(), d[0].label.as_str(), d[0].fs.as_str(), d[0].bytes), ("/dev/sda1", "My Songs", "EXFAT", 1_000_200_000_000));
         assert_eq!((d[1].fs.as_str(), d[1].name()), ("FAT", "USB drive".to_string()));
         assert_eq!(d[2].uuid, "");
+    }
+
+    #[test]
+    fn the_device_mounted_at_data_is_read_from_proc_mounts() {
+        let m = "/dev/root / ext4 rw 0 0\n/dev/sdb4 /data ext4 rw,noatime 0 0\ntmpfs /tmp tmpfs rw 0 0\n/dev/sda1 /media/songs ext4 ro 0 0\n";
+        assert_eq!(parse_data_mount_source(m).as_deref(), Some("/dev/sdb4"));
+        assert_eq!(parse_data_mount_source("systemd-1 /data autofs rw 0 0\n"), None);
+        assert_eq!(parse_data_mount_source("/dev/sda1 /media/data ext4 rw 0 0\n"), None);
+        assert_eq!(parse_data_mount_source(""), None);
     }
 
     #[test]
