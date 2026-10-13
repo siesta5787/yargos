@@ -24,17 +24,18 @@ pub fn model(name: &str) -> Model {
         Network { name: "Garage".into(), secured: true, signal: 1, connected: false, known: true },
     ];
     m.outputs = vec![
-        Output { card: 0, dev: 3, label: "HDMI 0 (HDA ATI HDMI)".into() },
-        Output { card: 0, dev: 7, label: "HDMI 1 (HDA ATI HDMI)".into() },
-        Output { card: 1, dev: 0, label: "Analog (HDA Generic)".into() },
-        Output { card: 2, dev: 0, label: "USB Audio (Focusrite)".into() },
+        Output { card: 0, dev: 3, label: "HDMI 0 (HDA ATI HDMI)".into(), bt: None },
+        Output { card: 0, dev: 7, label: "HDMI 1 (HDA ATI HDMI)".into(), bt: None },
+        Output { card: 1, dev: 0, label: "Analog (HDA Generic)".into(), bt: None },
+        Output { card: 2, dev: 0, label: "USB Audio (Focusrite)".into(), bt: None },
     ];
     m.cur_card_dev = Some((0, 3));
+    m.cur_bt = None;
     m.volume = Some((1, 70));
     m.bt = vec![
-        BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true, battery: None, battery_low: false },
-        BtDevice { mac: "AA:BB:CC:00:00:01".into(), name: "Logitech K380".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false },
-        BtDevice { mac: "AA:BB:CC:00:00:02".into(), name: "Polybar Guitar".into(), paired: true, connected: false, ready: true, battery: None, battery_low: false },
+        BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true, battery: None, battery_low: false, audio: false },
+        BtDevice { mac: "AA:BB:CC:00:00:01".into(), name: "Logitech K380".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false, audio: false },
+        BtDevice { mac: "AA:BB:CC:00:00:02".into(), name: "Polybar Guitar".into(), paired: true, connected: false, ready: true, battery: None, battery_low: false, audio: false },
     ];
     m.upd = UpdInfo {
         installed: "0.15.0".into(),
@@ -221,12 +222,29 @@ pub fn model(name: &str) -> Model {
             m.sel = 1;
             m.status.low_battery = vec!["Wii guitar (3A) 12%".into()];
             m.bt = vec![
-                BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01 (D4)".into(), paired: false, connected: true, ready: true, battery: Some(82), battery_low: false },
-                BtDevice { mac: "00:1E:35:00:00:3A".into(), name: "Nintendo RVL-CNT-01 (3A)".into(), paired: false, connected: true, ready: true, battery: Some(12), battery_low: true },
-                BtDevice { mac: "AA:BB:CC:00:00:01".into(), name: "Logitech K380".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false },
+                BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01 (D4)".into(), paired: false, connected: true, ready: true, battery: Some(82), battery_low: false, audio: false },
+                BtDevice { mac: "00:1E:35:00:00:3A".into(), name: "Nintendo RVL-CNT-01 (3A)".into(), paired: false, connected: true, ready: true, battery: Some(12), battery_low: true, audio: false },
+                BtDevice { mac: "AA:BB:CC:00:00:01".into(), name: "Logitech K380".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false, audio: false },
             ];
         }
         "home-battery" => m.status.low_battery = vec!["Wii guitar (3A) 12%".into()],
+        "sound-bt" => {
+            m.screen = Screen::Sound;
+            m.sel = 4;
+            m.outputs.push(Output { card: 0, dev: 0, label: "Soundcore Liberty 4 (Bluetooth)".into(), bt: Some("08:DF:1F:AA:BB:CC".into()) });
+            m.cur_bt = Some("08:DF:1F:AA:BB:CC".into());
+            m.cur_card_dev = None;
+            m.volume = None;
+        }
+        "bt-audio" => {
+            m.screen = Screen::Bluetooth;
+            m.sel = 1;
+            m.bt = vec![
+                BtDevice { mac: "08:DF:1F:AA:BB:CC".into(), name: "Soundcore Liberty 4".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false, audio: true },
+                BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01 (D4)".into(), paired: false, connected: true, ready: true, battery: Some(82), battery_low: false, audio: false },
+                BtDevice { mac: "AA:BB:CC:00:00:02".into(), name: "JBL Flip 6".into(), paired: false, connected: false, ready: true, battery: None, battery_low: false, audio: true },
+            ];
+        }
         "bt-notready" => {
             m.screen = Screen::Bluetooth;
             m.bt[0].connected = true;

@@ -37,6 +37,17 @@ docs/STATUS.md says what has and has not been verified.
   (at least 1.5 GB, at most 4 GB) always stays free: YARG's data, YARG updates and the system update download share it. The
   installer does not carry `/data/songs` to a new disk (it can be huge): import again there. `song-sources` scans each
   imported folder like a drive of its own, and `run-yarg` puts the results into YARG's `SongFolders`.
+- Bluetooth headphones as the sound output: BlueZ is built with its audio plugin and `bluez-alsa` provides the ALSA plugin
+  (`pcm.bluealsa`, A2DP source only: `bluealsa.service` is overridden to `-p a2dp-source`; SBC, no AAC/aptX so no
+  non-free codec libraries). The dashboard pairs a headset in ONE `bluetoothctl` session that registers an agent (a one-shot
+  `bluetoothctl pair` has none, and earbuds' pairing is refused halfway), trusts and connects it, and then asks the helper
+  for `sound-bt <address>`: asound.conf gets a `bluealsa` slave for that exact address (the address is validated: an ALSA
+  config can load programs) and `/data/asound.prefer` records the choice. Before every YARG start `ensure_sound` runs
+  `plan_sound`: a preferred headset that is connected plays; one that is switched off is replaced in asound.conf by a real
+  sound card (`sound-temp`, which keeps the preference) so YARG always has a default output; picking a sound card forgets
+  the preference. The Sound screen lists connected headsets as outputs; there is no volume slider for them (the headset has
+  its own). Latency is that of SBC (roughly 150-250 ms): YARG's audio calibration compensates for a steady delay. A2DP
+  traffic shares the radio with the Wii guitars; the Wii auto-connect scan only runs on the dashboard, never during YARG.
 - Wii guitar batteries: the Wiimote's status report (0x20, answer to a 0x15 request) carries a level byte (0xC8 = full) and
   a "battery low" flag. The bridge writes `/run/yargos-bridge/battery-hidrawN` (`<percent> <low 0|1>`); at connect it asks
   anyway, and while the guitar streams it asks again only after 10 s without any change on it and at most once a minute (a

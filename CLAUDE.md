@@ -171,6 +171,14 @@ retries (`sys::data_slack_kib`, helper word `grow-data`) and the updater checks 
 `df` before writing something large. `BOOT_USB=1 tools/qemu-run.sh` boots the image as a USB stick; add
 `CMDLINE="systemd.mask=yargos-growdata.service ..."` to test the dashboard's retry.
 
+## Bluetooth headphones (sound output)
+
+BlueZ has its audio plugin and `bluez-alsa` (A2DP source only, SBC) supplies `pcm.bluealsa`; there is no PipeWire/PulseAudio.
+Pair a headset in one `bluetoothctl` session WITH an agent (see `bt_connect_audio`): a one-shot `bluetoothctl pair` has none and
+earbuds fail halfway. asound.conf only ever names a headset by a validated address (`ctl::valid_mac`: an ALSA config can load
+programs). `/data/asound.prefer` is the chosen headset; `plan_sound` (before every YARG start) uses it only while connected, else
+a real sound card via `sound-temp`: YARG must always find an existing default output. Never scan for Wiimotes while YARG runs.
+
 ## Internal songs (SYSTEM > Storage)
 
 Read docs/DESIGN.md ("The internal song library"). Rules: songs live in `/data/songs/<drive name>/` on the data partition (no

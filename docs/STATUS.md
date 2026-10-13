@@ -33,6 +33,9 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   hours with its old drive removed (each lookup under /media/songs waited 3 s). Measured and fixed in QEMU
   (`tools/test-songdrive.sh`); not yet seen on the real machine. The first scan of newly imported songs from a USB stick may
   still take a while: that is YARG reading thousands of files.
+- Bluetooth headphones as the sound output (Anker Soundcore Liberty 4 asked for): built, the config/helper/decision logic is
+  unit-tested and the services/plugin were checked in QEMU (`tools/test-btaudio.sh`), but QEMU has no Bluetooth radio:
+  pairing, the audio link, the delay, and how it shares the radio with two Wii guitars are all untried on real hardware.
 - SYSTEM > Storage (import a portable drive to the internal songs, browse, delete): unit-tested, and `tools/test-songs.sh`
   drives the real dashboard in QEMU with three fake ext4 USB drives (import, same-name drives, a drive already mounted as
   the song drive, YARG's folder list, deleting a folder, a song and everything: all pass). Not tried on real hardware: real

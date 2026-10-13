@@ -58,6 +58,8 @@ pub struct Output {
     pub card: u32,
     pub dev: u32,
     pub label: String,
+    /// A connected Bluetooth headset (its address): played through bluealsa, not a sound card.
+    pub bt: Option<String>,
 }
 
 /// A portable drive that can be imported (see `yargos-songs list`).
@@ -146,6 +148,8 @@ pub struct BtDevice {
     pub battery: Option<u8>,
     /// Its batteries are nearly empty (its own flag, or a low level).
     pub battery_low: bool,
+    /// Headphones, earbuds or a speaker: something that can be a sound output.
+    pub audio: bool,
 }
 
 impl BtDevice {
@@ -196,6 +200,8 @@ pub enum Cmd {
     WifiScan,
     WifiConnect { ssid: String, pass: Option<String> },
     SoundSelect { card: u32, dev: u32 },
+    /// Play on this Bluetooth headset (its address).
+    SoundSelectBt(String),
     SoundVolume { card: u32, pct: u8 },
     SoundTest,
     BtScan,
@@ -309,7 +315,7 @@ pub struct SongsInfo {
 pub enum Res {
     Status(Status),
     Wifi { dev: Option<String>, nets: Vec<Network> },
-    Sound { outputs: Vec<Output>, current: Option<(u32, u32)>, volume: Option<(u32, u8)> },
+    Sound { outputs: Vec<Output>, current: Option<(u32, u32)>, current_bt: Option<String>, volume: Option<(u32, u8)> },
     Bt { present: bool, devs: Vec<BtDevice> },
     Upd(UpdInfo),
     Songs(SongsInfo),
@@ -446,6 +452,8 @@ pub struct Model {
     pub osk: Osk,
     pub outputs: Vec<Output>,
     pub cur_card_dev: Option<(u32, u32)>,
+    /// The Bluetooth headset the sound goes to (when it is not a sound card).
+    pub cur_bt: Option<String>,
     pub volume: Option<(u32, u8)>,
     pub bt: Vec<BtDevice>,
     pub bt_present: bool,
@@ -494,6 +502,7 @@ impl Model {
             osk: Osk::new(""),
             outputs: vec![],
             cur_card_dev: None,
+            cur_bt: None,
             volume: None,
             bt: vec![],
             bt_present: true,
@@ -854,7 +863,14 @@ impl Model {
             Screen::Sound => {
                 if self.sel < self.outputs.len() {
                     let o = self.outputs[self.sel].clone();
+                    if let Some(mac) = o.bt.clone() {
+                        self.cur_bt = Some(mac.clone());
+                        self.cur_card_dev = None;
+                        self.volume = None; // the headset has its own volume
+                        return vec![Cmd::SoundSelectBt(mac)];
+                    }
                     self.cur_card_dev = Some((o.card, o.dev));
+                    self.cur_bt = None;
                     vec![Cmd::SoundSelect { card: o.card, dev: o.dev }]
                 } else if self.volume.is_some() && self.sel == self.outputs.len() {
                     vec![]
@@ -874,6 +890,8 @@ impl Model {
                 let d = self.bt[self.sel - 1].clone();
                 self.busy = Some(if d.is_wiimote() {
                     format!("Connecting {}… keep holding 1+2", d.name)
+                } else if d.audio {
+                    format!("Connecting {}… it must be in pairing mode (or switched on). This takes up to 30 seconds", d.name)
                 } else {
                     format!("Connecting {}…", d.name)
                 });
@@ -1081,9 +1099,10 @@ impl Model {
                 self.busy = None;
                 self.sel = self.sel.min(self.row_count().saturating_sub(1));
             }
-            Res::Sound { outputs, current, volume } => {
+            Res::Sound { outputs, current, current_bt, volume } => {
                 self.outputs = outputs;
                 self.cur_card_dev = current;
+                self.cur_bt = current_bt;
                 self.volume = volume;
                 self.loading = false;
                 self.sel = self.sel.min(self.row_count().saturating_sub(1));
@@ -1419,7 +1438,7 @@ mod tests {
     fn volume_row_adjusts_with_left_and_right() {
         let mut m = Model::new();
         m.screen = Screen::Sound;
-        m.outputs = vec![Output { card: 0, dev: 3, label: "HDMI".into() }];
+        m.outputs = vec![Output { card: 0, dev: 3, label: "HDMI".into(), bt: None }];
         m.volume = Some((0, 50));
         m.sel = 1;
         assert_eq!(m.handle(Nav::Right), vec![Cmd::SoundVolume { card: 0, pct: 55 }]);
@@ -1620,8 +1639,8 @@ mod tests {
         let mut m = Model::new();
         m.screen = Screen::Sound;
         m.outputs = vec![
-            Output { card: 0, dev: 3, label: "HDMI".into() },
-            Output { card: 1, dev: 0, label: "USB".into() },
+            Output { card: 0, dev: 3, label: "HDMI".into(), bt: None },
+            Output { card: 1, dev: 0, label: "USB".into(), bt: None },
         ];
         m.sel = 1;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::SoundSelect { card: 1, dev: 0 }]);
@@ -1629,12 +1648,45 @@ mod tests {
     }
 
     #[test]
+    fn a_bluetooth_headset_is_an_output_and_choosing_it_drops_the_volume_slider() {
+        let mut m = Model::new();
+        m.screen = Screen::Sound;
+        m.outputs = vec![
+            Output { card: 1, dev: 0, label: "Analog".into(), bt: None },
+            Output { card: 0, dev: 0, label: "Liberty 4 (Bluetooth)".into(), bt: Some("08:DF:1F:AA:BB:CC".into()) },
+        ];
+        m.cur_card_dev = Some((1, 0));
+        m.volume = Some((1, 70));
+        m.sel = 1;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::SoundSelectBt("08:DF:1F:AA:BB:CC".into())]);
+        assert_eq!((m.cur_bt.as_deref(), m.cur_card_dev, m.volume), (Some("08:DF:1F:AA:BB:CC"), None, None));
+        // Back to a sound card forgets the headset.
+        m.sel = 0;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::SoundSelect { card: 1, dev: 0 }]);
+        assert!(m.cur_bt.is_none() && m.cur_card_dev == Some((1, 0)));
+        // The refresh after a change carries the headset as the current output.
+        m.apply(Res::Sound { outputs: m.outputs.clone(), current: None, current_bt: Some("08:DF:1F:AA:BB:CC".into()), volume: None });
+        assert_eq!(m.cur_bt.as_deref(), Some("08:DF:1F:AA:BB:CC"));
+    }
+
+    #[test]
+    fn connecting_headphones_says_they_must_be_in_pairing_mode_and_takes_a_while() {
+        let mut m = Model::new();
+        m.screen = Screen::Bluetooth;
+        m.bt = vec![BtDevice { mac: "08:DF:1F:AA:BB:CC".into(), name: "Liberty 4".into(), paired: false, connected: false, ready: true, battery: None, battery_low: false, audio: true }];
+        m.sel = 1;
+        let cmds = m.handle(Nav::Ok);
+        assert!(matches!(cmds.as_slice(), [Cmd::BtConnect(d)] if d.audio));
+        assert!(m.busy.as_deref().unwrap().contains("pairing mode"));
+    }
+
+    #[test]
     fn bluetooth_wiimote_hint_and_forgetting() {
         let mut m = Model::new();
         m.screen = Screen::Bluetooth;
         m.bt = vec![
-            BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true, battery: None, battery_low: false },
-            BtDevice { mac: "AA".into(), name: "Keyboard".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false },
+            BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true, battery: None, battery_low: false, audio: false },
+            BtDevice { mac: "AA".into(), name: "Keyboard".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false, audio: false },
         ];
         m.sel = 1;
         assert!(matches!(m.handle(Nav::Ok)[0], Cmd::BtConnect(_)));

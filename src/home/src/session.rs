@@ -159,6 +159,10 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 done(tx, sys::sound_select(card, dev));
                 res(tx, sys::sound_refresh());
             }),
+            Cmd::SoundSelectBt(mac) => bg(tx, move |tx| {
+                done(tx, sys::sound_select_bt(&mac));
+                res(tx, sys::sound_refresh());
+            }),
             Cmd::SoundVolume { card, pct } => bg(tx, move |_| sys::sound_volume(card, pct)),
             Cmd::SoundTest => bg(tx, |tx| done(tx, sys::sound_test())),
             Cmd::Refresh(Screen::Bluetooth) => bg(tx, |tx| res(tx, sys::bt_list())),

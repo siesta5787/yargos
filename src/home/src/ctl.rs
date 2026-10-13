@@ -11,8 +11,13 @@ pub enum Request {
     Fixed(&'static str, &'static [&'static str]),
     /// `install /dev/NAME`: erase that disk and install the system on it.
     Install(String),
-    /// `sound CARD DEV`: write /data/asound.conf (root-owned: root's own audio tools read it).
+    /// `sound CARD DEV`: write /data/asound.conf (root-owned: root's own audio tools read it). Also forgets a chosen
+    /// Bluetooth output.
     Sound(u32, u32),
+    /// `sound-temp CARD DEV`: the same, but a chosen Bluetooth output stays the preference (used when it is switched off).
+    SoundTemp(u32, u32),
+    /// `sound-bt AA:BB:CC:DD:EE:FF`: play on that Bluetooth headset (and prefer it from now on).
+    SoundBt(String),
     /// `os-check`, `os-update`, `os-update-offline`, `os-find`, `os-cancel`, `os-goback`, `os-ack`: the system updater, always without arguments (the
     /// word picks the command; progress lines stream back, then "ok" or "error").
     Os(&'static str),
@@ -26,6 +31,12 @@ pub enum Request {
 fn disk_path(s: &str) -> Option<&str> {
     let name = s.strip_prefix("/dev/")?;
     (!name.is_empty() && name.len() <= 20 && name.chars().all(|c| c.is_ascii_alphanumeric())).then_some(s)
+}
+
+/// A Bluetooth address, exactly `AA:BB:CC:DD:EE:FF` (either case); it goes into an ALSA configuration file, which can load
+/// programs, so nothing else may pass.
+pub fn valid_mac(s: &str) -> bool {
+    s.len() == 17 && s.split(':').count() == 6 && s.split(':').all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// A small number, digits only (a card or device index).
@@ -51,6 +62,13 @@ pub fn parse(line: &str) -> Option<Request> {
             if let Some(dev) = line.strip_prefix("songs-mount ") {
                 return disk_path(dev).map(|d| Request::SongsMount(d.to_string()));
             }
+            if let Some(mac) = line.strip_prefix("sound-bt ") {
+                return valid_mac(mac).then(|| Request::SoundBt(mac.to_uppercase()));
+            }
+            if let Some(rest) = line.strip_prefix("sound-temp ") {
+                let (c, d) = rest.split_once(' ')?;
+                return Some(Request::SoundTemp(index(c, 31)?, index(d, 255)?));
+            }
             if let Some(rest) = line.strip_prefix("sound ") {
                 let (c, d) = rest.split_once(' ')?;
                 return Some(Request::Sound(index(c, 31)?, index(d, 255)?));
@@ -60,8 +78,22 @@ pub fn parse(line: &str) -> Option<Request> {
     }
 }
 
-fn write_sound(card: u32, dev: u32) -> std::io::Result<()> {
-    // Written beside the target and renamed over it: /data is root's, so nothing can be swapped under us.
+/// Write a file beside its target and rename it over: /data is root's, so nothing can be swapped under us.
+fn write_atomic(path: &str, text: &str) -> std::io::Result<()> {
+    let tmp = format!("{path}.new");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path)
+}
+
+fn write_sound_bt(mac: &str) -> std::io::Result<()> {
+    write_atomic(crate::sys::ASOUND, &crate::sys::asound_text_bt(mac))?;
+    write_atomic(crate::sys::ASOUND_PREFER, &format!("{mac}\n"))
+}
+
+fn write_sound(card: u32, dev: u32, keep_bt_preference: bool) -> std::io::Result<()> {
+    if !keep_bt_preference {
+        let _ = std::fs::remove_file(crate::sys::ASOUND_PREFER);
+    }
     let tmp = format!("{}.new", crate::sys::ASOUND);
     // By the card's id, not its number: USB sound cards (the piano, a microphone) renumber the cards from boot to boot.
     let id = std::fs::read_to_string(format!("/proc/asound/card{card}/id")).ok().map(|s| s.trim().to_string());
@@ -109,7 +141,27 @@ pub fn run() -> i32 {
             Ok(s) if s.success() => 0,
             _ => 1,
         },
-        Some(Request::Sound(card, dev)) => match write_sound(card, dev) {
+        Some(Request::SoundBt(mac)) => match write_sound_bt(&mac) {
+            Ok(()) => {
+                println!("ok");
+                0
+            }
+            Err(e) => {
+                println!("error: {e}");
+                1
+            }
+        },
+        Some(Request::SoundTemp(card, dev)) => match write_sound(card, dev, true) {
+            Ok(()) => {
+                println!("ok");
+                0
+            }
+            Err(e) => {
+                println!("error: {e}");
+                1
+            }
+        },
+        Some(Request::Sound(card, dev)) => match write_sound(card, dev, false) {
             Ok(()) => {
                 println!("ok");
                 0
@@ -182,6 +234,23 @@ mod tests {
         assert_eq!(parse("songs-mount sdb1"), None);
         assert_eq!(parse("songs-mount"), None);
         assert_eq!(parse("songs-umount /run"), None);
+    }
+
+    #[test]
+    fn bluetooth_sound_takes_only_a_real_address() {
+        assert_eq!(parse("sound-bt 08:df:1f:aa:BB:cc\n"), Some(Request::SoundBt("08:DF:1F:AA:BB:CC".into())));
+        assert_eq!(parse("sound-bt 00:00:00:00:00:00"), Some(Request::SoundBt("00:00:00:00:00:00".into())));
+        for bad in [
+            "sound-bt", "sound-bt ", "sound-bt 08:df:1f:aa:bb", "sound-bt 08:df:1f:aa:bb:cc:dd", "sound-bt 08:df:1f:aa:bb:zz",
+            "sound-bt 08:df:1f:aa:bb:c", "sound-bt 08-df-1f-aa-bb-cc", "sound-bt 08:df:1f:aa:bb:cc\"; run", "sound-bt 08:df:1f:aa:bb:cc x",
+            "sound-bt  08:df:1f:aa:bb:cc", "sound-bt 08:df:1f:aa:bb:c\nc",
+        ] {
+            assert_eq!(parse(bad), None, "{bad:?}");
+        }
+        assert!(valid_mac("AA:bb:00:11:22:33") && !valid_mac("AA:bb:00:11:22") && !valid_mac("GG:bb:00:11:22:33"));
+        assert_eq!(parse("sound-temp 1 0"), Some(Request::SoundTemp(1, 0)));
+        assert_eq!(parse("sound-temp 32 0"), None);
+        assert_eq!(parse("sound-temp 1"), None);
     }
 
     #[test]

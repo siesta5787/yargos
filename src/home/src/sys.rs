@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 
 pub const DATA: &str = "/data";
 pub const ASOUND: &str = "/data/asound.conf";
+/// The Bluetooth headset to play on whenever it is connected (its address); asound.conf only names it while it is.
+pub const ASOUND_PREFER: &str = "/data/asound.prefer";
 pub const CTL_SOCKET: &str = "/run/yargos-ctl.sock";
 
 /// Run a command and return its combined output, or the output as an error if it failed.
@@ -238,7 +240,7 @@ pub fn parse_aplay(out: &str) -> Vec<Output> {
             let (dev, dname) = after.split_once(':')?;
             let dev: u32 = dev.trim().parse().ok()?;
             let dlabel = dname.split_once('[').map(|(_, b)| b.trim_end_matches(']').trim().to_string()).unwrap_or(dname.trim().to_string());
-            Some(Output { card, dev, label: format!("{dlabel} ({cname})") })
+            Some(Output { card, dev, label: format!("{dlabel} ({cname})"), bt: None })
         })
         .collect()
 }
@@ -293,11 +295,106 @@ pub fn saved_output(outs: &[Output]) -> Option<(u32, u32)> {
 /// Before YARG starts: if the saved output is missing, or none was ever chosen, choose one, so YARG's default device exists.
 pub fn ensure_sound() {
     let outs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
-    if saved_output(&outs).is_none() {
-        if let Some(o) = best_output(&outs) {
-            let _ = ctl_request(&format!("sound {} {}", o.card, o.dev));
+    let conf = std::fs::read_to_string(ASOUND).unwrap_or_default();
+    let prefer = read_prefer();
+    let connected: Vec<String> = if prefer.is_some() { bt_audio_connected().into_iter().map(|(m, _)| m).collect() } else { vec![] };
+    match plan_sound(saved_output(&outs), parse_asound_bt(&conf).as_deref(), prefer.as_deref(), &connected, &outs) {
+        SoundPlan::Keep | SoundPlan::Nothing => {}
+        SoundPlan::Bt(mac) => {
+            let _ = ctl_request(&format!("sound-bt {mac}"));
+        }
+        SoundPlan::Speakers { card, dev, keep_bt } => {
+            let _ = ctl_request(&format!("{} {card} {dev}", if keep_bt { "sound-temp" } else { "sound" }));
         }
     }
+}
+
+/// The headset chosen as the sound output (its address), if any.
+pub fn read_prefer() -> Option<String> {
+    std::fs::read_to_string(ASOUND_PREFER).ok().map(|t| t.trim().to_uppercase()).filter(|m| crate::ctl::valid_mac(m))
+}
+
+#[derive(Debug, PartialEq)]
+pub enum SoundPlan {
+    Keep,
+    Nothing,
+    /// Play on this Bluetooth headset (it is connected and preferred).
+    Bt(String),
+    /// Play on this sound card: `keep_bt` when a Bluetooth headset is still preferred (it is just switched off now).
+    Speakers { card: u32, dev: u32, keep_bt: bool },
+}
+
+/// What to write before YARG starts, so the default output always exists (YARG says "Failed to initialize audio device" when
+/// it does not): a preferred headset when it is connected, else a real sound card.
+/// `saved_hw` the sound card asound.conf names if it still exists; `saved_bt` the headset it names; `prefer` the chosen
+/// headset; `connected` the headsets connected right now.
+pub fn plan_sound(saved_hw: Option<(u32, u32)>, saved_bt: Option<&str>, prefer: Option<&str>, connected: &[String], outs: &[Output]) -> SoundPlan {
+    let speakers = |keep_bt: bool| match best_output(outs) {
+        Some(o) => SoundPlan::Speakers { card: o.card, dev: o.dev, keep_bt },
+        None => SoundPlan::Nothing,
+    };
+    match prefer {
+        Some(mac) if connected.iter().any(|c| c.eq_ignore_ascii_case(mac)) => {
+            if saved_bt.is_some_and(|s| s.eq_ignore_ascii_case(mac)) { SoundPlan::Keep } else { SoundPlan::Bt(mac.to_string()) }
+        }
+        // The headset is off: the speakers play, and the choice is kept for the next time it is on.
+        Some(_) => {
+            if saved_hw.is_some() && saved_bt.is_none() { SoundPlan::Keep } else { speakers(true) }
+        }
+        None => {
+            if saved_bt.is_some() || saved_hw.is_none() { speakers(false) } else { SoundPlan::Keep }
+        }
+    }
+}
+
+/// The headset asound.conf names as the output (a bluealsa output), if any.
+pub fn parse_asound_bt(conf: &str) -> Option<String> {
+    conf.lines().find_map(|l| {
+        let l = l.trim();
+        let v = l.strip_prefix("device")?.trim().trim_matches('"');
+        crate::ctl::valid_mac(v).then(|| v.to_uppercase())
+    })
+}
+
+/// asound.conf for playing on a Bluetooth headset (A2DP through bluealsa). The address was checked by the helper.
+pub fn asound_text_bt(mac: &str) -> String {
+    format!(
+        "# Written by the YARGOS dashboard (Sound screen). Delete this file to return to the default output.\n\
+         pcm.!default {{\n    type plug\n    slave.pcm {{\n        type bluealsa\n        device \"{mac}\"\n        profile \"a2dp\"\n    }}\n}}\n"
+    )
+}
+
+/// Is this `bluetoothctl info` of something that plays sound (headphones, earbuds, a speaker)?
+pub fn is_audio_sink(info: &str) -> bool {
+    info.lines().any(|l| {
+        let l = l.trim();
+        (l.starts_with("UUID:") && (l.contains("Audio Sink") || l.contains("0000110b-"))) || (l.starts_with("Icon:") && l.contains("audio-"))
+    })
+}
+
+/// A device's name from `bluetoothctl info`.
+pub fn parse_bt_name(info: &str) -> Option<String> {
+    info.lines().find_map(|l| l.trim().strip_prefix("Name:").map(|n| n.trim().to_string())).filter(|n| !n.is_empty())
+}
+
+/// The connected Bluetooth audio devices: (address, name).
+pub fn bt_audio_connected() -> Vec<(String, String)> {
+    if !bt_present() {
+        return vec![];
+    }
+    let macs = btctl(&["devices", "Connected"], 6).map(|o| parse_bt_devices(&o)).unwrap_or_default();
+    macs.into_iter()
+        .filter_map(|(mac, name)| {
+            let info = btctl(&["info", &mac], 6).ok()?;
+            is_audio_sink(&info).then(|| (mac.to_uppercase(), parse_bt_name(&info).unwrap_or(name)))
+        })
+        .collect()
+}
+
+/// Make this headset the sound output (when it is connected, YARG plays on it).
+pub fn sound_select_bt(mac: &str) -> Result<String, String> {
+    ctl_request(&format!("sound-bt {mac}")).map_err(|e| format!("Could not save the choice: {e}"))?;
+    Ok("Sound output changed to the headset".into())
 }
 
 /// `card_id`: the card's id when known (the card number can change between boots, the id does not).
@@ -335,14 +432,21 @@ fn volume_control(card: u32) -> Option<String> {
 }
 
 pub fn sound_refresh() -> Res {
-    let outputs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
-    let current = saved_output(&outputs).or_else(|| best_output(&outputs).map(|o| (o.card, o.dev)));
+    let mut outputs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
+    let conf = std::fs::read_to_string(ASOUND).unwrap_or_default();
+    // A headset is an output while it is connected; the one in use shows as the current output.
+    for (mac, name) in bt_audio_connected() {
+        outputs.push(Output { card: 0, dev: 0, label: format!("{name} (Bluetooth)"), bt: Some(mac) });
+    }
+    let current_bt = parse_asound_bt(&conf).filter(|m| outputs.iter().any(|o| o.bt.as_deref() == Some(m.as_str())));
+    let hw: Vec<Output> = outputs.iter().filter(|o| o.bt.is_none()).cloned().collect();
+    let current = if current_bt.is_some() { None } else { saved_output(&hw).or_else(|| best_output(&hw).map(|o| (o.card, o.dev))) };
     let volume = current.and_then(|(card, _)| {
         let ctl = volume_control(card)?;
         let out = run("amixer", &["-c", &card.to_string(), "sget", &ctl]).ok()?;
         Some((card, parse_percent(&out)?))
     });
-    Res::Sound { outputs, current, volume }
+    Res::Sound { outputs, current, current_bt, volume }
 }
 
 pub fn sound_select(card: u32, dev: u32) -> Result<String, String> {
@@ -460,7 +564,8 @@ pub fn bt_list() -> Res {
             // A Wiimote counts as ready only once its guitar bridge is running.
             let ready = !(connected && name.starts_with("Nintendo RVL")) || wii_bridge_ready(&mac);
             let (battery, battery_low) = if connected && name.starts_with("Nintendo RVL") { wii_battery(&mac).map(|b| (Some(b.percent), b.is_low())).unwrap_or((None, false)) } else { (None, false) };
-            BtDevice { mac, name, paired, connected, ready, battery, battery_low }
+            let audio = btctl(&["info", &mac], 6).map(|o| is_audio_sink(&o)).unwrap_or(false);
+            BtDevice { mac, name, paired, connected, ready, battery, battery_low, audio }
         })
         .filter(|d| d.paired || !is_mac_like(&d.name))
         .collect();
@@ -623,11 +728,56 @@ pub fn bt_connect(d: &BtDevice) -> Result<String, String> {
     if d.is_wiimote() {
         return wiimote_connect(d);
     }
+    if d.audio {
+        return bt_connect_audio(d);
+    }
     let _ = btctl(&["pair", &d.mac], 25);
     let _ = btctl(&["trust", &d.mac], 6);
     btctl(&["connect", &d.mac], 20)
         .map(|_| format!("{} connected", d.name))
         .map_err(|_| format!("Could not connect {}. Put it in pairing mode and try again", d.name))
+}
+
+/// Pair (if needed), trust and connect a headset, then make it the sound output. One `bluetoothctl` session with an agent
+/// registered: a one-shot `bluetoothctl pair` has no agent, and earbuds' pairing is refused halfway ("paired" but never
+/// connected). The address was checked as it came from BlueZ; it is checked again here because it is put in a command.
+fn bt_connect_audio(d: &BtDevice) -> Result<String, String> {
+    if !crate::ctl::valid_mac(&d.mac) {
+        return Err("That is not a Bluetooth address".into());
+    }
+    let m = &d.mac;
+    let pair = if d.paired { String::new() } else { format!("echo 'pair {m}'; sleep 14; ") };
+    let script = format!("(echo 'agent NoInputNoOutput'; echo 'default-agent'; {pair}echo 'trust {m}'; echo 'connect {m}'; sleep 12; echo quit) | bluetoothctl");
+    let out = run_timeout("sh", &["-c", &script], 70).unwrap_or_else(|e| e);
+    let info = btctl(&["info", m], 6).unwrap_or_default();
+    let (paired, connected) = parse_bt_info(&info);
+    if connected {
+        sound_select_bt(&m.to_uppercase())?;
+        return Ok(format!("{} connected, and now the sound output (change it on the Sound screen)", d.name));
+    }
+    let why = bt_failure(&out);
+    Err(if paired {
+        format!("{} is paired but its sound connection did not start{}. Switch it off and on (or put it back in pairing mode) and try again.", d.name, why)
+    } else {
+        format!("Could not pair {}{}. Put it in pairing mode (its light flashes) next to the computer and try again.", d.name, why)
+    })
+}
+
+/// The last "Failed to ..." line of a `bluetoothctl` session, in words (": <reason>"), or nothing.
+pub fn bt_failure(out: &str) -> String {
+    let Some(line) = strip_ansi(out).lines().rev().find_map(|l| l.find("Failed to").map(|i| l[i..].trim().to_string())) else { return String::new() };
+    let reason = if line.contains("profile-unavailable") {
+        "the headset's sound profile is not available".to_string()
+    } else if line.contains("AuthenticationFailed") || line.contains("AuthenticationRejected") || line.contains("AuthenticationCanceled") {
+        "the headset refused the pairing".to_string()
+    } else if line.contains("AlreadyExists") {
+        "it was already paired".to_string()
+    } else if line.contains("page-timeout") || line.contains("ConnectionAttemptFailed") || line.contains("Timeout") {
+        "it did not answer (is it switched on and close?)".to_string()
+    } else {
+        line.trim_start_matches("Failed to ").to_string()
+    };
+    format!(": {reason}")
 }
 
 fn wiimote_connect(d: &BtDevice) -> Result<String, String> {
@@ -713,7 +863,7 @@ pub fn wii_auto_step() -> WiiAuto {
             continue;
         }
         let name = known.iter().find(|(m, _)| m.eq_ignore_ascii_case(&mac)).map(|(_, n)| n.clone()).unwrap_or_else(|| "Nintendo RVL-CNT-01".into());
-        let d = BtDevice { mac, name, paired: false, connected: false, ready: false, battery: None, battery_low: false };
+        let d = BtDevice { mac, name, paired: false, connected: false, ready: false, battery: None, battery_low: false, audio: false };
         return match wiimote_connect(&d) {
             Ok(m) => WiiAuto::Connected(m),
             Err(e) => WiiAuto::Failed(e),
@@ -1339,6 +1489,15 @@ pub fn os_cancel() {
 
 pub fn sound_label() -> String {
     let outs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
+    // A chosen headset: its name while it plays, or a note that it is off (the speakers play meanwhile).
+    if let Some(mac) = read_prefer() {
+        let name = btctl(&["info", &mac], 4).ok().and_then(|i| parse_bt_name(&i)).unwrap_or_else(|| "headset".into());
+        if parse_asound_bt(&std::fs::read_to_string(ASOUND).unwrap_or_default()).as_deref() == Some(mac.as_str()) {
+            return format!("Bluetooth: {name}");
+        }
+        let speakers = best_output(&outs).map(|o| o.label.clone()).unwrap_or_else(|| "no sound device".into());
+        return format!("{speakers} ({name} is off)");
+    }
     match saved_output(&outs).and_then(|(c, d)| outs.iter().find(|o| o.card == c && o.dev == d)).or_else(|| best_output(&outs)) {
         Some(o) => o.label.clone(),
         None => "no sound device".into(),
@@ -1701,7 +1860,7 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         let out = "**** List of PLAYBACK Hardware Devices ****\ncard 0: PCH [HDA Intel PCH], device 0: ALC283 Analog [ALC283 Analog]\n  Subdevices: 1/1\ncard 0: PCH [HDA Intel PCH], device 3: HDMI 0 [HDMI 0]\ncard 1: Audio [USB Audio], device 0: USB Audio [USB Audio]\n";
         let outs = parse_aplay(out);
         assert_eq!(outs.len(), 3);
-        assert_eq!(outs[1], Output { card: 0, dev: 3, label: "HDMI 0 (HDA Intel PCH)".into() });
+        assert_eq!(outs[1], Output { card: 0, dev: 3, label: "HDMI 0 (HDA Intel PCH)".into(), bt: None });
         assert_eq!(outs[2].card, 1);
         let cards = parse_card_ids(" 0 [Generic        ]: HDA-Intel - HDA ATI HDMI\n                      HDA ATI HDMI at 0xfd7e8000\n 1 [Audio          ]: USB-Audio - USB Audio\n");
         assert_eq!(cards, vec![(0, "Generic".to_string()), (1, "Audio".to_string())]);
@@ -1718,7 +1877,7 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
 
     #[test]
     fn same_named_devices_are_tagged_with_their_address() {
-        let d = |mac: &str, name: &str| BtDevice { mac: mac.into(), name: name.into(), paired: true, connected: false, ready: true, battery: None, battery_low: false };
+        let d = |mac: &str, name: &str| BtDevice { mac: mac.into(), name: name.into(), paired: true, connected: false, ready: true, battery: None, battery_low: false, audio: false };
         let mut a = vec![d("00:22:D7:AD:BE:D4", "Nintendo RVL-CNT-01"), d("11:11:11:11:11:11", "Speaker"), d("00:1e:35:00:00:01", "Nintendo RVL-CNT-01"), d("22:22:22:22:22:22", "Pad"), d("33:33:33:33:33:33", "Pad")];
         tag_duplicates(&mut a);
         assert_eq!(a[0].name, "Nintendo RVL-CNT-01 (D4)");
@@ -1787,6 +1946,65 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         // (somebody's Wi-Fi is named exactly that: never treat the text as "no name")
         let out = "                       Station: wlan0\n  Scanning              no\n  State                 connected\n  Connected network     unknown network\n  IPv4 address          192.168.0.30\n";
         assert_eq!(parse_connected_ssid(out).as_deref(), Some("unknown network"));
+    }
+
+    fn out(card: u32, label: &str) -> Output {
+        Output { card, dev: 0, label: label.into(), bt: None }
+    }
+
+    #[test]
+    fn what_plays_before_yarg_starts_always_exists() {
+        let hdmi = out(0, "HDMI 0 (HDA ATI HDMI)");
+        let analog = out(1, "ALC285 Analog (HD-Audio Generic)");
+        let outs = vec![hdmi.clone(), analog.clone()];
+        let mac = "08:DF:1F:AA:BB:CC".to_string();
+        let on = vec![mac.clone()];
+        // No headset chosen: a good saved card stays, a missing one becomes the speakers.
+        assert_eq!(plan_sound(Some((1, 0)), None, None, &[], &outs), SoundPlan::Keep);
+        assert_eq!(plan_sound(None, None, None, &[], &outs), SoundPlan::Speakers { card: 1, dev: 0, keep_bt: false });
+        // Chosen and connected: it plays on the headset (written once, then kept).
+        assert_eq!(plan_sound(Some((1, 0)), None, Some(&mac), &on, &outs), SoundPlan::Bt(mac.clone()));
+        assert_eq!(plan_sound(None, Some(&mac), Some(&mac), &on, &outs), SoundPlan::Keep);
+        assert_eq!(plan_sound(None, Some("08:df:1f:aa:bb:cc"), Some(&mac), &on, &outs), SoundPlan::Keep, "letter case does not matter");
+        // Chosen but switched off: YARG must not be left with an output that does not exist. The speakers play and the choice
+        // is kept for the next time it is on.
+        assert_eq!(plan_sound(None, Some(&mac), Some(&mac), &[], &outs), SoundPlan::Speakers { card: 1, dev: 0, keep_bt: true });
+        assert_eq!(plan_sound(Some((1, 0)), None, Some(&mac), &[], &outs), SoundPlan::Keep);
+        // A headset in the config with nothing chosen (a stale file): back to the speakers for good.
+        assert_eq!(plan_sound(None, Some(&mac), None, &on, &outs), SoundPlan::Speakers { card: 1, dev: 0, keep_bt: false });
+        // No sound card at all: nothing to write.
+        assert_eq!(plan_sound(None, None, None, &[], &[]), SoundPlan::Nothing);
+    }
+
+    #[test]
+    fn the_bluetooth_output_config_is_read_back_and_nothing_else_looks_like_one() {
+        let c = asound_text_bt("08:DF:1F:AA:BB:CC");
+        assert!(c.contains("type bluealsa") && c.contains("profile \"a2dp\"") && c.contains("pcm.!default"));
+        assert_eq!(parse_asound_bt(&c).as_deref(), Some("08:DF:1F:AA:BB:CC"));
+        let hw = asound_text(Some("Audio"), 1, 0);
+        assert_eq!(parse_asound_bt(&hw), None);
+        assert_eq!(parse_asound(&c, &[]), None, "a headset config is not a sound card");
+        assert_eq!(parse_asound_bt("device \"not a mac\""), None);
+    }
+
+    #[test]
+    fn headphones_are_told_from_other_bluetooth_devices() {
+        let buds = "Device 08:DF:1F:AA:BB:CC (public)\n\tName: Soundcore Liberty 4\n\tIcon: audio-headset\n\tPaired: yes\n\tUUID: Audio Sink                (0000110b-0000-1000-8000-00805f9b34fb)\n";
+        let wii = "Device 00:22:D7:AD:BE:D4 (public)\n\tName: Nintendo RVL-CNT-01\n\tIcon: input-gaming\n\tUUID: Human Interface Device    (00001124-0000-1000-8000-00805f9b34fb)\n";
+        let speaker = "Device AA:BB:CC:00:00:02 (public)\n\tName: JBL Flip 6\n\tIcon: audio-card\n";
+        assert!(is_audio_sink(buds) && is_audio_sink(speaker) && !is_audio_sink(wii));
+        assert_eq!(parse_bt_name(buds).as_deref(), Some("Soundcore Liberty 4"));
+        assert_eq!(parse_bt_name("Device X\n"), None);
+    }
+
+    #[test]
+    fn a_failed_headset_connection_is_put_in_words() {
+        let a = "[bluetooth]# Attempting to pair\n\x1b[0;91mFailed to pair: org.bluez.Error.AuthenticationFailed\x1b[0m\n";
+        assert_eq!(bt_failure(a), ": the headset refused the pairing");
+        assert_eq!(bt_failure("Failed to connect: org.bluez.Error.Failed br-connection-profile-unavailable"), ": the headset's sound profile is not available");
+        assert_eq!(bt_failure("Failed to connect: org.bluez.Error.Failed page-timeout"), ": it did not answer (is it switched on and close?)");
+        assert_eq!(bt_failure("Connection successful"), "");
+        assert_eq!(bt_failure("Failed to pair: org.bluez.Error.Whatever"), ": pair: org.bluez.Error.Whatever");
     }
 
     #[test]

@@ -62,7 +62,10 @@ fn rows(m: &Model) -> Vec<Row> {
                 .iter()
                 .map(|o| {
                     let mut r = row(o.label.clone());
-                    r.kind = Kind::Radio(m.cur_card_dev == Some((o.card, o.dev)));
+                    r.kind = Kind::Radio(match &o.bt {
+                        Some(mac) => m.cur_bt.as_deref() == Some(mac.as_str()),
+                        None => m.cur_bt.is_none() && m.cur_card_dev == Some((o.card, o.dev)),
+                    });
                     r
                 })
                 .collect();
@@ -80,6 +83,9 @@ fn rows(m: &Model) -> Vec<Row> {
                 let mut r = row(if d.name.is_empty() { d.mac.clone() } else { d.name.clone() });
                 if let Some(p) = d.battery.filter(|_| d.connected) {
                     r.value = format!("{p}%");
+                }
+                if d.audio && d.connected {
+                    r.value = "sound".into();
                 }
                 r.tag = if d.connected && d.is_wiimote() {
                     Some(if !d.ready { ("NOT READY", AMBER) } else if d.battery_low { ("LOW BATTERY", AMBER) } else { ("READY", GREEN) })
@@ -226,10 +232,18 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
         ),
         Screen::Sound => (
             "SOUND",
-            vec![
-                "Pick where YARG plays its sound: your TV or receiver over HDMI, the headphone jack, or a USB audio device.".into(),
-                "Left / Right changes the volume. HDMI volume is set on your TV.".into(),
-            ],
+            {
+                let mut v = vec![
+                    "Pick where YARG plays its sound: your TV or receiver over HDMI, the headphone jack, a USB audio device, or Bluetooth headphones.".to_string(),
+                    "Left / Right changes the volume (not for HDMI or Bluetooth: use the TV or headphones).".to_string(),
+                ];
+                if m.outputs.iter().any(|o| o.bt.is_some()) || m.cur_bt.is_some() {
+                    v.push("Bluetooth sound is a little late: run YARG's audio calibration. Switch the headphones on before starting YARG, or the speakers play.".into());
+                } else {
+                    v.push("Bluetooth headphones: connect them on the Bluetooth screen first (put them in pairing mode), then they appear here.".into());
+                }
+                v
+            },
         ),
         Screen::Bluetooth if !m.bt_present && !m.loading => (
             "BLUETOOTH",
@@ -240,6 +254,7 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             vec![
                 "Connect Wii guitars, controllers, keyboards and mice.".into(),
                 "Wii guitar: hold 1+2 on the Wiimote until the lights flash. It connects by itself within a few seconds.".into(),
+                "Headphones or earbuds: put them in pairing mode, scan, and choose them: they become the sound output.".into(),
                 "Left forgets a paired device.".into(),
             ],
         ),
