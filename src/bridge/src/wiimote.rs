@@ -24,9 +24,19 @@ enum State {
 // The accelerometer jitters by a unit or two at rest; ignore changes smaller than this (of 0..=255).
 const TILT_DEADBAND: u16 = 8;
 
+/// What a status report says about the Wiimote's batteries.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Battery {
+    /// 0..=100, from the report's level byte (0xC8 = full).
+    pub percent: u8,
+    /// The Wiimote's own "batteries nearly empty" flag.
+    pub low: bool,
+}
+
 pub struct Wiimote {
     dev: File,
     state: State,
+    battery: Option<Battery>,
     whammy_rest: u8,
     last_tilt: u16,
     // Touch-bar value seen when streaming started (nothing touched). World Tour guitars idle at
@@ -36,8 +46,14 @@ pub struct Wiimote {
 
 impl Wiimote {
     pub fn new(dev: File) -> Self {
-        Self { dev, state: State::WaitStatus, whammy_rest: WHAMMY_REST_DEFAULT, last_tilt: 0x200, slider_rest: None }
+        Self { dev, state: State::WaitStatus, battery: None, whammy_rest: WHAMMY_REST_DEFAULT, last_tilt: 0x200, slider_rest: None }
     }
+
+    /// The batteries as the last status report said (None until one arrived).
+    pub fn battery(&self) -> Option<Battery> {
+        self.battery
+    }
+
 
     pub fn start(&mut self, slot: u8) -> io::Result<()> {
         let leds = 0x10u8 << (slot.saturating_sub(1).min(3));
@@ -78,6 +94,15 @@ impl Wiimote {
         match buf.first() {
             Some(0x20) if buf.len() >= 4 => {
                 let ext_connected = buf[3] & 0x02 != 0;
+                if buf.len() >= 7 {
+                    self.battery = Some(Battery { percent: (buf[6] as u32 * 100 / 200).min(100) as u8, low: buf[3] & 0x01 != 0 });
+                }
+                // An answer to a status request made while the guitar is already streaming: note the battery and keep
+                // going. (Starting the setup again would recalibrate the touch bar under the player's fingers.)
+                if self.state == State::Streaming && ext_connected {
+                    self.set_mode(MODE_CORE_ACCEL_EXT16)?;
+                    return Ok(None);
+                }
                 self.state = State::WaitStatus;
                 if ext_connected {
                     self.write_register(REG_EXT_INIT1, 0x55)?;
@@ -236,6 +261,29 @@ mod tests {
         assert_eq!(w.handle(&r).unwrap().unwrap().slider, 0x20);
         r[6 + 2] = 0x1F; // orange
         assert_eq!(w.handle(&r).unwrap().unwrap().slider, 0xFF);
+    }
+
+    #[test]
+    fn a_status_report_gives_the_battery_and_a_streaming_guitar_keeps_streaming() {
+        let mut w = wm();
+        assert!(w.battery().is_none());
+        // 0xC8 is full, 0x64 half, flag bit 0 is "low", bit 1 "extension connected".
+        assert!(w.handle(&[0x20, 0, 0, 0x02, 0, 0, 0xC8]).unwrap().is_none());
+        assert_eq!(w.battery(), Some(Battery { percent: 100, low: false }));
+        assert!(w.streaming(), "an answer while streaming does not start the setup again");
+        w.handle(&[0x20, 0, 0, 0x03, 0, 0, 0x14]).unwrap();
+        assert_eq!(w.battery(), Some(Battery { percent: 10, low: true }));
+        assert!(w.streaming());
+        w.handle(&[0x20, 0, 0, 0x02, 0, 0, 0xFF]).unwrap();
+        assert_eq!(w.battery().unwrap().percent, 100, "never above 100");
+        // The guitar being unplugged is not an answer to keep streaming through: the setup restarts.
+        w.handle(&[0x20, 0, 0, 0x00, 0, 0, 0x64]).unwrap();
+        assert!(!w.streaming());
+        assert_eq!(w.battery(), Some(Battery { percent: 50, low: false }));
+        // A short report (no battery byte) changes nothing.
+        let before = w.battery();
+        w.handle(&[0x20, 0, 0, 0x00]).unwrap();
+        assert_eq!(w.battery(), before);
     }
 
     #[test]

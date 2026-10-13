@@ -78,8 +78,11 @@ fn rows(m: &Model) -> Vec<Row> {
             let mut v = vec![row("Scan for devices")];
             for d in &m.bt {
                 let mut r = row(if d.name.is_empty() { d.mac.clone() } else { d.name.clone() });
+                if let Some(p) = d.battery.filter(|_| d.connected) {
+                    r.value = format!("{p}%");
+                }
                 r.tag = if d.connected && d.is_wiimote() {
-                    Some(if d.ready { ("READY", GREEN) } else { ("NOT READY", AMBER) })
+                    Some(if !d.ready { ("NOT READY", AMBER) } else if d.battery_low { ("LOW BATTERY", AMBER) } else { ("READY", GREEN) })
                 } else if d.connected {
                     Some(("CONNECTED", GREEN))
                 } else if d.paired {
@@ -505,6 +508,9 @@ fn draw_home(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &mut V
         ("YARG", st.yarg.clone()),
         ("CONTROLLERS", if st.pads == 0 { "none connected".into() } else { format!("{} connected", st.pads) }),
     ];
+    if !st.low_battery.is_empty() {
+        items.push(("LOW BATTERY", st.low_battery.join(", ")));
+    }
     if let Some(v) = &st.update {
         items.push(("UPDATE", v.clone()));
     }
@@ -515,16 +521,18 @@ fn draw_home(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &mut V
             (k, wrap(fonts, &v, 22.0 * u, cw - 56.0 * u).into_iter().take(2).collect())
         })
         .collect();
-    let ch = 70.0 * u + wrapped.iter().map(|(_, l)| 38.0 * u + l.len() as f32 * 26.0 * u).sum::<f32>();
+    // (a card with every line, update and low battery included, must still end above the hint at the bottom)
+    let (gap, line) = if wrapped.len() > 6 { (30.0, 24.0) } else { (38.0, 26.0) };
+    let ch = 70.0 * u + wrapped.iter().map(|(_, l)| gap * u + l.len() as f32 * line * u).sum::<f32>();
     cv.rrect(cx as i32, cy as i32, cw as i32, ch as i32, 18.0 * u, rgb(0, 0, 0), 0.34);
     fonts.draw(cv, "STATUS", cx + 28.0 * u, cy + 22.0 * u, 20.0 * u, true, GOLD, 1.0);
     let mut y = cy + 66.0 * u;
     for (k, lines) in &wrapped {
         fonts.draw(cv, k, cx + 28.0 * u, y, 15.0 * u, true, DIM, 0.9);
-        for (j, line) in lines.iter().enumerate() {
-            fonts.draw(cv, line, cx + 28.0 * u, y + 20.0 * u + j as f32 * 26.0 * u, 22.0 * u, false, TEXT, 1.0);
+        for (j, text) in lines.iter().enumerate() {
+            fonts.draw(cv, text, cx + 28.0 * u, y + 20.0 * u + j as f32 * line * u, 22.0 * u, false, TEXT, 1.0);
         }
-        y += 38.0 * u + lines.len() as f32 * 26.0 * u;
+        y += gap * u + lines.len() as f32 * line * u;
     }
 }
 

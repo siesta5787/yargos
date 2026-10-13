@@ -7,9 +7,9 @@ mod xdrums;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const SLOT_DIR: &str = "/run/yargos-bridge";
 const MAX_SLOTS: u8 = 4;
@@ -56,6 +56,16 @@ fn ready_path(dev: &str) -> String {
     format!("{SLOT_DIR}/ready-{}", dev.rsplit('/').next().unwrap_or(dev))
 }
 
+/// The batteries of the Wiimote behind this hidraw device: "<percent> <low 0|1>", written when a status report brings them.
+fn battery_path(dev: &str) -> String {
+    format!("{SLOT_DIR}/battery-{}", dev.rsplit('/').next().unwrap_or(dev))
+}
+
+/// How long the guitar must have sat untouched before the bridge asks it for its status again, and how often at most:
+/// a status request mid-song is a needless interruption.
+const IDLE_BEFORE_STATUS: Duration = Duration::from_secs(10);
+const STATUS_EVERY: Duration = Duration::from_secs(60);
+
 fn run_wii(path: &str) -> std::io::Result<()> {
     let dev = OpenOptions::new().read(true).write(true).open(path)?;
     let mut reader: File = dev.try_clone()?;
@@ -71,15 +81,33 @@ fn run_wii(path: &str) -> std::io::Result<()> {
 
     let ready = ready_path(path);
     let _ = fs::remove_file(&ready);
+    let battery_file = battery_path(path);
+    let _ = fs::remove_file(&battery_file);
     let streaming = Arc::new(AtomicBool::new(false));
+    // Milliseconds (since `born`) of the last change on the guitar: the nudge thread asks for the battery only when idle.
+    let born = Instant::now();
+    let last_input = Arc::new(AtomicU64::new(0));
+    let last_input_for_nudge = last_input.clone();
     // A Wiimote that is slow to wake, or that drops the first request, is asked again until the guitar answers:
     // the one status request in start() is not enough.
     let mut nudge: File = dev.try_clone()?;
     let flag = streaming.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(3));
-        if !flag.load(Ordering::Relaxed) && nudge.write_all(&[0x15, 0x00]).is_err() {
-            return;
+    std::thread::spawn(move || {
+        let mut last_status = Instant::now();
+        loop {
+            std::thread::sleep(Duration::from_secs(3));
+            let ask = if !flag.load(Ordering::Relaxed) {
+                true
+            } else {
+                let idle = born.elapsed().saturating_sub(Duration::from_millis(last_input_for_nudge.load(Ordering::Relaxed)));
+                idle >= IDLE_BEFORE_STATUS && last_status.elapsed() >= STATUS_EVERY
+            };
+            if ask {
+                last_status = Instant::now();
+                if nudge.write_all(&[0x15, 0x00]).is_err() {
+                    return;
+                }
+            }
         }
     });
 
@@ -90,12 +118,20 @@ fn run_wii(path: &str) -> std::io::Result<()> {
     virtual_guitar.send_input(&last.to_report())?;
 
     let mut buf = [0u8; 64];
+    let mut shown_battery = None;
     loop {
         let n = reader.read(&mut buf)?;
         if n == 0 {
+            let _ = fs::remove_file(&battery_file);
             return Ok(());
         }
         let report = wm.handle(&buf[..n])?;
+        if wm.battery() != shown_battery {
+            shown_battery = wm.battery();
+            if let Some(b) = shown_battery {
+                let _ = fs::write(&battery_file, format!("{} {}\n", b.percent, u8::from(b.low)));
+            }
+        }
         let on = wm.streaming();
         if on != streaming.swap(on, Ordering::Relaxed) {
             if on {
@@ -108,6 +144,7 @@ fn run_wii(path: &str) -> std::io::Result<()> {
             if g != last {
                 virtual_guitar.send_input(&g.to_report())?;
                 last = g;
+                last_input.store(born.elapsed().as_millis() as u64, Ordering::Relaxed);
             }
         }
     }

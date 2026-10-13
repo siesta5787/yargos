@@ -3,9 +3,11 @@
 // QEMU without hardware. Build it static so it runs in the guest:
 //   rustc --edition 2021 -O -C target-feature=+crt-static tools/fake-wiimote.rs -o /tmp/fakehid
 // Serve it (python3 -m http.server in its folder), fetch it in the guest (curl http://10.0.2.2:8000/fakehid), then
-//   fakehid [ADDRESS] [IGNORE] [SECONDS]
+//   fakehid [ADDRESS] [IGNORE] [SECONDS] [BATTERY] [LOW]
 // ADDRESS  the Bluetooth address it claims (default 00:1e:35:aa:bb:01); IGNORE  how many status requests to drop
-// before answering (a slow Wiimote: the bridge must ask again); SECONDS  how long to stay (default 120).
+// before answering (a slow Wiimote: the bridge must ask again); SECONDS  how long to stay (default 120);
+// BATTERY  the level byte its status reports carry, 0..200 (default 192 = 96%); LOW  1 to raise its low-battery flag.
+// It answers every status request (also later ones, while streaming) and logs each to stderr.
 // Expect /dev/hidrawN, `systemctl list-units "yargos-bridge*"` to show the bridge, and /run/yargos-bridge/ready-hidrawN
 // to appear once the "guitar" answers.
 use std::fs::OpenOptions;
@@ -38,6 +40,8 @@ fn main() {
     let addr = args.get(1).cloned().unwrap_or_else(|| "00:1e:35:aa:bb:01".into());
     let mut ignore: u32 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(0);
     let secs: u64 = args.get(3).and_then(|a| a.parse().ok()).unwrap_or(120);
+    let battery: u8 = args.get(4).and_then(|a| a.parse().ok()).unwrap_or(0xc0);
+    let low: u8 = args.get(5).and_then(|a| a.parse().ok()).unwrap_or(0) & 1;
     let f = OpenOptions::new().read(true).write(true).open("/dev/uhid").expect("open /dev/uhid");
     let rd = descriptor();
     // struct uhid_event { u32 type; union { create2 { name[128], phys[64], uniq[64], u16 rd_size, u16 bus, u32 vendor, product, version, country, u8 rd_data[4096] } } }
@@ -98,8 +102,8 @@ fn main() {
                     ignore -= 1;
                     eprintln!("fakehid: ignoring a status request");
                 } else {
-                    eprintln!("fakehid: status -> extension plugged in");
-                    send(&[0x20, 0, 0, 0x02, 0, 0, 0xc0]);
+                    eprintln!("fakehid: status -> extension plugged in, battery {battery}, low {low}");
+                    send(&[0x20, 0, 0, 0x02 | low, 0, 0, battery]);
                 }
             }
             Some(0x17) if data.len() >= 5 && data[1..5] == [0x04, 0xa4, 0x00, 0xfa] => {

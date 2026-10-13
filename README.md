@@ -21,6 +21,9 @@ updates itself like a console.
   - Wii guitars over Bluetooth (hold 1+2) and the ION Drum Rocker (Xbox 360) are turned into standard PlayStation
     instruments that YARG already understands (`src/bridge`).
   - USB microphones and USB MIDI pianos/drums/keys work as in YARG on any Linux.
+- **Wii guitar batteries:** the Bluetooth screen shows each connected guitar's level (`READY 82%`, an amber `LOW BATTERY`
+  at 15% or when the Wiimote itself says so), the main menu card lists low ones, and a notice is shown once when a guitar
+  runs low: on the dashboard, and drawn over YARG itself while you play.
 - **Song drive:** any drive labelled `YARGSONGS` (exFAT, NTFS, FAT, ext4) mounts itself; each top-level folder that holds songs
   becomes its own song source in YARG.
 - **Internal songs:** SYSTEM > Storage copies a whole portable drive (folders exactly as they are) onto the computer's

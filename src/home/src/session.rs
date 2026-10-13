@@ -2,7 +2,7 @@
 // while YARG runs, and shows the dashboard when YARG exits ("Exit" in YARG's menu). PLAY YARG starts it again.
 
 use crate::event::Event;
-use crate::gfx::{Canvas, Fonts};
+use crate::gfx::{rgb, Canvas, Fonts};
 use crate::input;
 use crate::logo::draw_splash;
 use crate::model::*;
@@ -88,6 +88,34 @@ fn spawn_wii_auto(tx: Sender<Event>, active: Arc<AtomicBool>) {
             }
         }
     });
+}
+
+/// Watch the Wii guitars' batteries (the bridge writes them): tell the main loop once when one runs low. Reading a few
+/// small files is all this does: it never talks to the guitars.
+fn spawn_battery_watch(tx: Sender<Event>) {
+    std::thread::spawn(move || {
+        let mut announced = std::collections::HashMap::new();
+        loop {
+            for line in sys::newly_low(&mut announced, &sys::wii_batteries()) {
+                if tx.send(Event::LowBattery(line)).is_err() {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_secs(10));
+        }
+    });
+}
+
+/// The notice drawn over the game when a guitar's batteries run low.
+fn banner_canvas(fonts: &mut Fonts, screen_h: usize, screen_w: usize, text: &str) -> Canvas {
+    let u = screen_h as f32 / 720.0;
+    let msg = format!("Low battery: {text}");
+    let w = ((fonts.width(&msg, 28.0 * u, true) + 110.0 * u) as usize).min(screen_w);
+    let mut cv = Canvas::new(w, (72.0 * u) as usize);
+    cv.rect(0, 0, w as i32, cv.h as i32, rgb(10, 16, 30), 1.0);
+    cv.rect(0, 0, (10.0 * u) as i32, cv.h as i32, rgb(245, 175, 50), 1.0);
+    fonts.draw(&mut cv, &msg, 40.0 * u, 20.0 * u, 28.0 * u, true, rgb(255, 255, 255), 1.0);
+    cv
 }
 
 fn bg(tx: &Sender<Event>, job: impl FnOnce(&Sender<Event>) + Send + 'static) {
@@ -282,6 +310,10 @@ pub fn run() -> i32 {
     let active = Arc::new(AtomicBool::new(false));
     input::spawn_pads(tx.clone(), active.clone());
     spawn_wii_auto(tx.clone(), active.clone());
+    spawn_battery_watch(tx.clone());
+    // The low-battery notice over the game: the text and when to take it down.
+    let mut banner: Option<(String, Instant)> = None;
+    let mut banner_drawn = Instant::now();
 
     let mut model = Model::new();
     let mut hits: Vec<Hit> = Vec::new();
@@ -324,7 +356,24 @@ pub fn run() -> i32 {
         }
         last_iter = Instant::now();
         match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(Event::LowBattery(text)) => match mode {
+                Mode::Dash => {
+                    eprintln!("yargos-home: low battery: {text}");
+                    model.toast(format!("Low battery: {text}"));
+                    if model.screen == Screen::Home {
+                        exec(vec![Cmd::Refresh(Screen::Home)], &model, &tx); // the card lists it too
+                    }
+                    dirty = true;
+                }
+                Mode::Game(_) => {
+                    eprintln!("yargos-home: low battery, banner over the game: {text}");
+                    banner = Some((text, Instant::now() + Duration::from_secs(10)));
+                    banner_drawn = Instant::now() - Duration::from_secs(1);
+                }
+            },
             Ok(Event::YargExited { code, .. }) => {
+                banner = None;
+                disp.hide_banner();
                 mode = Mode::Dash;
                 active.store(true, Ordering::Relaxed);
                 model = Model::new();
@@ -407,6 +456,18 @@ pub fn run() -> i32 {
                     had_toast = toast;
                 }
                 Mode::Game(since) => dirty |= visible && model.tick % 3 == 0 && since.elapsed() < Duration::from_secs(60),
+            }
+        }
+
+        // The notice over the game: drawn again a few times a second (the game repaints under it), then taken down.
+        if let Some((text, until)) = &banner {
+            if Instant::now() >= *until {
+                banner = None;
+                disp.hide_banner();
+            } else if banner_drawn.elapsed() >= Duration::from_millis(250) {
+                banner_drawn = Instant::now();
+                let cv_b = banner_canvas(&mut fonts, disp.h, disp.w, text);
+                disp.show_banner(&cv_b, ((disp.w - cv_b.w) / 2) as i32, (disp.h as f32 * 0.04) as i32);
             }
         }
 

@@ -142,6 +142,10 @@ pub struct BtDevice {
     pub connected: bool,
     /// A connected Wiimote is only usable once the guitar bridge runs for it; everything else is ready when connected.
     pub ready: bool,
+    /// A connected Wiimote's batteries, 0..=100, once it has told (see `sys::wii_batteries`).
+    pub battery: Option<u8>,
+    /// Its batteries are nearly empty (its own flag, or a low level).
+    pub battery_low: bool,
 }
 
 impl BtDevice {
@@ -270,6 +274,8 @@ pub struct Status {
     /// A system update that did not start properly and was undone: the version (until the notice is acknowledged).
     pub os_rolled_back: Option<String>,
     pub pads: usize,
+    /// Connected Wii guitars whose batteries are low, like "Wii guitar (D4) 12%".
+    pub low_battery: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1625,8 +1631,8 @@ mod tests {
         let mut m = Model::new();
         m.screen = Screen::Bluetooth;
         m.bt = vec![
-            BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true },
-            BtDevice { mac: "AA".into(), name: "Keyboard".into(), paired: true, connected: true, ready: true },
+            BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true, battery: None, battery_low: false },
+            BtDevice { mac: "AA".into(), name: "Keyboard".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false },
         ];
         m.sel = 1;
         assert!(matches!(m.handle(Nav::Ok)[0], Cmd::BtConnect(_)));

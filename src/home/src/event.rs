@@ -12,6 +12,8 @@ pub enum Event {
     Redraw,
     /// The screens were reconfigured (HDMI plugged in, lid shut): the window and canvas need the new size.
     ScreenChanged,
+    /// A Wii guitar's batteries just ran low ("Wii guitar (D4) 12%"): shown at once, even over the game.
+    LowBattery(String),
     /// A message to show on the dashboard when it next appears (e.g. an automatic rollback).
     Notice(String),
     YargExited { code: Option<i32>, secs: u64 },

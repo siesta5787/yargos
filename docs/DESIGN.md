@@ -34,6 +34,15 @@ docs/STATUS.md says what has and has not been verified.
   (at least 1.5 GB, at most 4 GB) always stays free: YARG's data, YARG updates and the system update download share it. The
   installer does not carry `/data/songs` to a new disk (it can be huge): import again there. `song-sources` scans each
   imported folder like a drive of its own, and `run-yarg` puts the results into YARG's `SongFolders`.
+- Wii guitar batteries: the Wiimote's status report (0x20, answer to a 0x15 request) carries a level byte (0xC8 = full) and
+  a "battery low" flag. The bridge writes `/run/yargos-bridge/battery-hidrawN` (`<percent> <low 0|1>`); at connect it asks
+  anyway, and while the guitar streams it asks again only after 10 s without any change on it and at most once a minute (a
+  status request mid-song is an interruption). A status answer while streaming only records the battery and re-sends the
+  reporting mode; it must not restart the extension setup (that recalibrates the touch bar). The launcher shows the level
+  on the Bluetooth screen and a LOW BATTERY line on the main card, and `sys::newly_low` announces each guitar once (again
+  after it was back above 40%): a toast on the dashboard, and while YARG runs a notice window (override-redirect, made after
+  YARG's so it stacks above it, no input, redrawn 4 times a second for 10 s) via `Display::show_banner`. NiMH packs read
+  lower than alkalines: the percentage is a guide, the flag and 15% decide "low".
 - Wii guitars: the kernel config leaves `CONFIG_HID_WIIMOTE` off (it is only blacklisted in the dev setup). udev starts `yargos-bridge wii /dev/hidrawN` per Wiimote
   (`057E:0306` / `057E:0330`). It initialises the extension, reads the guitar, and creates a uhid
   device impersonating a PS3 Guitar Hero World Tour guitar (`12BA:0100`) using the PlasticBand
@@ -81,7 +90,7 @@ fret/pad = OK, red = Back, the two outer frets/pads = left/right. Everything tha
 `sound <card> <device>`, `songs-mount /dev/<partition>`, `songs-umount`, `grow-data` and the system update words (`os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`).
 
 `yargos-home screenshot <screen> out.png` renders any screen with demo data (home, wifi, password, sound,
-bluetooth, updates, songs, system, devices, yarg, os-update, storage, import, import-confirm, manage, manage-songs,
+bluetooth, bt-battery, home-battery, updates, songs, system, devices, yarg, os-update, storage, import, import-confirm, manage, manage-songs,
 manage-confirm, busy, confirm, splash) without a display.
 
 The boot splash (`yargos-home splash`) draws the logo straight onto `/dev/fb0` early in boot; the kernel

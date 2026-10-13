@@ -23,6 +23,8 @@ pub struct Display {
     pub h: usize,
     cursor_arrow: Cursor,
     cursor_blank: Cursor,
+    /// A small notice window above everything (even the game): created when shown, destroyed when hidden.
+    banner: Option<(Window, Gcontext)>,
 }
 
 impl Display {
@@ -71,7 +73,49 @@ impl Display {
             .map_err(|e| e.to_string())?;
         conn.map_window(win).map_err(|e| e.to_string())?;
         conn.flush().map_err(|e| e.to_string())?;
-        Ok(Self { conn: Arc::new(conn), root: screen.root, win, gc, depth: screen.root_depth, w: w as usize, h: h as usize, cursor_arrow, cursor_blank })
+        Ok(Self { conn: Arc::new(conn), root: screen.root, win, gc, depth: screen.root_depth, w: w as usize, h: h as usize, cursor_arrow, cursor_blank, banner: None })
+    }
+
+    /// Show `cv` as a small notice at (x, y) over whatever is on screen, without taking any input: an override-redirect
+    /// window made after the game's own, so it stacks above it (no window manager runs). The game keeps the focus.
+    pub fn show_banner(&mut self, cv: &Canvas, x: i32, y: i32) {
+        if self.banner.is_none() {
+            let (Ok(win), Ok(gc)) = (self.conn.generate_id(), self.conn.generate_id()) else { return };
+            let created = self.conn.create_window(
+                COPY_DEPTH_FROM_PARENT,
+                win,
+                self.root,
+                x as i16,
+                y as i16,
+                cv.w as u16,
+                cv.h as u16,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new().override_redirect(1).event_mask(EventMask::NO_EVENT),
+            );
+            if created.is_err() || self.conn.create_gc(gc, win, &CreateGCAux::new()).is_err() {
+                return;
+            }
+            let _ = self.conn.map_window(win);
+            let _ = self.conn.configure_window(win, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
+            self.banner = Some((win, gc));
+        }
+        let Some((win, gc)) = self.banner else { return };
+        #[cfg(target_endian = "little")]
+        let data: &[u8] = unsafe { std::slice::from_raw_parts(cv.px.as_ptr() as *const u8, cv.px.len() * 4) };
+        #[cfg(not(target_endian = "little"))]
+        let data: Vec<u8> = cv.px.iter().flat_map(|p| p.to_le_bytes()).collect();
+        let _ = self.conn.put_image(ImageFormat::Z_PIXMAP, win, gc, cv.w as u16, cv.h as u16, 0, 0, 0, self.depth, &data);
+        let _ = self.conn.flush();
+    }
+
+    pub fn hide_banner(&mut self) {
+        if let Some((win, gc)) = self.banner.take() {
+            let _ = self.conn.free_gc(gc);
+            let _ = self.conn.destroy_window(win);
+            let _ = self.conn.flush();
+        }
     }
 
     /// The screen changed size (a screen plugged in, the lid shut): follow it.

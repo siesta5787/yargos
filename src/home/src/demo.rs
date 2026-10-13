@@ -13,6 +13,7 @@ pub fn model(name: &str) -> Model {
         update: Some("YARG 0.16.0 is available".into()),
         os_rolled_back: None,
         pads: 3,
+        low_battery: vec![],
     };
     m.wifi_dev = Some("wlan0".into());
     m.nets = vec![
@@ -30,9 +31,9 @@ pub fn model(name: &str) -> Model {
     m.cur_card_dev = Some((0, 3));
     m.volume = Some((1, 70));
     m.bt = vec![
-        BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true },
-        BtDevice { mac: "AA:BB:CC:00:00:01".into(), name: "Logitech K380".into(), paired: true, connected: true, ready: true },
-        BtDevice { mac: "AA:BB:CC:00:00:02".into(), name: "Polybar Guitar".into(), paired: true, connected: false, ready: true },
+        BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01".into(), paired: false, connected: false, ready: true, battery: None, battery_low: false },
+        BtDevice { mac: "AA:BB:CC:00:00:01".into(), name: "Logitech K380".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false },
+        BtDevice { mac: "AA:BB:CC:00:00:02".into(), name: "Polybar Guitar".into(), paired: true, connected: false, ready: true, battery: None, battery_low: false },
     ];
     m.upd = UpdInfo {
         installed: "0.15.0".into(),
@@ -214,6 +215,17 @@ pub fn model(name: &str) -> Model {
         "system" => { m.screen = Screen::System; m.sel = 2; }
         "busy" => { m.screen = Screen::Wifi; m.busy = Some("Connecting to Neighbour 5G…".into()); }
         "confirm" => { m.screen = Screen::System; m.sel = 1; m.confirm = Some(Power::Shutdown); m.confirm_sel = 1; }
+        "bt-battery" => {
+            m.screen = Screen::Bluetooth;
+            m.sel = 1;
+            m.status.low_battery = vec!["Wii guitar (3A) 12%".into()];
+            m.bt = vec![
+                BtDevice { mac: "00:22:D7:AD:BE:D4".into(), name: "Nintendo RVL-CNT-01 (D4)".into(), paired: false, connected: true, ready: true, battery: Some(82), battery_low: false },
+                BtDevice { mac: "00:1E:35:00:00:3A".into(), name: "Nintendo RVL-CNT-01 (3A)".into(), paired: false, connected: true, ready: true, battery: Some(12), battery_low: true },
+                BtDevice { mac: "AA:BB:CC:00:00:01".into(), name: "Logitech K380".into(), paired: true, connected: true, ready: true, battery: None, battery_low: false },
+            ];
+        }
+        "home-battery" => m.status.low_battery = vec!["Wii guitar (3A) 12%".into()],
         "bt-notready" => {
             m.screen = Screen::Bluetooth;
             m.bt[0].connected = true;

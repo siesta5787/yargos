@@ -25,6 +25,10 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   (not supported: turn it off), the mini PC.
 - A laptop disk installed with the pre-A/B installer has no second system slot: system updates cannot work there until it is
   reinstalled from a current stick (SYSTEM > Install on this computer's disk). Running from the USB stick needs no install.
+- Wii guitar battery (level on the Bluetooth screen, low notice on the dashboard and over the game): unit-tested and run in
+  QEMU with fake guitars (`tools/test-battery.sh`). Not tried with a real Wiimote (how its level byte reads on your
+  rechargeable packs, whether a status request while idle disturbs the real guitar) or over a real YARG window (the notice
+  was only seen over a stand-in program).
 - SYSTEM > Storage (import a portable drive to the internal songs, browse, delete): unit-tested, and `tools/test-songs.sh`
   drives the real dashboard in QEMU with three fake ext4 USB drives (import, same-name drives, a drive already mounted as
   the song drive, YARG's folder list, deleting a folder, a song and everything: all pass). Not tried on real hardware: real

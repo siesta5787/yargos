@@ -38,6 +38,9 @@ A Wiimote is ready only when `/run/yargos-bridge/ready-hidrawN` exists (the brid
 keeps asking the Wiimote for its status until it answers. `tools/fake-wiimote.rs [address] [ignore] [seconds]` imitates a
 Wiimote with a guitar for QEMU (build with `rustc --edition 2021`, fetch with curl, run in the verbose boot).
 Never test "is a Wiimote there" without its address: one connected guitar made the second look connected.
+The bridge writes `/run/yargos-bridge/battery-hidrawN` from the status report's level byte (buf[6], 0xC8 = full) and flag (buf[3]
+bit 0). Never ask a streaming guitar for its status while it is being played (it only asks after 10 s idle), and a 0x20 report
+while streaming must only record the battery: the setup path recalibrates the touch bar. `fake-wiimote.rs` takes BATTERY and LOW.
 Hardware-dependent facts (button bits, ranges) must be tested on the real device with
 `tools/dev-test.sh`; unit tests only cover decoding against the documented layout.
 

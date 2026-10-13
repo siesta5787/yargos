@@ -459,7 +459,8 @@ pub fn bt_list() -> Res {
             let (paired, connected) = btctl(&["info", &mac], 6).map(|o| parse_bt_info(&o)).unwrap_or((false, false));
             // A Wiimote counts as ready only once its guitar bridge is running.
             let ready = !(connected && name.starts_with("Nintendo RVL")) || wii_bridge_ready(&mac);
-            BtDevice { mac, name, paired, connected, ready }
+            let (battery, battery_low) = if connected && name.starts_with("Nintendo RVL") { wii_battery(&mac).map(|b| (Some(b.percent), b.is_low())).unwrap_or((None, false)) } else { (None, false) };
+            BtDevice { mac, name, paired, connected, ready, battery, battery_low }
         })
         .filter(|d| d.paired || !is_mac_like(&d.name))
         .collect();
@@ -487,6 +488,81 @@ pub fn parse_wiimote_uevent(uevent: &str) -> Option<String> {
         l.starts_with("HID_ID=0005:0000057E:00000306") || l.starts_with("HID_ID=0005:0000057E:00000330")
     });
     is_wiimote.then(|| uevent.lines().find_map(|l| l.strip_prefix("HID_UNIQ=")).unwrap_or("").trim().to_lowercase())
+}
+
+/// A Wiimote's batteries as the bridge last wrote them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WiiBattery {
+    pub percent: u8,
+    pub low: bool,
+}
+
+/// Below this the batteries count as low even if the Wiimote has not raised its own flag.
+const LOW_PERCENT: u8 = 15;
+
+impl WiiBattery {
+    pub fn is_low(&self) -> bool {
+        self.low || self.percent <= LOW_PERCENT
+    }
+}
+
+/// The bridge's battery file ("<percent> <low 0|1>").
+pub fn parse_battery(text: &str) -> Option<WiiBattery> {
+    let mut f = text.split_whitespace();
+    let percent: u8 = f.next()?.parse().ok().filter(|p| *p <= 100)?;
+    let low = match f.next()? {
+        "0" => false,
+        "1" => true,
+        _ => return None,
+    };
+    Some(WiiBattery { percent, low })
+}
+
+/// The batteries of the Wiimote with this address (None until it has answered a status request).
+pub fn wii_battery(mac: &str) -> Option<WiiBattery> {
+    let mac = mac.to_lowercase();
+    wiimote_hidraws().into_iter().filter(|(_, uniq)| uniq.is_empty() || *uniq == mac).find_map(|(node, _)| {
+        parse_battery(&std::fs::read_to_string(format!("/run/yargos-bridge/battery-{node}")).ok()?)
+    })
+}
+
+/// "Wii guitar (D4)": how a guitar is named in warnings, by the end of its address like the Bluetooth list does.
+pub fn guitar_label(mac: &str) -> String {
+    let tail = mac.rsplit(':').next().unwrap_or(mac).to_uppercase();
+    format!("Wii guitar ({tail})")
+}
+
+/// Every Wii guitar that has told its batteries: (address, batteries).
+pub fn wii_batteries() -> Vec<(String, WiiBattery)> {
+    wiimote_hidraws()
+        .into_iter()
+        .filter_map(|(node, uniq)| {
+            let b = parse_battery(&std::fs::read_to_string(format!("/run/yargos-bridge/battery-{node}")).ok()?)?;
+            Some((uniq, b))
+        })
+        .collect()
+}
+
+/// Guitars whose batteries ran low since the last look: each is announced once, and again only after its batteries
+/// were changed or charged (back above 40%). `announced` is the memory between looks.
+pub fn newly_low(announced: &mut std::collections::HashMap<String, bool>, now: &[(String, WiiBattery)]) -> Vec<String> {
+    announced.retain(|mac, _| now.iter().any(|(m, _)| m == mac));
+    let mut out = vec![];
+    for (mac, b) in now {
+        let was = announced.entry(mac.clone()).or_insert(false);
+        if b.is_low() && !*was {
+            *was = true;
+            out.push(format!("{} {}%", guitar_label(mac), b.percent));
+        } else if !b.is_low() && b.percent >= 40 {
+            *was = false;
+        }
+    }
+    out
+}
+
+/// The lines for guitars whose batteries are low ("Wii guitar (D4) 12%").
+pub fn low_battery_lines() -> Vec<String> {
+    wii_batteries().into_iter().filter(|(_, b)| b.is_low()).map(|(mac, b)| format!("{} {}%", guitar_label(&mac), b.percent)).collect()
 }
 
 fn wiimote_hidraws() -> Vec<(String, String)> {
@@ -520,7 +596,11 @@ pub fn wiicheck(mac: Option<&str>) -> i32 {
         println!("no Wiimote HID devices");
     }
     for (node, uniq) in &nodes {
-        println!("{node}  address '{uniq}'  bridge active: {}", bridge_active(node));
+        let battery = std::fs::read_to_string(format!("/run/yargos-bridge/battery-{node}")).ok().and_then(|t| parse_battery(&t));
+        println!("{node}  address '{uniq}'  bridge active: {}  battery: {}", bridge_active(node), match battery {
+            Some(b) => format!("{}%{}", b.percent, if b.is_low() { " (low)" } else { "" }),
+            None => "not told yet".into(),
+        });
     }
     if let Some(m) = mac {
         println!("ready for {m}: {}", wii_bridge_ready(m));
@@ -633,7 +713,7 @@ pub fn wii_auto_step() -> WiiAuto {
             continue;
         }
         let name = known.iter().find(|(m, _)| m.eq_ignore_ascii_case(&mac)).map(|(_, n)| n.clone()).unwrap_or_else(|| "Nintendo RVL-CNT-01".into());
-        let d = BtDevice { mac, name, paired: false, connected: false, ready: false };
+        let d = BtDevice { mac, name, paired: false, connected: false, ready: false, battery: None, battery_low: false };
         return match wiimote_connect(&d) {
             Ok(m) => WiiAuto::Connected(m),
             Err(e) => WiiAuto::Failed(e),
@@ -1137,6 +1217,7 @@ pub fn status(sound_label: &str, upd: &UpdInfo) -> Status {
         update,
         os_rolled_back: os.rolled_back.clone(),
         pads: pad_count(),
+        low_battery: low_battery_lines(),
     }
 }
 
@@ -1634,7 +1715,7 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
 
     #[test]
     fn same_named_devices_are_tagged_with_their_address() {
-        let d = |mac: &str, name: &str| BtDevice { mac: mac.into(), name: name.into(), paired: true, connected: false, ready: true };
+        let d = |mac: &str, name: &str| BtDevice { mac: mac.into(), name: name.into(), paired: true, connected: false, ready: true, battery: None, battery_low: false };
         let mut a = vec![d("00:22:D7:AD:BE:D4", "Nintendo RVL-CNT-01"), d("11:11:11:11:11:11", "Speaker"), d("00:1e:35:00:00:01", "Nintendo RVL-CNT-01"), d("22:22:22:22:22:22", "Pad"), d("33:33:33:33:33:33", "Pad")];
         tag_duplicates(&mut a);
         assert_eq!(a[0].name, "Nintendo RVL-CNT-01 (D4)");
@@ -1660,6 +1741,42 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!((d[0].dev.as_str(), d[0].label.as_str(), d[0].fs.as_str(), d[0].bytes), ("/dev/sda1", "My Songs", "EXFAT", 1_000_200_000_000));
         assert_eq!((d[1].fs.as_str(), d[1].name()), ("FAT", "USB drive".to_string()));
         assert_eq!(d[2].uuid, "");
+    }
+
+    #[test]
+    fn a_low_guitar_is_announced_once_until_its_batteries_are_changed() {
+        let b = |p: u8, low: bool| WiiBattery { percent: p, low };
+        let mut memory = std::collections::HashMap::new();
+        let a = "00:22:d7:ad:be:d4".to_string();
+        let c = "00:1e:35:00:00:3a".to_string();
+        assert!(newly_low(&mut memory, &[(a.clone(), b(80, false)), (c.clone(), b(70, false))]).is_empty());
+        let first = newly_low(&mut memory, &[(a.clone(), b(12, true)), (c.clone(), b(69, false))]);
+        assert_eq!(first, vec!["Wii guitar (D4) 12%".to_string()]);
+        assert!(newly_low(&mut memory, &[(a.clone(), b(11, true)), (c.clone(), b(69, false))]).is_empty(), "not again while it stays low");
+        // A bit of recovery under load (to 20%) is not new batteries.
+        assert!(newly_low(&mut memory, &[(a.clone(), b(20, false)), (c.clone(), b(69, false))]).is_empty());
+        assert!(newly_low(&mut memory, &[(a.clone(), b(14, false)), (c.clone(), b(69, false))]).is_empty());
+        // Fresh batteries, then low again later: announced again. The other guitar is told apart.
+        assert!(newly_low(&mut memory, &[(a.clone(), b(95, false)), (c.clone(), b(69, false))]).is_empty());
+        assert_eq!(newly_low(&mut memory, &[(a.clone(), b(10, true)), (c.clone(), b(5, true))]).len(), 2);
+        // A guitar that went away is forgotten.
+        newly_low(&mut memory, &[(c.clone(), b(5, true))]);
+        assert_eq!(memory.len(), 1);
+    }
+
+    #[test]
+    fn the_bridges_battery_file_is_read_and_low_is_told() {
+        assert_eq!(parse_battery("82 0\n"), Some(WiiBattery { percent: 82, low: false }));
+        assert_eq!(parse_battery("12 1"), Some(WiiBattery { percent: 12, low: true }));
+        assert_eq!(parse_battery("101 0"), None);
+        assert_eq!(parse_battery("50"), None);
+        assert_eq!(parse_battery("50 2"), None);
+        assert_eq!(parse_battery("abc 0"), None);
+        assert_eq!(parse_battery(""), None);
+        assert!(!WiiBattery { percent: 82, low: false }.is_low());
+        assert!(WiiBattery { percent: 15, low: false }.is_low(), "a low level counts even without the flag");
+        assert!(WiiBattery { percent: 60, low: true }.is_low(), "the Wiimote's own flag counts at any level");
+        assert_eq!(guitar_label("00:22:d7:ad:be:d4"), "Wii guitar (D4)");
     }
 
     #[test]
