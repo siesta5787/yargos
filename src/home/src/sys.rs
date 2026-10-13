@@ -107,7 +107,8 @@ pub fn net_status() -> String {
                 .ok()
                 .and_then(|o| parse_connected_ssid(&o))
                 .unwrap_or_default();
-            if ssid.is_empty() { format!("Wi-Fi ({ip})") } else { format!("Wi-Fi: {ssid} ({ip})") }
+            // (iwd says "unknown network" until its first scan after boot has put a name to the network)
+            if ssid.is_empty() || ssid == "unknown network" { format!("Wi-Fi ({ip})") } else { format!("Wi-Fi: {ssid} ({ip})") }
         }
         Some((_, ip)) => format!("Wired ({ip})"),
     }
@@ -949,8 +950,6 @@ pub fn parse_sources(out: &str) -> Vec<String> {
 }
 
 pub fn songs_refresh() -> SongsInfo {
-    // Looking inside makes the automount mount the drive (or fail after its short timeout).
-    let _ = std::fs::read_dir("/media/songs").map(|d| d.take(1).count());
     let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
     match parse_mount(&mounts, "/media/songs") {
         Some((src, fs)) => {
@@ -1182,8 +1181,8 @@ pub fn songs_delete(path: &[String]) -> Result<String, String> {
 }
 
 pub fn songs_status() -> String {
-    let s = songs_refresh();
-    if s.mounted {
+    // Only /proc/mounts and df: this runs every few seconds while the main menu is up, so it must not walk the drive.
+    if parse_mount(&std::fs::read_to_string("/proc/mounts").unwrap_or_default(), "/media/songs").is_some() {
         let free = run("df", &["-k", "/media/songs"]).ok().and_then(|o| parse_df(&o)).map(|(_, f)| format!(", {} free", human(f))).unwrap_or_default();
         format!("connected{free}")
     } else {
@@ -1191,14 +1190,13 @@ pub fn songs_status() -> String {
     }
 }
 
+/// Game controllers (the Wii guitars and drums show up as PlayStation instruments): the same ones the Devices screen lists.
 pub fn pad_count() -> usize {
-    std::fs::read_to_string("/proc/bus/input/devices")
-        .map(|s| s.split("\n\n").filter(|b| b.lines().any(|l| l.starts_with("H: Handlers=") && l.split_whitespace().any(|w| w.starts_with("js")))).count())
-        .unwrap_or(0)
+    parse_pads(&std::fs::read_to_string("/proc/bus/input/devices").unwrap_or_default()).len()
 }
 
 pub fn status(sound_label: &str, upd: &UpdInfo) -> Status {
-    let os = os_info();
+    let os = os_info_base();
     // One line about updates: a system update waiting for a restart matters most.
     let update = if os.staged.is_some() {
         Some("System update ready: restart to use it".to_string())
@@ -1218,6 +1216,7 @@ pub fn status(sound_label: &str, upd: &UpdInfo) -> Status {
         os_rolled_back: os.rolled_back.clone(),
         pads: pad_count(),
         low_battery: low_battery_lines(),
+        os_version: os.running.clone(),
     }
 }
 
@@ -1263,11 +1262,16 @@ pub fn parse_offline(lines: &[String]) -> (Option<String>, Option<String>) {
     (None, None)
 }
 
-pub fn os_info() -> OsInfo {
+/// The updater's state without asking whether the song drive holds an update (cheap: files only).
+pub fn os_info_base() -> OsInfo {
     let kv = parse_kv(&std::fs::read_to_string(format!("{DATA}/os-update/status")).unwrap_or_default());
     let running = std::fs::read_to_string("/usr/lib/yargos/version").unwrap_or_default().trim().to_string();
     let auto = std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| !c.lines().any(|l| l.trim() == "OS_AUTO_UPDATE=no")).unwrap_or(true);
-    let mut info = os_info_from(&kv, &running, auto);
+    os_info_from(&kv, &running, auto)
+}
+
+pub fn os_info() -> OsInfo {
+    let mut info = os_info_base();
     // Is there an update on the song drive? (only asks while the drive is plugged in)
     if std::path::Path::new("/dev/disk/by-label/YARGSONGS").exists() {
         if let Ok(lines) = os_run("os-find", |_| {}) {
@@ -1777,6 +1781,15 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert!(WiiBattery { percent: 15, low: false }.is_low(), "a low level counts even without the flag");
         assert!(WiiBattery { percent: 60, low: true }.is_low(), "the Wiimote's own flag counts at any level");
         assert_eq!(guitar_label("00:22:d7:ad:be:d4"), "Wii guitar (D4)");
+    }
+
+    #[test]
+    fn controllers_are_counted_the_way_the_devices_screen_lists_them() {
+        let guitar = "I: Bus=0005 Vendor=12ba Product=0100 Version=0108\nN: Name=\"Guitar Hero4 for PlayStation (R) 3\"\nH: Handlers=js0 event5 \nB: PROP=0\n\n";
+        let kbd = "I: Bus=0011 Vendor=0001 Product=0001 Version=ab41\nN: Name=\"AT Translated Set 2 keyboard\"\nH: Handlers=sysrq kbd event1 leds \nB: EV=120013\n\n";
+        let drums = "I: Bus=0005 Vendor=12ba Product=0210 Version=0108\nN: Name=\"Harmonix Drum Kit for PlayStation (R) 3\"\nH: Handlers=event6 js1 \nB: PROP=0\n";
+        assert_eq!(parse_pads(&format!("{kbd}{guitar}{drums}")).len(), 2);
+        assert_eq!(parse_pads(kbd).len(), 0);
     }
 
     #[test]

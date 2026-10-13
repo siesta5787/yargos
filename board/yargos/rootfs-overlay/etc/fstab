@@ -1,5 +1,7 @@
 # <file system>        <mount pt>    <type>  <options>                                         <dump> <pass>
 # /data is not here: the boot entry names it (systemd.mount-extra), so this file is the same on every disk.
-# Automount: no boot-time wait if the drive is absent, and a drive plugged in later just works.
-LABEL=YARGSONGS        /media/songs  auto    ro,noatime,nofail,noauto,x-systemd.automount,x-systemd.device-timeout=3s  0  0
+# Not an automount: with no drive, every look at /media/songs used to wait 3 s for it, and YARG looks at thousands of paths
+# in its song cache (a scan took hours). The drive is mounted by udev when it appears (71-yargos-songs.rules) and unmounted
+# when it goes (device-bound); with no drive /media/songs is an empty folder and every lookup fails at once.
+LABEL=YARGSONGS        /media/songs  auto    ro,noatime,nofail,noauto,x-systemd.device-bound   0  0
 tmpfs                  /tmp          tmpfs   mode=1777,nosuid,nodev                            0      0

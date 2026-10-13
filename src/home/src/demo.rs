@@ -14,6 +14,7 @@ pub fn model(name: &str) -> Model {
         os_rolled_back: None,
         pads: 3,
         low_battery: vec![],
+        os_version: "2026.10.16".into(),
     };
     m.wifi_dev = Some("wlan0".into());
     m.nets = vec![

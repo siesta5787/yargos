@@ -321,6 +321,9 @@ pub fn run() -> i32 {
     let mut visible = true;
     let mut dirty = true;
     let mut had_toast = false;
+    // The main menu's status card is read again every few seconds while it is up: things change after it first drew
+    // (the Wi-Fi gets its name, a restarted system closes its update, a guitar connects).
+    let mut status_read = Instant::now();
     let mut notice: Option<String> = None;
     let started = Instant::now();
     // YARGOS_DEBUG_FPS=1: log how fast the dashboard draws and any frame that took long (to the journal).
@@ -442,6 +445,11 @@ pub fn run() -> i32 {
             Ok(_) => {}
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return 1,
+        }
+
+        if matches!(mode, Mode::Dash) && model.screen == Screen::Home && model.busy.is_none() && model.alert.is_none() && status_read.elapsed() >= Duration::from_secs(8) {
+            status_read = Instant::now();
+            exec(vec![Cmd::Refresh(Screen::Home)], &model, &tx);
         }
 
         // Animations run on the clock, not on idle moments: a steady stream of events (a moving mouse, a controller

@@ -13,9 +13,12 @@ docs/STATUS.md says what has and has not been verified.
   runs from `/data/apps/yarg/current`, so newer releases arrive without rebuilding the OS (see "Updating YARG").
 - YARG runs with `-persistent-data-path /data/yarg -offline`; settings, profiles and the song
   cache live on the data partition. It uses OpenGL (radeonsi); this Buildroot has no RADV Vulkan option.
-- The song drive: label it `YARGSONGS` (ext4, exFAT, NTFS or FAT). It mounts read-only at
-  `/media/songs` with `nofail`, so a missing drive never blocks boot. Point YARG's song folder at
-  `/media/songs` once; the path never changes after that.
+- The song drive: label it `YARGSONGS` (ext4, exFAT, NTFS or FAT). It mounts read-only at `/media/songs` (`nofail`, so a
+  missing drive never blocks boot) by udev when it appears, at boot or when plugged in (`71-yargos-songs.rules` wants
+  `media-songs.mount`, the fstab line; `x-systemd.device-bound` unmounts it when the drive goes). It is deliberately NOT an
+  automount: with no drive every look at a path under /media/songs waited 3 s for it, and YARG checks several paths per song
+  in its cache, so its start took hours once a drive had been removed (measured: 3-4 s per lookup). With no drive
+  /media/songs is an empty folder and lookups fail at once. The path never changes.
 - The data partition of a flashed stick starts at 700 MB and `growdata.sh` grows it (partition and file system, online) to
   fill the stick at boot. It is safe to repeat and takes a lock, so the dashboard also runs it (helper word `grow-data`) when
   `/sys` shows room left after the data partition (once at start, and from SYSTEM > Storage), in case the boot step missed it.

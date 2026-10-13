@@ -52,9 +52,8 @@ scan() { # scan DIR: the sources inside one drive (or one imported drive's folde
     [ "$found" = yes ] || echo "$root"
 }
 
-# The song drive. Looking inside makes the automount mount it; if nothing is mounted, there is no drive.
-ls "$ROOT" >/dev/null 2>&1
-# The automount leaves an "autofs" entry behind even once the drive is mounted over it, so look for a real one.
+# The song drive (udev mounts it when it appears): if nothing is mounted at $ROOT, there is no drive. An old "autofs" entry
+# would not count as a drive.
 if [ -n "${YARGOS_SONGS_TEST:-}" ] || awk -v r="$ROOT" '$2 == r && $3 != "autofs" { found = 1 } END { exit !found }' "${YARGOS_MOUNTS:-/proc/mounts}"; then
     scan "$ROOT"
 fi

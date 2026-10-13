@@ -526,6 +526,12 @@ fn draw_home(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &mut V
     let ch = 70.0 * u + wrapped.iter().map(|(_, l)| gap * u + l.len() as f32 * line * u).sum::<f32>();
     cv.rrect(cx as i32, cy as i32, cw as i32, ch as i32, 18.0 * u, rgb(0, 0, 0), 0.34);
     fonts.draw(cv, "STATUS", cx + 28.0 * u, cy + 22.0 * u, 20.0 * u, true, GOLD, 1.0);
+    if !st.os_version.is_empty() {
+        // Which system is running (not the YARG line below, which is the game's version).
+        let v = format!("YARG OS {}", st.os_version);
+        let vw = fonts.width(&v, 17.0 * u, false);
+        fonts.draw(cv, &v, cx + cw - 28.0 * u - vw, cy + 25.0 * u, 17.0 * u, false, DIM, 0.9);
+    }
     let mut y = cy + 66.0 * u;
     for (k, lines) in &wrapped {
         fonts.draw(cv, k, cx + 28.0 * u, y, 15.0 * u, true, DIM, 0.9);

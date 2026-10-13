@@ -29,6 +29,10 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   QEMU with fake guitars (`tools/test-battery.sh`). Not tried with a real Wiimote (how its level byte reads on your
   rechargeable packs, whether a status request while idle disturbs the real guitar) or over a real YARG window (the notice
   was only seen over a stand-in program).
+- The song drive is mounted by udev (hotplug and at boot) instead of an automount, after YARG sat on "scanning songs" for
+  hours with its old drive removed (each lookup under /media/songs waited 3 s). Measured and fixed in QEMU
+  (`tools/test-songdrive.sh`); not yet seen on the real machine. The first scan of newly imported songs from a USB stick may
+  still take a while: that is YARG reading thousands of files.
 - SYSTEM > Storage (import a portable drive to the internal songs, browse, delete): unit-tested, and `tools/test-songs.sh`
   drives the real dashboard in QEMU with three fake ext4 USB drives (import, same-name drives, a drive already mounted as
   the song drive, YARG's folder list, deleting a folder, a song and everything: all pass). Not tried on real hardware: real

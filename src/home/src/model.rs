@@ -276,6 +276,8 @@ pub struct Status {
     pub pads: usize,
     /// Connected Wii guitars whose batteries are low, like "Wii guitar (D4) 12%".
     pub low_battery: Vec<String>,
+    /// The version of the system that is running (YARG OS itself, not YARG).
+    pub os_version: String,
 }
 
 #[derive(Clone, Debug, Default)]

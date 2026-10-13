@@ -1,0 +1,3 @@
+# The song drive (any drive labelled YARGSONGS) is mounted at /media/songs as soon as it appears, at boot or when plugged in
+# (the mount is the one in /etc/fstab). Not an automount: see the comment there.
+SUBSYSTEM=="block", ACTION=="add|change", ENV{ID_FS_LABEL}=="YARGSONGS", TAG+="systemd", ENV{SYSTEMD_WANTS}+="media-songs.mount"
