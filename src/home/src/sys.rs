@@ -107,8 +107,7 @@ pub fn net_status() -> String {
                 .ok()
                 .and_then(|o| parse_connected_ssid(&o))
                 .unwrap_or_default();
-            // (iwd says "unknown network" until its first scan after boot has put a name to the network)
-            if ssid.is_empty() || ssid == "unknown network" { format!("Wi-Fi ({ip})") } else { format!("Wi-Fi: {ssid} ({ip})") }
+            if ssid.is_empty() { format!("Wi-Fi ({ip})") } else { format!("Wi-Fi: {ssid} ({ip})") }
         }
         Some((_, ip)) => format!("Wired ({ip})"),
     }
@@ -1781,6 +1780,13 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert!(WiiBattery { percent: 15, low: false }.is_low(), "a low level counts even without the flag");
         assert!(WiiBattery { percent: 60, low: true }.is_low(), "the Wiimote's own flag counts at any level");
         assert_eq!(guitar_label("00:22:d7:ad:be:d4"), "Wii guitar (D4)");
+    }
+
+    #[test]
+    fn a_network_really_called_unknown_network_keeps_its_name() {
+        // (somebody's Wi-Fi is named exactly that: never treat the text as "no name")
+        let out = "                       Station: wlan0\n  Scanning              no\n  State                 connected\n  Connected network     unknown network\n  IPv4 address          192.168.0.30\n";
+        assert_eq!(parse_connected_ssid(out).as_deref(), Some("unknown network"));
     }
 
     #[test]
