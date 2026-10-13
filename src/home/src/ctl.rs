@@ -56,6 +56,7 @@ pub fn parse(line: &str) -> Option<Request> {
         "os-ack" => Some(Request::Os("ack")),
         "os-find" => Some(Request::Os("find")),
         "grow-data" => Some(Request::Fixed("/usr/lib/yargos/growdata.sh", &[])),
+        "volume-save" => Some(Request::Fixed("alsactl", &["store"])),
         "os-update-offline" => Some(Request::Os("install-offline")),
         "songs-umount" => Some(Request::SongsUmount),
         _ => {
@@ -200,6 +201,8 @@ mod tests {
         assert_eq!(parse("os-ack"), Some(Request::Os("ack")));
         assert_eq!(parse("os-find"), Some(Request::Os("find")));
         assert_eq!(parse("grow-data"), Some(Request::Fixed("/usr/lib/yargos/growdata.sh", &[])));
+        assert_eq!(parse("volume-save"), Some(Request::Fixed("alsactl", &["store"])));
+        assert_eq!(parse("volume-save x"), None);
         assert_eq!(parse("grow-data /dev/sda"), None);
         assert_eq!(parse("os-update-offline"), Some(Request::Os("install-offline")));
         assert_eq!(parse("os-update-offline /tmp/x"), None);

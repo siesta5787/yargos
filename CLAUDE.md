@@ -154,7 +154,7 @@ use the verbose entry (third in the menu) when you need `tools/qemu-sh.sh`.
 
 The device has no root login and no ssh; the remaining risk is code running as `player` (YARG with a bad song or mod)
 reaching root. So: root never sources, runs, or `chown -R`s anything the player can write, and never follows a path
-through a player-writable folder. `/data` and its first-level folders (`apps`, `home`, `bluetooth`, `iwd`, `alsa`) are
+through a player-writable folder. `/data` and its first-level folders (`apps`, `home`, `bluetooth`, `iwd`, `alsa`, `bluealsa`) are
 root-owned (the player cannot swap them for links); only `apps/yarg`, `yarg`, `songs`, `home/player` and the file `yargos.conf`
 belong to the player. `firstboot.sh` (root) chowns only those leaves themselves and replaces links with real folders;
 the seeded YARG is installed by the player (`yargos-seed.service`); the daily `yargos-update.service` runs as `player`
@@ -178,6 +178,12 @@ Pair a headset in one `bluetoothctl` session WITH an agent (see `bt_connect_audi
 earbuds fail halfway. asound.conf only ever names a headset by a validated address (`ctl::valid_mac`: an ALSA config can load
 programs). `/data/asound.prefer` is the chosen headset; `plan_sound` (before every YARG start) uses it only while connected, else
 a real sound card via `sound-temp`: YARG must always find an existing default output. Never scan for Wiimotes while YARG runs.
+
+## Volume
+
+`sys::volume_*`: a card's mixer (knob = Master else PCM/Speaker/...; the other controls are opened once) or a headset through
+`bluealsa-cli volume` (software volume; the model marks it `BT_VOLUME`). The session grabs the volume keys on the root window
+(`x::grab_volume_keys`) so YARG does not get them; the level shows in the banner window. HDMI has no mixer on purpose.
 
 ## Internal songs (SYSTEM > Storage)
 

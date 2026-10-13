@@ -2,7 +2,7 @@
 // running, so windows stack in the order they are mapped: YARG's window, mapped later, covers ours,
 // and ours shows again as soon as YARG exits.
 
-use crate::event::Event;
+use crate::event::{Event, VolKey};
 use crate::gfx::Canvas;
 use crate::input::keysym_to_nav;
 use std::sync::mpsc::Sender;
@@ -71,6 +71,7 @@ impl Display {
         // windows (SubstructureNotify can be shared) and focus them ourselves.
         conn.change_window_attributes(screen.root, &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY))
             .map_err(|e| e.to_string())?;
+        grab_volume_keys(&conn, screen.root, setup.min_keycode, setup.max_keycode);
         conn.map_window(win).map_err(|e| e.to_string())?;
         conn.flush().map_err(|e| e.to_string())?;
         Ok(Self { conn: Arc::new(conn), root: screen.root, win, gc, depth: screen.root_depth, w: w as usize, h: h as usize, cursor_arrow, cursor_blank, banner: None })
@@ -175,6 +176,7 @@ impl Display {
             };
             while let Ok(ev) = conn.wait_for_event() {
                 let out = match ev {
+                    XEvent::KeyPress(e) if volume_key(sym(e.detail, false), u16::from(e.state)).is_some() => volume_key(sym(e.detail, false), u16::from(e.state)).map(Event::Volume),
                     XEvent::KeyPress(e) => keysym_to_nav(sym(e.detail, u16::from(e.state) & 1 != 0)).map(Event::Nav),
                     XEvent::ButtonPress(e) if e.detail == 1 => Some(Event::Click(e.event_x as i32, e.event_y as i32)),
                     XEvent::MotionNotify(e) => Some(Event::Hover(e.event_x as i32, e.event_y as i32)),
@@ -205,6 +207,49 @@ impl Display {
                 }
             }
         });
+    }
+}
+
+const XF86_LOWER: u32 = 0x1008_ff11;
+const XF86_MUTE: u32 = 0x1008_ff12;
+const XF86_RAISE: u32 = 0x1008_ff13;
+const CTRL: u16 = 4;
+const ALT: u16 = 8;
+
+/// Which volume key is this key press? The media keys, or Ctrl+Alt with Up / Down / M (for keyboards without media keys).
+pub fn volume_key(keysym: u32, state: u16) -> Option<VolKey> {
+    match keysym {
+        XF86_RAISE => Some(VolKey::Up),
+        XF86_LOWER => Some(VolKey::Down),
+        XF86_MUTE => Some(VolKey::Mute),
+        0xff52 | 0xff54 | 0x6d if state & (CTRL | ALT) == (CTRL | ALT) => Some(match keysym {
+            0xff52 => VolKey::Up,
+            0xff54 => VolKey::Down,
+            _ => VolKey::Mute,
+        }),
+        _ => None,
+    }
+}
+
+/// Take the volume keys for ourselves, on the whole screen: no window manager runs, and YARG would otherwise get them (or
+/// nobody). Grabbed with every combination of Caps Lock / Num Lock, which count as modifiers for a grab.
+fn grab_volume_keys(conn: &RustConnection, root: Window, min: u8, max: u8) {
+    let Some(map) = conn.get_keyboard_mapping(min, max - min + 1).ok().and_then(|c| c.reply().ok()) else { return };
+    let per = map.keysyms_per_keycode as usize;
+    let code = |sym: u32| (0..=(max - min)).find(|c| map.keysyms[*c as usize * per..(*c as usize + 1) * per].contains(&sym)).map(|c| c + min);
+    let locks = [0u16, 2, 16, 18]; // none, Caps Lock, Num Lock, both
+    let mut grab = |sym: u32, mods: u16| {
+        if let Some(k) = code(sym) {
+            for l in locks {
+                let _ = conn.grab_key(true, root, ModMask::from(mods | l), k, GrabMode::ASYNC, GrabMode::ASYNC);
+            }
+        }
+    };
+    for sym in [XF86_RAISE, XF86_LOWER, XF86_MUTE] {
+        grab(sym, 0);
+    }
+    for sym in [0xff52u32, 0xff54, 0x6d] {
+        grab(sym, CTRL | ALT);
     }
 }
 
@@ -276,4 +321,26 @@ pub fn xfocus() -> i32 {
     }
     eprintln!("no YARG window");
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_volume_keys_are_the_media_keys_or_ctrl_alt_with_up_down_m() {
+        assert_eq!(volume_key(XF86_RAISE, 0), Some(VolKey::Up));
+        assert_eq!(volume_key(XF86_LOWER, 0), Some(VolKey::Down));
+        assert_eq!(volume_key(XF86_MUTE, 0), Some(VolKey::Mute));
+        assert_eq!(volume_key(XF86_RAISE, 16 | 2), Some(VolKey::Up), "Num Lock and Caps Lock make no difference");
+        assert_eq!(volume_key(0xff52, CTRL | ALT), Some(VolKey::Up));
+        assert_eq!(volume_key(0xff54, CTRL | ALT | 16), Some(VolKey::Down));
+        assert_eq!(volume_key(0x6d, CTRL | ALT), Some(VolKey::Mute));
+        // The arrows alone, or with only one of the two, are the menu's: not taken.
+        assert_eq!(volume_key(0xff52, 0), None);
+        assert_eq!(volume_key(0xff52, CTRL), None);
+        assert_eq!(volume_key(0xff54, ALT), None);
+        assert_eq!(volume_key(0x6d, 0), None);
+        assert_eq!(volume_key(0x61, CTRL | ALT), None);
+    }
 }

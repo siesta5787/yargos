@@ -24,6 +24,8 @@ updates itself like a console.
 - **Wii guitar batteries:** the Bluetooth screen shows each connected guitar's level (`READY 82%`, an amber `LOW BATTERY`
   at 15% or when the Wiimote itself says so), the main menu card lists low ones, and a notice is shown once when a guitar
   runs low: on the dashboard, and drawn over YARG itself while you play.
+- **Volume:** the Sound screen has a Volume row (the speakers or a USB sound card, or Bluetooth headphones), and the volume
+  keys (or Ctrl+Alt+Up / Down / M) work everywhere, also inside YARG, with a level bar over the screen. HDMI volume is the TV's.
 - **Bluetooth headphones:** earbuds and headphones pair on the Bluetooth screen and become a choice on the Sound screen
   (SBC audio through `bluez-alsa`; no sound server). If they are switched off when YARG starts, the speakers play.
 - **Song drive:** any drive labelled `YARGSONGS` (exFAT, NTFS, FAT, ext4) mounts itself; each top-level folder that holds songs

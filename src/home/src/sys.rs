@@ -426,11 +426,6 @@ pub fn parse_percent(out: &str) -> Option<u8> {
     out[i + 1..i + j].trim().parse().ok()
 }
 
-fn volume_control(card: u32) -> Option<String> {
-    let out = run("amixer", &["-c", &card.to_string(), "scontrols"]).ok()?;
-    pick_volume_control(&parse_scontrols(&out))
-}
-
 pub fn sound_refresh() -> Res {
     let mut outputs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
     let conf = std::fs::read_to_string(ASOUND).unwrap_or_default();
@@ -441,11 +436,10 @@ pub fn sound_refresh() -> Res {
     let current_bt = parse_asound_bt(&conf).filter(|m| outputs.iter().any(|o| o.bt.as_deref() == Some(m.as_str())));
     let hw: Vec<Output> = outputs.iter().filter(|o| o.bt.is_none()).cloned().collect();
     let current = if current_bt.is_some() { None } else { saved_output(&hw).or_else(|| best_output(&hw).map(|o| (o.card, o.dev))) };
-    let volume = current.and_then(|(card, _)| {
-        let ctl = volume_control(card)?;
-        let out = run("amixer", &["-c", &card.to_string(), "sget", &ctl]).ok()?;
-        Some((card, parse_percent(&out)?))
-    });
+    let volume = match &current_bt {
+        Some(mac) => bt_volume_get(mac).map(|p| (BT_VOLUME, p)),
+        None => current.and_then(|(card, _)| card_volume(card).map(|(p, _)| (card, p))),
+    };
     Res::Sound { outputs, current, current_bt, volume }
 }
 
@@ -455,9 +449,184 @@ pub fn sound_select(card: u32, dev: u32) -> Result<String, String> {
 }
 
 pub fn sound_volume(card: u32, pct: u8) {
-    if let Some(ctl) = volume_control(card) {
-        let _ = run("amixer", &["-c", &card.to_string(), "-q", "sset", &ctl, &format!("{pct}%")]);
+    if card == BT_VOLUME {
+        if let Some(mac) = current_bt() {
+            bt_volume_set(&mac, pct);
+        }
+        return;
     }
+    set_card_volume(card, pct);
+}
+
+// ---- volume: the sound card's mixer, or the Bluetooth headset (how phones and PCs do it: the computer owns the level) ------
+
+/// The headset the sound is going to now, if any.
+fn current_bt() -> Option<String> {
+    parse_asound_bt(&std::fs::read_to_string(ASOUND).unwrap_or_default())
+}
+
+/// The card the sound is going to now (the saved one, else the best there is).
+fn current_card() -> Option<u32> {
+    let outs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
+    saved_output(&outs).map(|(c, _)| c).or_else(|| best_output(&outs).map(|o| o.card))
+}
+
+/// `amixer sget` -> (percent, muted) of the first channel that has a level.
+pub fn parse_mixer_level(out: &str) -> Option<(u8, bool)> {
+    let line = out.lines().find(|l| l.contains('[') && l.contains("%]"))?;
+    let pct = parse_percent(line)?;
+    Some((pct.min(100), line.contains("[off]")))
+}
+
+/// The other playback controls of a sound card that must be open (full, on) so that the one control the slider moves is
+/// the only thing deciding the loudness: on many laptops "Speaker", "Headphone" and "PCM" each have their own level.
+pub fn secondary_controls(names: &[String], knob: &str) -> Vec<String> {
+    ["Speaker", "Headphone", "PCM", "Front", "Line Out", "Digital"].iter().filter(|w| **w != knob && names.iter().any(|n| n == *w)).map(|w| w.to_string()).collect()
+}
+
+fn card_knob(card: u32) -> Option<(String, Vec<String>)> {
+    let names = parse_scontrols(&run("amixer", &["-c", &card.to_string(), "scontrols"]).ok()?);
+    let knob = pick_volume_control(&names)?;
+    let others = secondary_controls(&names, &knob);
+    Some((knob, others))
+}
+
+pub fn card_volume(card: u32) -> Option<(u8, bool)> {
+    let (knob, _) = card_knob(card)?;
+    parse_mixer_level(&run("amixer", &["-c", &card.to_string(), "sget", &knob]).ok()?)
+}
+
+static OPENED_CARDS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+/// Set a card's level (and unmute it when raised above zero). The first time for a card, its other controls are opened fully.
+pub fn set_card_volume(card: u32, pct: u8) -> bool {
+    let Some((knob, others)) = card_knob(card) else { return false };
+    let c = card.to_string();
+    {
+        let mut seen = OPENED_CARDS.lock().unwrap_or_else(|e| e.into_inner());
+        if !seen.contains(&card) {
+            seen.push(card);
+            for o in &others {
+                let _ = run("amixer", &["-c", &c, "-q", "sset", o, "100%", "unmute"]);
+            }
+        }
+    }
+    let level = format!("{pct}%");
+    let mut args = vec!["-c", c.as_str(), "-q", "sset", knob.as_str(), level.as_str()];
+    if pct > 0 {
+        args.push("unmute");
+    }
+    run("amixer", &args).is_ok()
+}
+
+/// Mute or unmute a card (the switch, not the level).
+pub fn set_card_mute(card: u32, mute: bool) -> bool {
+    let Some((knob, _)) = card_knob(card) else { return false };
+    run("amixer", &["-c", &card.to_string(), "-q", "sset", &knob, if mute { "mute" } else { "unmute" }]).is_ok()
+}
+
+/// `bluealsa-cli list-pcms` -> the path of this headset's A2DP output (".../dev_08_DF_1F_AA_BB_CC/a2dpsrc/sink").
+pub fn parse_bt_pcm_path(list: &str, mac: &str) -> Option<String> {
+    let dev = format!("dev_{}", mac.to_uppercase().replace(':', "_"));
+    list.lines().map(str::trim).find(|l| l.to_uppercase().contains(&dev.to_uppercase()) && l.contains("a2dpsrc")).map(str::to_string)
+}
+
+/// `bluealsa-cli volume PATH` output ("Volume: L: 127 R: 127", as `info` prints it) -> percent (A2DP levels are 0..=127).
+pub fn parse_bt_volume(out: &str) -> Option<u8> {
+    let mut words = out.split_whitespace();
+    while let Some(w) = words.next() {
+        if w == "L:" {
+            let v: u32 = words.next()?.parse().ok().filter(|v| *v <= 127)?;
+            return Some(((v * 100 + 63) / 127) as u8);
+        }
+    }
+    None
+}
+
+fn bt_pcm(mac: &str) -> Option<String> {
+    parse_bt_pcm_path(&run("bluealsa-cli", &["list-pcms"]).ok()?, mac)
+}
+
+pub fn bt_volume_get(mac: &str) -> Option<u8> {
+    parse_bt_volume(&run("bluealsa-cli", &["volume", &bt_pcm(mac)?]).ok()?)
+}
+
+/// Set the headset's level. It is bluealsa's software volume (works with every headset; the headset's own buttons still work
+/// on top of it). A headset that is not connected has no PCM: nothing happens.
+pub fn bt_volume_set(mac: &str, pct: u8) -> bool {
+    let Some(path) = bt_pcm(mac) else { return false };
+    let v = (pct.min(100) as u32 * 127 + 50) / 100;
+    run("bluealsa-cli", &["volume", &path, &v.to_string()]).is_ok()
+}
+
+/// The level of whatever the sound goes to now, as the volume keys show it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VolumeNow {
+    pub pct: u8,
+    pub muted: bool,
+}
+
+const PREMUTE: &str = "/run/yargos-volume-before-mute";
+
+pub fn volume_now() -> Option<VolumeNow> {
+    if let Some(mac) = current_bt() {
+        let pct = bt_volume_get(&mac)?;
+        // A headset has no mute switch here: "muted" is level zero with the old level remembered.
+        return Some(VolumeNow { pct, muted: pct == 0 && std::path::Path::new(PREMUTE).exists() });
+    }
+    card_volume(current_card()?).map(|(pct, muted)| VolumeNow { pct, muted })
+}
+
+/// A step of the volume keys (+5 / -5 percent); raising unmutes. None when this output has no volume control.
+pub fn volume_change(delta: i32) -> Option<VolumeNow> {
+    let now = volume_now()?;
+    let pct = (now.pct as i32 + delta).clamp(0, 100) as u8;
+    if let Some(mac) = current_bt() {
+        let _ = std::fs::remove_file(PREMUTE);
+        return bt_volume_set(&mac, pct).then_some(VolumeNow { pct, muted: false });
+    }
+    let card = current_card()?;
+    set_card_volume(card, pct).then_some(VolumeNow { pct, muted: pct == 0 })
+}
+
+pub fn volume_toggle_mute() -> Option<VolumeNow> {
+    let now = volume_now()?;
+    if let Some(mac) = current_bt() {
+        if now.muted {
+            let back: u8 = std::fs::read_to_string(PREMUTE).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(50);
+            let _ = std::fs::remove_file(PREMUTE);
+            return bt_volume_set(&mac, back).then_some(VolumeNow { pct: back, muted: false });
+        }
+        let _ = std::fs::write(PREMUTE, now.pct.to_string());
+        return bt_volume_set(&mac, 0).then_some(VolumeNow { pct: 0, muted: true });
+    }
+    let card = current_card()?;
+    set_card_mute(card, !now.muted).then_some(VolumeNow { pct: now.pct, muted: !now.muted })
+}
+
+/// Ask the system to keep the mixer settings across a power cut (the helper runs `alsactl store`).
+pub fn volume_save() {
+    let _ = ctl_request("volume-save");
+}
+
+/// `yargos-home volume get|up|down|mute`: what the volume keys do, from a shell (diagnostics and tests).
+pub fn volume_cli(arg: &str) -> i32 {
+    let r = match arg {
+        "up" => volume_change(5),
+        "down" => volume_change(-5),
+        "mute" => volume_toggle_mute(),
+        _ => volume_now(),
+    };
+    let target = match (current_bt(), current_card()) {
+        (Some(m), _) => format!("headset {m}"),
+        (None, Some(c)) => format!("card {c}"),
+        _ => "nothing".into(),
+    };
+    match r {
+        Some(v) => println!("volume {}%{} ({target})", v.pct, if v.muted { " muted" } else { "" }),
+        None => println!("no volume control ({target})"),
+    }
+    0
 }
 
 pub fn wav_bytes(secs: f32) -> Vec<u8> {
@@ -2005,6 +2174,41 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!(bt_failure("Failed to connect: org.bluez.Error.Failed page-timeout"), ": it did not answer (is it switched on and close?)");
         assert_eq!(bt_failure("Connection successful"), "");
         assert_eq!(bt_failure("Failed to pair: org.bluez.Error.Whatever"), ": pair: org.bluez.Error.Whatever");
+    }
+
+    #[test]
+    fn mixer_output_gives_the_level_and_the_mute_switch() {
+        let on = "Simple mixer control 'Master',0\n  Capabilities: pvolume pswitch\n  Front Left: Playback 56 [87%] [-6.00dB] [on]\n  Front Right: Playback 56 [87%] [-6.00dB] [on]\n";
+        let off = "  Mono: Playback 0 [0%] [off]\n";
+        let no_switch = "  Front Left: Playback 120 [100%]\n";
+        assert_eq!(parse_mixer_level(on), Some((87, false)));
+        assert_eq!(parse_mixer_level(off), Some((0, true)));
+        assert_eq!(parse_mixer_level(no_switch), Some((100, false)));
+        assert_eq!(parse_mixer_level("amixer: Unable to find simple control"), None);
+    }
+
+    #[test]
+    fn the_other_controls_of_a_laptop_card_are_opened_so_one_knob_decides() {
+        let names: Vec<String> = ["Master", "Headphone", "Speaker", "PCM", "Mic", "Auto-Mute Mode"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(secondary_controls(&names, "Master"), vec!["Speaker", "Headphone", "PCM"]);
+        // Without a Master the first of the usual ones is the knob, and the rest are opened.
+        let names: Vec<String> = ["PCM", "Speaker"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(pick_volume_control(&names).as_deref(), Some("PCM"));
+        assert_eq!(secondary_controls(&names, "PCM"), vec!["Speaker"]);
+        assert!(secondary_controls(&["Mic".to_string()], "Master").is_empty());
+    }
+
+    #[test]
+    fn a_headsets_pcm_is_found_by_its_address_and_its_level_is_read_as_a_percent() {
+        let list = "/org/bluealsa/hci0/dev_AA_BB_CC_00_00_01/a2dpsrc/sink\n/org/bluealsa/hci0/dev_08_DF_1F_AA_BB_CC/a2dpsrc/sink\n/org/bluealsa/hci0/dev_08_DF_1F_AA_BB_CC/hfpag/source\n";
+        assert_eq!(parse_bt_pcm_path(list, "08:df:1f:aa:bb:cc").as_deref(), Some("/org/bluealsa/hci0/dev_08_DF_1F_AA_BB_CC/a2dpsrc/sink"));
+        assert_eq!(parse_bt_pcm_path(list, "11:22:33:44:55:66"), None);
+        assert_eq!(parse_bt_pcm_path("", "08:df:1f:aa:bb:cc"), None);
+        assert_eq!(parse_bt_volume("Volume: L: 127 R: 127\n"), Some(100));
+        assert_eq!(parse_bt_volume("Volume: L: 64 R: 64"), Some(50));
+        assert_eq!(parse_bt_volume("L: 0 R: 0"), Some(0));
+        assert_eq!(parse_bt_volume("L: 300 R: 300"), None);
+        assert_eq!(parse_bt_volume("nothing"), None);
     }
 
     #[test]

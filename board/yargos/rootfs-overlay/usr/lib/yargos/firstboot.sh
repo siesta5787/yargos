@@ -41,7 +41,7 @@ file() {
 
 chown root:root "$DATA"
 chmod 0755 "$DATA"
-for d in apps home bluetooth iwd alsa; do dir "$DATA/$d" root:root 0755; done
+for d in apps home bluetooth iwd alsa bluealsa; do dir "$DATA/$d" root:root 0755; done
 chmod 0700 "$DATA/bluetooth" "$DATA/iwd"
 dir "$DATA/apps/yarg" player:player 0755
 dir "$DATA/yarg" player:player 0755
@@ -77,6 +77,6 @@ persist() { # persist NAME
     fi
     mount --bind "$DATA/$1" "$src" || echo "yargos-firstboot: could not bind-mount $DATA/$1" >&2
 }
-for s in bluetooth iwd alsa; do persist "$s"; done
+for s in bluetooth iwd alsa bluealsa; do persist "$s"; done   # (bluealsa: each headset's volume)
 
 exit 0

@@ -69,10 +69,14 @@ fn rows(m: &Model) -> Vec<Row> {
                     r
                 })
                 .collect();
-            if let Some((_, pct)) = m.volume {
-                let mut r = row("Volume");
-                r.kind = Kind::Slider(pct);
-                v.push(r);
+            match m.volume {
+                Some((_, pct)) => {
+                    let mut r = row("Volume");
+                    r.kind = Kind::Slider(pct);
+                    v.push(r);
+                }
+                // Always there, so nobody wonders where the volume is: HDMI is the TV's, a headset or card may not offer one.
+                None => v.push(Row { enabled: false, value: "set on the TV or speakers".into(), ..row("Volume") }),
             }
             v.push(row("Play a test sound"));
             v
@@ -235,7 +239,7 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             {
                 let mut v = vec![
                     "Pick where YARG plays its sound: your TV or receiver over HDMI, the headphone jack, a USB audio device, or Bluetooth headphones.".to_string(),
-                    "Left / Right changes the volume (not for HDMI or Bluetooth: use the TV or headphones).".to_string(),
+                    "Left / Right changes the volume. The volume keys (or Ctrl+Alt+Up / Down / M) work everywhere, also in YARG. HDMI volume is the TV's.".to_string(),
                 ];
                 if m.outputs.iter().any(|o| o.bt.is_some()) || m.cur_bt.is_some() {
                     v.push("Bluetooth sound is a little late: run YARG's audio calibration. Switch the headphones on before starting YARG, or the speakers play.".into());

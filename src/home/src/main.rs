@@ -25,6 +25,7 @@ fn main() {
         Some("xinfo") => x::xinfo(),
         Some("screens") if args.get(2).map(String::as_str) == Some("set") => screens::force(args.get(3).map(String::as_str).unwrap_or("")),
         Some("screens") => screens::report(),
+        Some("volume") => sys::volume_cli(args.get(2).map(String::as_str).unwrap_or("get")),
         Some("wiicheck") => sys::wiicheck(args.get(2).map(String::as_str)),
         Some("xfocus") => x::xfocus(),
         Some("screenshot") => {

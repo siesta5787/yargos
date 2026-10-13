@@ -36,6 +36,10 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
 - Bluetooth headphones as the sound output (Anker Soundcore Liberty 4 asked for): built, the config/helper/decision logic is
   unit-tested and the services/plugin were checked in QEMU (`tools/test-btaudio.sh`), but QEMU has no Bluetooth radio:
   pairing, the audio link, the delay, and how it shares the radio with two Wii guitars are all untried on real hardware.
+- Volume (the Sound screen's Volume row, the volume keys and Ctrl+Alt+Up/Down/M with the level bar, headset volume through
+  bluealsa): unit-tested, and the sound card path and the key grabs checked in QEMU (`tools/test-volume.sh`). Not tried on the
+  real laptop (whether its Fn volume keys reach X as media keys; whether Master alone sets the speaker loudness), nor with a
+  real headset (the bluealsa volume calls need a connected headset).
 - SYSTEM > Storage (import a portable drive to the internal songs, browse, delete): unit-tested, and `tools/test-songs.sh`
   drives the real dashboard in QEMU with three fake ext4 USB drives (import, same-name drives, a drive already mounted as
   the song drive, YARG's folder list, deleting a folder, a song and everything: all pass). Not tried on real hardware: real

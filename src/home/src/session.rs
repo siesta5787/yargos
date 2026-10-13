@@ -2,6 +2,7 @@
 // while YARG runs, and shows the dashboard when YARG exits ("Exit" in YARG's menu). PLAY YARG starts it again.
 
 use crate::event::Event;
+use crate::event::VolKey;
 use crate::gfx::{rgb, Canvas, Fonts};
 use crate::input;
 use crate::logo::draw_splash;
@@ -106,15 +107,28 @@ fn spawn_battery_watch(tx: Sender<Event>) {
     });
 }
 
-/// The notice drawn over the game when a guitar's batteries run low.
-fn banner_canvas(fonts: &mut Fonts, screen_h: usize, screen_w: usize, text: &str) -> Canvas {
+/// A notice drawn over everything (also the game): a low battery, or the volume after a volume key.
+struct Banner {
+    text: String,
+    until: Instant,
+    accent: crate::gfx::Rgb,
+    /// A level bar under the text (the volume), 0..=100.
+    level: Option<u8>,
+}
+
+fn banner_canvas(fonts: &mut Fonts, screen_h: usize, screen_w: usize, b: &Banner) -> Canvas {
     let u = screen_h as f32 / 720.0;
-    let msg = format!("Low battery: {text}");
-    let w = ((fonts.width(&msg, 28.0 * u, true) + 110.0 * u) as usize).min(screen_w);
-    let mut cv = Canvas::new(w, (72.0 * u) as usize);
+    let w = ((fonts.width(&b.text, 28.0 * u, true) + 110.0 * u) as usize).clamp((360.0 * u) as usize, screen_w);
+    let h = if b.level.is_some() { 92.0 } else { 72.0 };
+    let mut cv = Canvas::new(w, (h * u) as usize);
     cv.rect(0, 0, w as i32, cv.h as i32, rgb(10, 16, 30), 1.0);
-    cv.rect(0, 0, (10.0 * u) as i32, cv.h as i32, rgb(245, 175, 50), 1.0);
-    fonts.draw(&mut cv, &msg, 40.0 * u, 20.0 * u, 28.0 * u, true, rgb(255, 255, 255), 1.0);
+    cv.rect(0, 0, (10.0 * u) as i32, cv.h as i32, b.accent, 1.0);
+    fonts.draw(&mut cv, &b.text, 40.0 * u, 16.0 * u, 28.0 * u, true, rgb(255, 255, 255), 1.0);
+    if let Some(p) = b.level {
+        let (bx, bw, by) = (40.0 * u, w as f32 - 80.0 * u, 62.0 * u);
+        cv.rect(bx as i32, by as i32, bw as i32, (10.0 * u) as i32, rgb(60, 70, 90), 1.0);
+        cv.rect(bx as i32, by as i32, (bw * p as f32 / 100.0) as i32, (10.0 * u) as i32, b.accent, 1.0);
+    }
     cv
 }
 
@@ -316,7 +330,9 @@ pub fn run() -> i32 {
     spawn_wii_auto(tx.clone(), active.clone());
     spawn_battery_watch(tx.clone());
     // The low-battery notice over the game: the text and when to take it down.
-    let mut banner: Option<(String, Instant)> = None;
+    let mut banner: Option<Banner> = None;
+    // The mixer is stored a few seconds after the last volume key (a power cut would lose it otherwise).
+    let mut volume_save_at: Option<Instant> = None;
     let mut banner_drawn = Instant::now();
 
     let mut model = Model::new();
@@ -374,10 +390,37 @@ pub fn run() -> i32 {
                 }
                 Mode::Game(_) => {
                     eprintln!("yargos-home: low battery, banner over the game: {text}");
-                    banner = Some((text, Instant::now() + Duration::from_secs(10)));
+                    banner = Some(Banner { text: format!("Low battery: {text}"), until: Instant::now() + Duration::from_secs(10), accent: rgb(245, 175, 50), level: None });
                     banner_drawn = Instant::now() - Duration::from_secs(1);
                 }
             },
+            Ok(Event::Volume(key)) => bg(&tx, move |tx| {
+                let r = match key {
+                    VolKey::Up => sys::volume_change(5),
+                    VolKey::Down => sys::volume_change(-5),
+                    VolKey::Mute => sys::volume_toggle_mute(),
+                };
+                let _ = tx.send(Event::VolumeShown(r));
+            }),
+            Ok(Event::VolumeShown(shown)) => {
+                eprintln!("yargos-home: volume notice: {}", shown.map(|v| if v.muted { "muted".to_string() } else { format!("{}%", v.pct) }).unwrap_or_else(|| "no volume control".into()));
+                banner = Some(match shown {
+                    Some(v) => Banner {
+                        text: if v.muted { "Muted".into() } else { format!("Volume {}%", v.pct) },
+                        until: Instant::now() + Duration::from_secs(2),
+                        accent: rgb(23, 230, 140),
+                        level: Some(if v.muted { 0 } else { v.pct }),
+                    },
+                    None => Banner { text: "This output has no volume control here: use the TV or headphones".into(), until: Instant::now() + Duration::from_secs(4), accent: rgb(245, 175, 50), level: None },
+                });
+                banner_drawn = Instant::now() - Duration::from_secs(1);
+                if shown.is_some() {
+                    volume_save_at = Some(Instant::now() + Duration::from_secs(3));
+                    if matches!(mode, Mode::Dash) && model.screen == Screen::Sound {
+                        exec(vec![Cmd::Refresh(Screen::Sound)], &model, &tx);
+                    }
+                }
+            }
             Ok(Event::YargExited { code, .. }) => {
                 banner = None;
                 disp.hide_banner();
@@ -472,13 +515,17 @@ pub fn run() -> i32 {
         }
 
         // The notice over the game: drawn again a few times a second (the game repaints under it), then taken down.
-        if let Some((text, until)) = &banner {
-            if Instant::now() >= *until {
+        if volume_save_at.is_some_and(|t| Instant::now() >= t) {
+            volume_save_at = None;
+            bg(&tx, |_| sys::volume_save());
+        }
+        if let Some(b) = &banner {
+            if Instant::now() >= b.until {
                 banner = None;
                 disp.hide_banner();
             } else if banner_drawn.elapsed() >= Duration::from_millis(250) {
                 banner_drawn = Instant::now();
-                let cv_b = banner_canvas(&mut fonts, disp.h, disp.w, text);
+                let cv_b = banner_canvas(&mut fonts, disp.h, disp.w, b);
                 disp.show_banner(&cv_b, ((disp.w - cv_b.w) / 2) as i32, (disp.h as f32 * 0.04) as i32);
             }
         }

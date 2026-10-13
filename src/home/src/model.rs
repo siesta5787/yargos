@@ -53,6 +53,9 @@ pub struct Network {
     pub known: bool,
 }
 
+/// In `Model::volume`, "the card" of a Bluetooth headset's level (it has no sound card number).
+pub const BT_VOLUME: u32 = u32::MAX;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Output {
     pub card: u32,
@@ -561,7 +564,7 @@ impl Model {
         match self.screen {
             Screen::Home => HOME_ITEMS.len(),
             Screen::Wifi => 1 + self.nets.len(),
-            Screen::Sound => self.outputs.len() + usize::from(self.volume.is_some()) + 1,
+            Screen::Sound => self.outputs.len() + 2, // the outputs, the volume row (always there), the test sound
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
             Screen::Songs => 2 + usize::from(self.songs.mounted),
@@ -866,13 +869,16 @@ impl Model {
                     if let Some(mac) = o.bt.clone() {
                         self.cur_bt = Some(mac.clone());
                         self.cur_card_dev = None;
-                        self.volume = None; // the headset has its own volume
+                        self.volume = None; // read again with the next refresh (it is the headset's level now)
                         return vec![Cmd::SoundSelectBt(mac)];
                     }
                     self.cur_card_dev = Some((o.card, o.dev));
                     self.cur_bt = None;
                     vec![Cmd::SoundSelect { card: o.card, dev: o.dev }]
-                } else if self.volume.is_some() && self.sel == self.outputs.len() {
+                } else if self.sel == self.outputs.len() {
+                    if self.volume.is_none() {
+                        self.toast("This output has no volume control here: use the TV, receiver or headphones");
+                    }
                     vec![]
                 } else {
                     vec![Cmd::SoundTest]
@@ -1645,6 +1651,24 @@ mod tests {
         m.sel = 1;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::SoundSelect { card: 1, dev: 0 }]);
         assert_eq!(m.cur_card_dev, Some((1, 0)));
+    }
+
+    #[test]
+    fn the_volume_row_is_always_there_and_says_so_when_the_output_has_none() {
+        let mut m = Model::new();
+        m.screen = Screen::Sound;
+        m.outputs = vec![Output { card: 0, dev: 3, label: "HDMI".into(), bt: None }];
+        assert_eq!(m.row_count(), 3, "the output, the volume row and the test sound");
+        m.sel = 1; // the volume row with no volume control (HDMI)
+        assert!(m.handle(Nav::Ok).is_empty());
+        assert!(m.live_toast().unwrap().contains("no volume control"));
+        assert!(m.handle(Nav::Right).is_empty(), "nothing to move");
+        m.sel = 2;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::SoundTest]);
+        // A headset's level moves the same way as a card's, marked with BT_VOLUME.
+        m.volume = Some((BT_VOLUME, 50));
+        m.sel = 1;
+        assert_eq!(m.handle(Nav::Right), vec![Cmd::SoundVolume { card: BT_VOLUME, pct: 55 }]);
     }
 
     #[test]
