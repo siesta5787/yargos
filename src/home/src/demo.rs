@@ -78,6 +78,18 @@ pub fn model(name: &str) -> Model {
         reserve_kib: 4_000_000,
     };
     match name {
+        "diag" => {
+            m.screen = Screen::Diag;
+            m.diag_page = 0;
+            m.diag = vec![
+                "== adapter ==".into(), "hci0 4C:3C:8F:4E:4E:A0".into(), "Name: YARGOS".into(), "Powered: yes".into(), "Discovering: no".into(),
+                "== connected ==".into(), "Device 08:DF:1F:AA:BB:CC Soundcore Liberty 4".into(), "Device 00:22:D7:AD:BE:D4 Nintendo RVL-CNT-01".into(),
+                "== kernel ==".into(), "Bluetooth: hci0: command 0xfc05 tx timeout".into(),
+                "== bluetoothd, bluealsa (without the scan noise) ==".into(),
+                "bluetoothd[453]: profiles/audio/avdtp.c:handle_unanswered_req() No reply to Open request".into(),
+                "bluealsa[524]: Couldn't set A2DP configuration: Timeout was reached".into(),
+            ];
+        }
         "storage" => { m.screen = Screen::Storage; m.sel = 1; }
         "storage-slack" => {
             m.screen = Screen::Storage;

@@ -38,7 +38,12 @@ fn launch_yarg(tx: Sender<Event>) {
                 let _ = tx.send(Event::Notice("The last YARG update did not work, so the previous version was restored".into()));
             }
         }
-        sys::ensure_sound();
+        // The dashboard's own Bluetooth work (the Wii guitar scan) is over before the sound output is tried: a headset's audio
+        // link and a scan at the same moment drop each other.
+        sys::bt_quiet(15);
+        if let Some(note) = sys::ensure_sound() {
+            let _ = tx.send(Event::Notice(note));
+        }
         let start = Instant::now();
         let mut child = match Command::new(&cmd).spawn() {
             Ok(c) => c,
@@ -246,12 +251,14 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
             }),
             Cmd::Refresh(Screen::Songs) | Cmd::SongsRefresh => bg(tx, |tx| res(tx, Res::Songs(sys::songs_refresh()))),
             Cmd::Refresh(Screen::System) => bg(tx, |tx| res(tx, Res::SysInfo(sys::sys_info()))),
+            Cmd::Refresh(Screen::Diag) => bg(tx, |tx| res(tx, Res::Diag { page: 0, lines: sys::diag_report(0) })),
             Cmd::Refresh(Screen::Storage) => bg(tx, |tx| res(tx, Res::Storage(sys::storage_info()))),
             Cmd::Refresh(Screen::ImportPick) => bg(tx, |tx| res(tx, Res::Drives(sys::import_drives()))),
             Cmd::Refresh(Screen::Manage) => {
                 let path = m.browse.path.clone();
                 bg(tx, move |tx| res(tx, sys::songs_browse(path)));
             }
+            Cmd::DiagLoad(page) => bg(tx, move |tx| res(tx, Res::Diag { page, lines: sys::diag_report(page) })),
             Cmd::SongsBrowse(path) => bg(tx, move |tx| res(tx, sys::songs_browse(path))),
             Cmd::ImportScan(drive) => bg(tx, move |tx| match sys::import_scan(&drive) {
                 Ok(plan) => res(tx, Res::ImportPlan(Ok(plan))),

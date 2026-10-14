@@ -33,6 +33,13 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   hours with its old drive removed (each lookup under /media/songs waited 3 s). Measured and fixed in QEMU
   (`tools/test-songdrive.sh`); not yet seen on the real machine. The first scan of newly imported songs from a USB stick may
   still take a while: that is YARG reading thousands of files.
+- First real-hardware report on the Liberty 4 earbuds: they pair, connect, show volume and play the dashboard's test sound; but when
+  YARG starts, the earbuds' AVDTP Open request goes unanswered (bluealsa: "Couldn't set A2DP configuration: Timeout"),
+  YARG's sound start waits ~22 s, and the earbuds AND the Wii guitar disconnect. Meanwhile the dashboard was starting
+  `bluetoothctl` dozens of times a second. Changes since: quiet radio before YARG, a silent probe with speaker fallback, bluealsa
+  keep-alive, far fewer Bluetooth calls (see DESIGN.md), and SYSTEM > Diagnostics. Not yet confirmed to fix it: if guitars
+  still drop while earbuds stream, suspect the laptop's Bluetooth/Wi-Fi chip sharing one radio (a second USB Bluetooth adapter for
+  the earbuds would be the remedy).
 - Bluetooth headphones as the sound output (Anker Soundcore Liberty 4 asked for): built, the config/helper/decision logic is
   unit-tested and the services/plugin were checked in QEMU (`tools/test-btaudio.sh`), but QEMU has no Bluetooth radio:
   pairing, the audio link, the delay, and how it shares the radio with two Wii guitars are all untried on real hardware.

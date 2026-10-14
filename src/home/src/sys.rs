@@ -293,7 +293,9 @@ pub fn saved_output(outs: &[Output]) -> Option<(u32, u32)> {
 }
 
 /// Before YARG starts: if the saved output is missing, or none was ever chosen, choose one, so YARG's default device exists.
-pub fn ensure_sound() {
+/// A headset is tried first with one second of silence: if it does not answer, the speakers play this time (YARG would wait
+/// for a headset that is not answering, and the radio drops). The text says why, for the dashboard.
+pub fn ensure_sound() -> Option<String> {
     let outs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
     let conf = std::fs::read_to_string(ASOUND).unwrap_or_default();
     let prefer = read_prefer();
@@ -307,6 +309,58 @@ pub fn ensure_sound() {
             let _ = ctl_request(&format!("{} {card} {dev}", if keep_bt { "sound-temp" } else { "sound" }));
         }
     }
+    // The headset is the output now: wake its audio link up before YARG asks for it, and do not hand YARG a dead one.
+    let conf = std::fs::read_to_string(ASOUND).unwrap_or_default();
+    let mac = parse_asound_bt(&conf)?;
+    if bt_probe() {
+        return None;
+    }
+    let name = bt_name(&mac);
+    let best = best_output(&outs)?;
+    let _ = ctl_request(&format!("sound-temp {} {}", best.card, best.dev));
+    Some(format!("{name} did not answer, so the speakers play this time. Switch it off and on, or check it on the Bluetooth screen"))
+}
+
+/// One second of silence to the default output (a headset): true if it played.
+fn bt_probe() -> bool {
+    run_timeout("aplay", &["-q", "-D", "default", "-t", "raw", "-f", "S16_LE", "-r", "44100", "-c", "2", "-d", "1", "/dev/zero"], 12).is_ok()
+}
+
+/// Wait until the dashboard's own Bluetooth work (the Wii guitar scan, a pairing) is over, so that nothing else uses the radio
+/// while YARG and a headset's audio link are starting. Gives up after `secs`.
+pub fn bt_quiet(secs: u64) {
+    let end = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < end {
+        if BT_BUSY.try_lock().is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Names of Bluetooth devices seen so far (by address): the main menu's status line must not start `bluetoothctl` every few
+/// seconds just to say a name.
+static BT_NAMES: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+fn remember_bt_name(mac: &str, info: &str, fallback: &str) {
+    let name = parse_bt_name(info).unwrap_or_else(|| fallback.to_string());
+    if name.is_empty() {
+        return;
+    }
+    let mut v = BT_NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    v.retain(|(m, _)| !m.eq_ignore_ascii_case(mac));
+    v.push((mac.to_uppercase(), name));
+}
+
+/// A device's name: remembered, or one look at it the first time.
+pub fn bt_name(mac: &str) -> String {
+    let known = BT_NAMES.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(m, _)| m.eq_ignore_ascii_case(mac)).map(|(_, n)| n.clone());
+    if let Some(n) = known {
+        return n;
+    }
+    let info = btctl(&["info", mac], 4).unwrap_or_default();
+    remember_bt_name(mac, &info, "headset");
+    parse_bt_name(&info).unwrap_or_else(|| "headset".into())
 }
 
 /// The headset chosen as the sound output (its address), if any.
@@ -386,6 +440,7 @@ pub fn bt_audio_connected() -> Vec<(String, String)> {
     macs.into_iter()
         .filter_map(|(mac, name)| {
             let info = btctl(&["info", &mac], 6).ok()?;
+            remember_bt_name(&mac, &info, &name);
             is_audio_sink(&info).then(|| (mac.to_uppercase(), parse_bt_name(&info).unwrap_or(name)))
         })
         .collect()
@@ -604,6 +659,23 @@ pub fn volume_toggle_mute() -> Option<VolumeNow> {
     set_card_mute(card, !now.muted).then_some(VolumeNow { pct: now.pct, muted: !now.muted })
 }
 
+/// The report pages of SYSTEM > Diagnostics: (title, helper word).
+pub const DIAG_PAGES: [(&str, &str); 4] = [("BLUETOOTH", "diag-bluetooth"), ("SOUND", "diag-sound"), ("YARG", "diag-yarg"), ("SYSTEM", "diag-system")];
+
+/// One report page as lines of text (the helper streams them back; a failure is a line saying so).
+pub fn diag_report(page: usize) -> Vec<String> {
+    let word = DIAG_PAGES[page.min(DIAG_PAGES.len() - 1)].1;
+    let Ok(mut s) = std::os::unix::net::UnixStream::connect(CTL_SOCKET) else { return vec!["cannot reach the system helper".into()] };
+    s.set_read_timeout(Some(Duration::from_secs(25))).ok();
+    if s.write_all(format!("{word}\n").as_bytes()).is_err() {
+        return vec!["cannot ask the system helper".into()];
+    }
+    let mut text = String::new();
+    let _ = s.read_to_string(&mut text);
+    let lines: Vec<String> = text.lines().map(|l| strip_ansi(l).chars().filter(|c| !c.is_control()).collect::<String>()).filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() { vec!["(nothing to show)".into()] } else { lines }
+}
+
 /// Ask the system to keep the mixer settings across a power cut (the helper runs `alsactl store`).
 pub fn volume_save() {
     let _ = ctl_request("volume-save");
@@ -729,11 +801,14 @@ pub fn bt_list() -> Res {
     let mut out: Vec<BtDevice> = devs
         .into_iter()
         .map(|(mac, name)| {
-            let (paired, connected) = btctl(&["info", &mac], 6).map(|o| parse_bt_info(&o)).unwrap_or((false, false));
+            // One look at the device gives all of it: each `bluetoothctl` start is work for the controller.
+            let info = btctl(&["info", &mac], 6).unwrap_or_default();
+            remember_bt_name(&mac, &info, &name);
+            let (paired, connected) = parse_bt_info(&info);
             // A Wiimote counts as ready only once its guitar bridge is running.
             let ready = !(connected && name.starts_with("Nintendo RVL")) || wii_bridge_ready(&mac);
             let (battery, battery_low) = if connected && name.starts_with("Nintendo RVL") { wii_battery(&mac).map(|b| (Some(b.percent), b.is_low())).unwrap_or((None, false)) } else { (None, false) };
-            let audio = btctl(&["info", &mac], 6).map(|o| is_audio_sink(&o)).unwrap_or(false);
+            let audio = is_audio_sink(&info);
             BtDevice { mac, name, paired, connected, ready, battery, battery_low, audio }
         })
         .filter(|d| d.paired || !is_mac_like(&d.name))
@@ -1019,9 +1094,14 @@ pub enum WiiAuto {
 
 /// One round of the automatic Wiimote connect: listen for a few seconds, and connect any Nintendo controller that is
 /// calling (1+2 held) and is not connected yet. Skips the round if the Bluetooth screen is using the adapter.
+static BT_POWERED: AtomicBool = AtomicBool::new(false);
+
 pub fn wii_auto_step() -> WiiAuto {
     let Ok(_busy) = BT_BUSY.try_lock() else { return WiiAuto::Nothing };
-    let _ = btctl(&["power", "on"], 6);
+    // (switched on once: every extra `bluetoothctl` start is work for the controller)
+    if !BT_POWERED.swap(true, Ordering::Relaxed) {
+        let _ = btctl(&["power", "on"], 6);
+    }
     let known = btctl(&["devices"], 6).map(|o| parse_bt_devices(&o)).unwrap_or_default();
     let scan = match btctl(&["--timeout", "5", "scan", "on"], 12) {
         Ok(t) | Err(t) => t,
@@ -1660,7 +1740,7 @@ pub fn sound_label() -> String {
     let outs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
     // A chosen headset: its name while it plays, or a note that it is off (the speakers play meanwhile).
     if let Some(mac) = read_prefer() {
-        let name = btctl(&["info", &mac], 4).ok().and_then(|i| parse_bt_name(&i)).unwrap_or_else(|| "headset".into());
+        let name = bt_name(&mac);
         if parse_asound_bt(&std::fs::read_to_string(ASOUND).unwrap_or_default()).as_deref() == Some(mac.as_str()) {
             return format!("Bluetooth: {name}");
         }

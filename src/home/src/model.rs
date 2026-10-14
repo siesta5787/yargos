@@ -40,6 +40,8 @@ pub enum Screen {
     Storage,
     /// Pick a portable drive to copy its songs to the internal drive.
     ImportPick,
+    /// What the system saw: Bluetooth, sound, YARG and system reports to read (or photograph) instead of typing commands.
+    Diag,
     /// Browse the internal songs and delete a song, a folder or everything.
     Manage,
 }
@@ -232,6 +234,8 @@ pub enum Cmd {
     SongsAuto(bool),
     /// Erase this disk (a /dev path) and install the system on it.
     Install(String),
+    /// Read this page of SYSTEM > Diagnostics again.
+    DiagLoad(usize),
     /// Mount this portable drive and work out what copying it would do.
     ImportScan(ImportDrive),
     /// Copy it (the plan the user agreed to).
@@ -332,6 +336,8 @@ pub enum Res {
     /// A copy finished: what was copied (a toast), or why it stopped / what went wrong (an alert).
     ImportDone(Result<String, String>),
     Browse { path: Vec<String>, entries: Vec<SongEntry> },
+    /// A page of the diagnostics report.
+    Diag { page: usize, lines: Vec<String> },
     Os(OsInfo),
     /// A system update (or going back) finished: a message that asks for a restart, or why it failed.
     OsDone(Result<String, String>),
@@ -472,6 +478,10 @@ pub struct Model {
     pub storage: StorageInfo,
     pub drives: Vec<ImportDrive>,
     pub browse: Browse,
+    /// SYSTEM > Diagnostics: which report, its lines, and how far it is scrolled.
+    pub diag_page: usize,
+    pub diag: Vec<String>,
+    pub diag_top: usize,
     /// The folder just left with BACK: highlighted again when the list above it comes back.
     back_to: Option<String>,
     pub ask: Option<Ask>,
@@ -521,6 +531,9 @@ impl Model {
             drives: vec![],
             browse: Browse::default(),
             back_to: None,
+            diag_page: 0,
+            diag: vec![],
+            diag_top: 0,
             ask: None,
             erase: None,
             installed: None,
@@ -568,7 +581,8 @@ impl Model {
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
             Screen::Songs => 2 + usize::from(self.songs.mounted),
-            Screen::System => 6,
+            Screen::System => 7,
+            Screen::Diag => 0,
             Screen::Storage => 2 + usize::from(self.storage.slack_kib >= SLACK_WORTH_KIB),
             Screen::ImportPick => 1 + self.drives.len(),
             Screen::Manage => 1 + self.browse.entries.len(),
@@ -756,8 +770,14 @@ impl Model {
         match nav {
             Nav::Up if n > 0 => self.sel = (self.sel + n - 1) % n,
             Nav::Down if n > 0 => self.sel = (self.sel + 1) % n,
+            Nav::Left | Nav::Right | Nav::Up | Nav::Down | Nav::Ok | Nav::Submit if self.screen == Screen::Diag => return self.handle_diag(nav),
             Nav::Back => match self.screen {
                 Screen::Home => {}
+                Screen::Diag => {
+                    let cmds = self.enter(Screen::System);
+                    self.sel = 6;
+                    return cmds;
+                }
                 Screen::ImportPick => return self.enter(Screen::Storage),
                 Screen::Manage => return self.manage_up(),
                 Screen::Storage => {
@@ -774,6 +794,27 @@ impl Model {
             Nav::Left | Nav::Right => return self.adjust(nav == Nav::Right),
             Nav::Ok | Nav::Submit => return self.activate(),
             _ => {}
+        }
+        vec![]
+    }
+
+    /// Diagnostics: LEFT/RIGHT change the report, UP/DOWN scroll it, OK reads it again.
+    fn handle_diag(&mut self, nav: Nav) -> Vec<Cmd> {
+        let n = crate::sys::DIAG_PAGES.len();
+        match nav {
+            Nav::Left | Nav::Right => {
+                self.diag_page = if nav == Nav::Right { (self.diag_page + 1) % n } else { (self.diag_page + n - 1) % n };
+                self.diag = vec![];
+                self.diag_top = 0;
+                self.loading = true;
+                return vec![Cmd::DiagLoad(self.diag_page)];
+            }
+            Nav::Up => self.diag_top = self.diag_top.saturating_sub(5),
+            Nav::Down => self.diag_top = (self.diag_top + 5).min(self.diag.len().saturating_sub(5)),
+            _ => {
+                self.loading = true;
+                return vec![Cmd::DiagLoad(self.diag_page)];
+            }
         }
         vec![]
     }
@@ -965,6 +1006,12 @@ impl Model {
             Screen::System if self.sel == 3 => self.enter(Screen::Devices),
             Screen::System if self.sel == 4 => self.enter(Screen::OsUpdate),
             Screen::System if self.sel == 5 => self.enter(Screen::Storage),
+            Screen::System if self.sel == 6 => {
+                self.diag = vec![];
+                self.diag_page = 0;
+                self.diag_top = 0;
+                self.enter(Screen::Diag)
+            }
             Screen::Storage if self.sel == 0 => self.enter(Screen::ImportPick),
             Screen::Storage if self.sel == 2 => {
                 self.busy = Some("Using the rest of the drive\u{2026}".into());
@@ -1084,7 +1131,7 @@ impl Model {
                 self.confirm_sel = 0;
                 vec![]
             }
-            Screen::Password => vec![],
+            Screen::Password | Screen::Diag => vec![],
         }
     }
 
@@ -1191,6 +1238,13 @@ impl Model {
                 match r {
                     Ok(msg) => self.toast(msg),
                     Err(e) => self.alert = Some(e),
+                }
+            }
+            Res::Diag { page, lines } => {
+                if page == self.diag_page {
+                    self.diag = lines;
+                    self.diag_top = 0;
+                    self.loading = false;
                 }
             }
             Res::Browse { path, entries } => {
@@ -1651,6 +1705,33 @@ mod tests {
         m.sel = 1;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::SoundSelect { card: 1, dev: 0 }]);
         assert_eq!(m.cur_card_dev, Some((1, 0)));
+    }
+
+    #[test]
+    fn diagnostics_pages_are_read_changed_scrolled_and_left_with_back() {
+        let mut m = Model::new();
+        m.screen = Screen::System;
+        m.sel = 6;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Diag)]);
+        assert_eq!(m.screen, Screen::Diag);
+        m.apply(Res::Diag { page: 0, lines: (0..40).map(|i| format!("line {i}")).collect() });
+        assert!(!m.loading && m.diag.len() == 40);
+        assert_eq!(m.handle(Nav::Down), vec![]);
+        assert_eq!(m.diag_top, 5);
+        assert_eq!(m.handle(Nav::Up), vec![]);
+        m.handle(Nav::Up);
+        assert_eq!(m.diag_top, 0);
+        // The next report; a late answer for the page left is ignored.
+        assert_eq!(m.handle(Nav::Right), vec![Cmd::DiagLoad(1)]);
+        m.apply(Res::Diag { page: 0, lines: vec!["old".into()] });
+        assert!(m.diag.is_empty());
+        m.apply(Res::Diag { page: 1, lines: vec!["sound".into()] });
+        assert_eq!(m.diag, vec!["sound".to_string()]);
+        assert_eq!(m.handle(Nav::Left), vec![Cmd::DiagLoad(0)]);
+        assert_eq!(m.handle(Nav::Left), vec![Cmd::DiagLoad(3)], "it wraps round");
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::DiagLoad(3)], "OK reads it again");
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
+        assert_eq!((m.screen, m.sel), (Screen::System, 6));
     }
 
     #[test]

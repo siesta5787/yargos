@@ -128,6 +128,7 @@ fn rows(m: &Model) -> Vec<Row> {
             row("Connected devices"),
             Row { tag: m.os.staged.as_ref().map(|_| ("READY", GREEN)).or(m.os.available.as_ref().map(|_| ("NEW", AMBER))), ..row("System update") },
             row("Storage"),
+            row("Diagnostics"),
         ],
         Screen::Storage => {
             let mut v = vec![
@@ -421,6 +422,7 @@ fn title_of(s: Screen) -> &'static str {
         Screen::Yarg => "INSTALL YARG",
         Screen::OsUpdate => "SYSTEM UPDATE",
         Screen::Storage => "STORAGE",
+        Screen::Diag => "DIAGNOSTICS",
         Screen::ImportPick => "IMPORT SONGS",
         Screen::Manage => "INTERNAL SONGS",
     }
@@ -454,6 +456,8 @@ pub fn draw(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) 
         draw_home(cv, fonts, m, u, hits);
     } else if m.screen == Screen::Password {
         draw_password(cv, fonts, m, u, hits);
+    } else if m.screen == Screen::Diag {
+        draw_diag(cv, fonts, m, u);
     } else {
         draw_list_screen(cv, fonts, m, u, hits);
     }
@@ -461,6 +465,7 @@ pub fn draw(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) 
     // Controls hint.
     let hint = match m.screen {
         Screen::Password => "Arrows: move    OK: type the key    BACK: cancel    A keyboard works too",
+        Screen::Diag => "\u{25C0} \u{25B6} Report     \u{25B2}\u{25BC} Scroll     OK Read again     BACK Return",
         Screen::Manage => "\u{25B2}\u{25BC} Move     OK Open     \u{25C0} Delete     BACK Up",
         _ => "\u{25B2}\u{25BC} Move     OK Select     BACK Return",
     };
@@ -683,6 +688,32 @@ fn fit(fonts: &mut Fonts, text: &str, px: f32, max: f32) -> String {
         s.pop();
     }
     format!("{s}…")
+}
+
+/// SYSTEM > Diagnostics: a page of plain text (what the system saw), made to be read or photographed.
+fn draw_diag(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32) {
+    let (page, total) = (m.diag_page, crate::sys::DIAG_PAGES.len());
+    header(cv, fonts, &format!("DIAGNOSTICS: {}  ({}/{})", crate::sys::DIAG_PAGES[page].0, page + 1, total), u);
+    let (px, py, pw) = (64.0 * u, 160.0 * u, cv.w as f32 - 128.0 * u);
+    let ph = cv.h as f32 - 160.0 * u - 92.0 * u;
+    cv.rrect(px as i32, py as i32, pw as i32, ph as i32, 14.0 * u, rgb(0, 0, 0), 0.45);
+    let px_size = 16.0 * u;
+    let line_h = 21.0 * u;
+    let rows = ((ph - 28.0 * u) / line_h) as usize;
+    if m.loading || m.diag.is_empty() {
+        fonts.draw(cv, "Reading\u{2026}", px + 22.0 * u, py + 18.0 * u, 20.0 * u, false, DIM, 1.0);
+        return;
+    }
+    for (i, line) in m.diag.iter().skip(m.diag_top).take(rows).enumerate() {
+        let header_line = line.starts_with("== ");
+        let text = fit(fonts, line, px_size, pw - 44.0 * u);
+        fonts.draw(cv, &text, px + 22.0 * u, py + 14.0 * u + i as f32 * line_h, px_size, header_line, if header_line { GOLD } else { TEXT }, 0.95);
+    }
+    if m.diag.len() > rows {
+        let more = format!("{}-{} of {} lines", m.diag_top + 1, (m.diag_top + rows).min(m.diag.len()), m.diag.len());
+        let mw = fonts.width(&more, 14.0 * u, false);
+        fonts.draw(cv, &more, px + pw - mw - 18.0 * u, py + ph - 24.0 * u, 14.0 * u, false, DIM, 0.9);
+    }
 }
 
 fn draw_password(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &mut Vec<Hit>) {

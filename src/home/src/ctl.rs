@@ -25,6 +25,9 @@ pub enum Request {
     SongsMount(String),
     /// `songs-umount`: unmount it again.
     SongsUmount,
+    /// `diag-bluetooth`, `diag-sound`, `diag-yarg`, `diag-system`: a text report for SYSTEM > Diagnostics (its text goes
+    /// straight back down the socket).
+    Diag(&'static str),
 }
 
 /// A whole-disk device path: /dev/ and then letters and digits only (sda, vdb, nvme0n1, mmcblk0).
@@ -59,6 +62,10 @@ pub fn parse(line: &str) -> Option<Request> {
         "volume-save" => Some(Request::Fixed("alsactl", &["store"])),
         "os-update-offline" => Some(Request::Os("install-offline")),
         "songs-umount" => Some(Request::SongsUmount),
+        "diag-bluetooth" => Some(Request::Diag("bluetooth")),
+        "diag-sound" => Some(Request::Diag("sound")),
+        "diag-yarg" => Some(Request::Diag("yarg")),
+        "diag-system" => Some(Request::Diag("system")),
         _ => {
             if let Some(dev) = line.strip_prefix("songs-mount ") {
                 return disk_path(dev).map(|d| Request::SongsMount(d.to_string()));
@@ -135,6 +142,10 @@ pub fn run() -> i32 {
         },
         // The script prints "ok" or "error: why" itself.
         Some(Request::SongsMount(dev)) => match Command::new("/usr/bin/yargos-songs").args(["mount", &dev]).status() {
+            Ok(s) if s.success() => 0,
+            _ => 1,
+        },
+        Some(Request::Diag(name)) => match Command::new("/usr/lib/yargos/diag").arg(name).status() {
             Ok(s) if s.success() => 0,
             _ => 1,
         },
@@ -224,6 +235,18 @@ mod tests {
         assert_eq!(parse("sound 1; reboot 0"), None);
         assert_eq!(parse("sound 0x1 0"), None);
         assert_eq!(parse("sound  1 0"), None);
+    }
+
+    #[test]
+    fn diagnostics_are_four_fixed_reports() {
+        assert_eq!(parse("diag-bluetooth\n"), Some(Request::Diag("bluetooth")));
+        assert_eq!(parse("diag-sound"), Some(Request::Diag("sound")));
+        assert_eq!(parse("diag-yarg"), Some(Request::Diag("yarg")));
+        assert_eq!(parse("diag-system"), Some(Request::Diag("system")));
+        assert_eq!(parse("diag-other"), None);
+        assert_eq!(parse("diag-sound x"), None);
+        assert_eq!(parse("diag-"), None);
+        assert_eq!(parse("diag-sound; reboot"), None);
     }
 
     #[test]

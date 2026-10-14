@@ -58,6 +58,16 @@ docs/STATUS.md says what has and has not been verified.
   YARG too, applies a 5% step in the background, and shows the level in the banner window (the same one the low-battery
   notice uses). The mixer is stored (`alsactl store`, helper word `volume-save`) 3 s after the last key, and each headset's
   level lives in `/data/bluealsa`. `yargos-home volume get|up|down|mute` does the same from a shell.
+- Diagnostics: SYSTEM > Diagnostics shows four text reports (Bluetooth, Sound, YARG, System) read through the root helper words
+  `diag-bluetooth|sound|yarg|system`, which run `/usr/lib/yargos/diag NAME` (a fixed list, read-only, bounded). It exists so
+  that a photo of the screen shows what the system saw, instead of typing commands on the console.
+- Bluetooth radio discipline: every `bluetoothctl` start registers an advertisement monitor with BlueZ (the journal's "Adv Monitor
+  app disconnected" lines) which is work for the controller, so the dashboard keeps its Bluetooth calls few: one `info` per
+  device, names remembered (`bt_name`), the adapter powered on once, nothing from the main card's refresh. When PLAY is pressed
+  `bt_quiet` waits for the Wii guitar scan in progress to end before the output is chosen; `ensure_sound` then plays one second
+  of silence to a chosen headset (`bt_probe`) and, if it does not answer, uses the speakers this time rather than let YARG
+  block on a dead link (a headset that ignores AVDTP Open made YARG's sound start wait ~22 s and the radio drop, guitars too).
+  `bluealsa` runs with `--keep-alive=10` so the repeated opens during YARG's start do not stop and restart the stream.
 - Wii guitar batteries: the Wiimote's status report (0x20, answer to a 0x15 request) carries a level byte (0xC8 = full) and
   a "battery low" flag. The bridge writes `/run/yargos-bridge/battery-hidrawN` (`<percent> <low 0|1>`); at connect it asks
   anyway, and while the guitar streams it asks again only after 10 s without any change on it and at most once a minute (a
@@ -114,7 +124,7 @@ fret/pad = OK, red = Back, the two outer frets/pads = left/right. Everything tha
 `sound <card> <device>`, `songs-mount /dev/<partition>`, `songs-umount`, `grow-data` and the system update words (`os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`).
 
 `yargos-home screenshot <screen> out.png` renders any screen with demo data (home, wifi, password, sound,
-bluetooth, bt-battery, home-battery, sound-bt, bt-audio, updates, songs, system, devices, yarg, os-update, storage, import, import-confirm, manage, manage-songs,
+bluetooth, bt-battery, home-battery, sound-bt, bt-audio, diag, updates, songs, system, devices, yarg, os-update, storage, import, import-confirm, manage, manage-songs,
 manage-confirm, busy, confirm, splash) without a display.
 
 The boot splash (`yargos-home splash`) draws the logo straight onto `/dev/fb0` early in boot; the kernel

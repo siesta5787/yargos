@@ -1,0 +1,61 @@
+#!/bin/sh
+# diag NAME: a short text report for the dashboard's Diagnostics screen (SYSTEM > Diagnostics). Runs as root through the helper
+# with a fixed list of names, prints at most ~60 lines, and never changes anything. The point: a photo of the screen is all
+# that is needed to see what the system saw, instead of typing commands on the console.
+# Every command is time-limited: a stuck Bluetooth service must not hang the screen (`bluetoothctl` waits for ever for a daemon
+# that is not answering, and there is none at all on a machine without Bluetooth).
+# (this image has no `timeout` command, so a watchdog kills the command after 6 seconds)
+t() {
+    "$@" 2>&1 &
+    p=$!
+    ( sleep 6; kill -9 "$p" ) >/dev/null 2>&1 &   # (its output closed: it must not hold the pipe open)
+    k=$!
+    wait "$p" 2>/dev/null
+    kill "$k" 2>/dev/null
+    return 0
+}
+
+case ${1:-} in
+    bluetooth)
+        echo "== adapter =="
+        if ls /sys/class/bluetooth/hci* >/dev/null 2>&1; then
+            for a in /sys/class/bluetooth/hci*; do echo "$(basename "$a") $(cat "$a/address" 2>/dev/null)"; done
+            t bluetoothctl show | grep -E "Powered|Discovering|Pairable|Name:" | sed 's/^[[:space:]]*//'
+            echo "== connected =="
+            t bluetoothctl devices Connected
+        else
+            echo "no Bluetooth adapter found"
+        fi
+        echo "== kernel =="
+        t dmesg | grep -i bluetooth | tail -10
+        echo "== bluetoothd, bluealsa (without the scan noise) =="
+        t journalctl -b --no-pager -u bluetooth -u bluealsa | grep -v "Adv Monitor" | sed 's/^[A-Z][a-z][a-z] [0-9]* //;s/ yargos / /' | tail -22
+        ;;
+    sound)
+        echo "== where the sound goes =="
+        grep -v '^#' /data/asound.conf 2>/dev/null | grep -E "slave|device|card|hw:" | sed 's/^[[:space:]]*//'
+        echo "chosen headset: $(cat /data/asound.prefer 2>/dev/null || echo none)"
+        echo "== sound cards =="
+        t aplay -l | grep '^card'
+        echo "== mixer =="
+        t amixer -c 0 scontrols | head -8
+        echo "== bluealsa =="
+        t bluealsa-cli list-pcms -v | head -22
+        ;;
+    yarg)
+        log=$(t find /data/home/player /data/yarg -name Player.log | head -n 1)
+        echo "log: ${log:-none found}"
+        [ -n "$log" ] && grep -i -e "bass" -e "alsa" -e "audio device" -e "exception" -e "error" "$log" | grep -v "Failed to add any stems" | sed 's/<[^>]*>//g' | tail -24
+        [ -n "$log" ] && echo "songs without audio: $(grep -c 'Failed to add any stems' "$log")"
+        ;;
+    system)
+        echo "== system =="
+        cat /usr/lib/yargos/version
+        uptime
+        t df -h /data /
+        free -m | head -2
+        echo "== warnings since boot =="
+        t journalctl -b -p warning --no-pager | sed 's/^[A-Z][a-z][a-z] [0-9]* //;s/ yargos / /' | grep -v "Adv Monitor" | tail -22
+        ;;
+    *) echo "unknown report"; exit 2 ;;
+esac
