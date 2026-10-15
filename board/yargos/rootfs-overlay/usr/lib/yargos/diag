@@ -64,6 +64,10 @@ case ${1:-} in
         uptime
         t df -h /data /
         free -m | head -2
+        echo "== keyboards: what the kernel and the display server saw last =="
+        t dmesg | grep -i -E "usb [0-9.-]+: (new|USB disconnect|device descriptor|unable|device not accepting)|input: .*(keyboard|Keyboard)" | sed 's/^\[ *\([0-9]*\)\.[0-9]*\]/\1s/' | tail -6
+        grep -E "config/udev: (Adding input device|removing device)" /tmp/Xorg.0.log 2>/dev/null | sed 's/^\[ *\([0-9]*\)\.[0-9]*\] (..) config\/udev: /\1s /' | tail -6
+        ls /dev/input 2>/dev/null | tr '\n' ' '; echo
         echo "== warnings since boot =="
         t journalctl -b -p warning --no-pager | sed 's/^[A-Z][a-z][a-z] [0-9]* //;s/ yargos / /' | grep -v "Adv Monitor" | tail -22
         ;;
