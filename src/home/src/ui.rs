@@ -570,8 +570,13 @@ fn draw_list_screen(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits:
     header(cv, fonts, title_of(m.screen), u);
     let rs = rows(m);
     let (lx, top, lw) = (64.0 * u, 172.0 * u, cv.w as f32 * 0.52);
-    let (rh, gap) = (58.0 * u, 8.0 * u);
-    let visible = (((cv.h as f32 - 92.0 * u - top) / (rh + gap)) as usize).max(1);
+    let (mut rh, mut gap) = (58.0 * u, 8.0 * u);
+    let avail = cv.h as f32 - 92.0 * u - top;
+    // A list that only just does not fit is squeezed (down to 80%) rather than hiding its last row below the fold.
+    let squeeze = (avail / (rs.len() as f32 * (rh + gap))).clamp(0.8, 1.0);
+    rh *= squeeze;
+    gap *= squeeze;
+    let visible = ((avail / (rh + gap) + 0.001) as usize).max(1);
     let first = if m.sel >= visible { m.sel + 1 - visible } else { 0 };
     for (i, r) in rs.iter().enumerate().skip(first).take(visible) {
         let y = top + (i - first) as f32 * (rh + gap);
