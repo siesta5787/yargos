@@ -240,6 +240,7 @@ pub fn parse_aplay(out: &str) -> Vec<Output> {
             let (dev, dname) = after.split_once(':')?;
             let dev: u32 = dev.trim().parse().ok()?;
             let dlabel = dname.split_once('[').map(|(_, b)| b.trim_end_matches(']').trim().to_string()).unwrap_or(dname.trim().to_string());
+            let dlabel = dlabel.trim_end_matches(|c: char| c == '*' || c.is_whitespace()).to_string();   // (the kernel marks some HDMI ports "HDMI 0 *")
             Some(Output { card, dev, label: format!("{dlabel} ({cname})"), bt: None })
         })
         .collect()
@@ -280,6 +281,47 @@ pub fn best_output(outs: &[Output]) -> Option<&Output> {
         l.contains("hdmi") || l.contains("displayport") || l.contains(" dp")
     };
     outs.iter().find(|o| !screen(o)).or_else(|| outs.first())
+}
+
+/// One HDMI/DisplayPort port of a sound card as the kernel's ELD file (`/proc/asound/cardN/eld#C.P`) tells it:
+/// Some(screen's name, possibly empty) when a screen that can play sound is plugged in, None when nothing is.
+pub fn parse_eld(text: &str) -> Option<String> {
+    let field = |k: &str| text.lines().find_map(|l| l.strip_prefix(k).map(|v| v.trim().to_string()));
+    let present = field("monitor_present").as_deref() == Some("1");
+    let valid = field("eld_valid").as_deref() == Some("1");
+    (present && valid).then(|| field("monitor_name").unwrap_or_default())
+}
+
+/// The port number in an HDMI output's label ("HDMI 2 (HD-Audio Generic)" -> 2).
+pub fn hdmi_port(label: &str) -> Option<u32> {
+    label.strip_prefix("HDMI ")?.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+}
+
+/// Say on each HDMI output whether a screen is plugged in to it: a laptop's graphics chip offers three, and only the one
+/// the TV is on makes any sound. `eld(card, port)` is the text of that port's ELD file.
+pub fn mark_screens(outs: &mut [Output], eld: &dyn Fn(u32, u32) -> Option<String>) {
+    for o in outs.iter_mut().filter(|o| o.bt.is_none()) {
+        let Some(port) = hdmi_port(&o.label) else { continue };
+        let Some(text) = eld(o.card, port) else { continue };   // (no ELD file: the kernel does not say; leave the name alone)
+        let state = match parse_eld(&text) {
+            Some(name) if !name.is_empty() => format!("{name} connected"),
+            Some(_) => "screen connected".to_string(),
+            None => "nothing connected".to_string(),
+        };
+        o.label = format!("{} - {state}", o.label);
+    }
+}
+
+fn read_eld(card: u32, port: u32) -> Option<String> {
+    let dir = std::fs::read_dir(format!("/proc/asound/card{card}")).ok()?;
+    let want = format!(".{port}");
+    for e in dir.flatten() {
+        let n = e.file_name().to_string_lossy().to_string();
+        if n.starts_with("eld#") && n.ends_with(&want) {
+            return std::fs::read_to_string(e.path()).ok();
+        }
+    }
+    None
 }
 
 pub fn read_cards() -> Vec<(u32, String)> {
@@ -483,6 +525,7 @@ pub fn parse_percent(out: &str) -> Option<u8> {
 
 pub fn sound_refresh() -> Res {
     let mut outputs = run("aplay", &["-l"]).map(|o| parse_aplay(&o)).unwrap_or_default();
+    mark_screens(&mut outputs, &read_eld);
     let conf = std::fs::read_to_string(ASOUND).unwrap_or_default();
     // A headset is an output while it is connected; the one in use shows as the current output.
     for (mac, name) in bt_audio_connected() {
@@ -2102,6 +2145,31 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!(parse_update_line("yargos-update: downloading 0.15.0"), UpdLine::Text("downloading 0.15.0".into()));
         assert!(update_error(&["could not read the latest release (offline?)".to_string()]).contains("WI-FI"));
         assert_eq!(update_error(&["checksum mismatch".to_string()]), "checksum mismatch");
+    }
+
+    #[test]
+    fn hdmi_ports_say_whether_a_screen_is_plugged_in() {
+        let eld_tv = "monitor_present\t\t1\neld_valid\t\t1\nmonitor_name\t\tLG TV\n";
+        let eld_none = "monitor_present\t\t0\neld_valid\t\t0\n";
+        assert_eq!(parse_eld(eld_tv), Some("LG TV".into()));
+        assert_eq!(parse_eld(eld_none), None);
+        assert_eq!(parse_eld("monitor_present\t\t1\neld_valid\t\t1\n"), Some(String::new()));
+        assert_eq!(parse_eld("monitor_present\t\t1\neld_valid\t\t0\n"), None);
+        assert_eq!(hdmi_port("HDMI 2 (HD-Audio Generic)"), Some(2));
+        assert_eq!(hdmi_port("Generic Analog (HD-Audio Generic)"), None);
+        let out = "card 0: Generic [HD-Audio Generic], device 3: HDMI 0 * [HDMI 0 *]\ncard 0: Generic [HD-Audio Generic], device 7: HDMI 1 [HDMI 1]\ncard 1: Generic_1 [HD-Audio Generic], device 0: ALC285 Analog [ALC285 Analog]\n";
+        let mut outs = parse_aplay(out);
+        assert_eq!(outs[0].label, "HDMI 0 (HD-Audio Generic)");   // (the kernel's " *" is not shown)
+        mark_screens(&mut outs, &|card, port| (card == 0).then(|| if port == 1 { eld_tv.to_string() } else { eld_none.to_string() }));
+        assert_eq!(outs[0].label, "HDMI 0 (HD-Audio Generic) - nothing connected");
+        assert_eq!(outs[1].label, "HDMI 1 (HD-Audio Generic) - LG TV connected");
+        assert_eq!(outs[2].label, "ALC285 Analog (HD-Audio Generic)");   // (not a screen: unchanged)
+        // with no ELD file at all the name stays as it was
+        let mut outs = parse_aplay(out);
+        mark_screens(&mut outs, &|_, _| None);
+        assert_eq!(outs[1].label, "HDMI 1 (HD-Audio Generic)");
+        // best_output still avoids screens
+        assert_eq!(best_output(&outs).map(|o| o.dev), Some(0));
     }
 
     #[test]

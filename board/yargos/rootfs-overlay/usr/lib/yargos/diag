@@ -37,8 +37,14 @@ case ${1:-} in
         echo "chosen headset: $(cat /data/asound.prefer 2>/dev/null || echo none)"
         echo "== sound cards =="
         t aplay -l | grep '^card'
-        echo "== mixer =="
-        t amixer -c 0 scontrols | head -8
+        echo "== screens on the HDMI ports (what the kernel sees) =="
+        for f in /proc/asound/card*/eld#*; do
+            [ -f "$f" ] || continue
+            echo "$(echo "$f" | sed 's|/proc/asound/||'): $(grep -E 'monitor_present|eld_valid|monitor_name' "$f" | tr -s '\t ' ' ' | tr '\n' ' ')"
+        done
+        echo "== mixer of the chosen card =="
+        card=$(sed -n 's/.*hw:CARD=\([^,"]*\).*/\1/p' /data/asound.conf 2>/dev/null | head -n 1)
+        t amixer -c "${card:-0}" scontrols | head -8
         echo "== bluealsa =="
         t bluealsa-cli list-pcms -v | head -22
         ;;
