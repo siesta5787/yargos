@@ -67,7 +67,10 @@ case ${1:-} in
         echo "== keyboards: what the kernel and the display server saw last =="
         t dmesg | grep -i -E "usb [0-9.-]+: (new|USB disconnect|device descriptor|unable|device not accepting)|input: .*(keyboard|Keyboard)" | sed 's/^\[ *\([0-9]*\)\.[0-9]*\]/\1s/' | tail -6
         grep -E "config/udev: (Adding input device|removing device)" /tmp/Xorg.0.log 2>/dev/null | sed 's/^\[ *\([0-9]*\)\.[0-9]*\] (..) config\/udev: /\1s /' | tail -6
-        ls /dev/input 2>/dev/null | tr '\n' ' '; echo
+        echo "== keyboard devices the kernel has now =="
+        awk -F'"' '/^N: Name=/ {n=$2} /^H: Handlers=.*kbd/ {sub(/^H: Handlers=/,""); print n ": " $0}' /proc/bus/input/devices | sed 's/ leds//;s/ sysrq//;s/ rfkill//'
+        echo "== display server errors with input =="
+        grep -E "^\[[ 0-9.]*\] \(EE\)" /tmp/Xorg.0.log 2>/dev/null | grep -i -E "event|input|libinput|logind|device" | sed 's/^\[ *\([0-9]*\)\.[0-9]*\] (EE) /\1s /' | tail -5
         echo "== warnings since boot =="
         t journalctl -b -p warning --no-pager | sed 's/^[A-Z][a-z][a-z] [0-9]* //;s/ yargos / /' | grep -v "Adv Monitor" | tail -22
         ;;
