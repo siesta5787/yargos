@@ -1728,8 +1728,8 @@ mod tests {
         m.apply(Res::Diag { page: 1, lines: vec!["sound".into()] });
         assert_eq!(m.diag, vec!["sound".to_string()]);
         assert_eq!(m.handle(Nav::Left), vec![Cmd::DiagLoad(0)]);
-        assert_eq!(m.handle(Nav::Left), vec![Cmd::DiagLoad(3)], "it wraps round");
-        assert_eq!(m.handle(Nav::Ok), vec![Cmd::DiagLoad(3)], "OK reads it again");
+        assert_eq!(m.handle(Nav::Left), vec![Cmd::DiagLoad(4)], "it wraps round");
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::DiagLoad(4)], "OK reads it again");
         assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
         assert_eq!((m.screen, m.sel), (Screen::System, 6));
     }

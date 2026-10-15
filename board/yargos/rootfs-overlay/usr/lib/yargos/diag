@@ -74,5 +74,25 @@ case ${1:-} in
         echo "== warnings since boot =="
         t journalctl -b -p warning --no-pager | sed 's/^[A-Z][a-z][a-z] [0-9]* //;s/ yargos / /' | grep -v "Adv Monitor" | tail -22
         ;;
+    keys)
+        # Press keys on the keyboard while this reads (5 seconds): says whether the kernel gets them from each keyboard.
+        echo "== key presses the kernel received in 5 seconds =="
+        list=/tmp/diag-keys.$$
+        awk -F'"' '/^N: Name=/ {n=$2} /^H: Handlers=.*kbd/ { if (match($0, /event[0-9]+/) && n !~ /Button|Video|Sleep|Lid/) print substr($0, RSTART, RLENGTH) "|" n }' /proc/bus/input/devices > "$list"
+        pids=
+        while IFS='|' read -r e n; do
+            evtest "/dev/input/$e" > "/tmp/diag-ev.$e" 2>&1 &
+            pids="$pids $!"
+        done < "$list"
+        sleep 5
+        { kill -9 $pids; wait $pids; } 2>/dev/null   # (background jobs ignore INT; evtest writes each line at once)
+        while IFS='|' read -r e n; do
+            echo "$n ($e): $(grep -c 'type 1 (EV_KEY).*value 1' "/tmp/diag-ev.$e" 2>/dev/null) key presses"
+            rm -f "/tmp/diag-ev.$e"
+        done < "$list"
+        rm -f "$list"
+        echo "== the display server after the last keyboard was removed =="
+        awk '/removing device/ {n = NR} {l[NR] = $0} END {if (n) for (i = n; i <= NR && i < n + 22; i++) print l[i]}' /tmp/Xorg.0.log 2>/dev/null | grep -v -E "modeset|Modeline|EDID|DDC|UnloadModule|Option" | sed 's/^\[ *\([0-9]*\)\.[0-9]*\] (\(..\)) /\1s \2 /' | cut -c1-96 | head -14
+        ;;
     *) echo "unknown report"; exit 2 ;;
 esac

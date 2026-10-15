@@ -27,7 +27,7 @@ pub enum Request {
     SongsMount(String),
     /// `songs-umount`: unmount it again.
     SongsUmount,
-    /// `diag-bluetooth`, `diag-sound`, `diag-yarg`, `diag-system`: a text report for SYSTEM > Diagnostics (its text goes
+    /// `diag-bluetooth`, `diag-sound`, `diag-yarg`, `diag-system`, `diag-keys`: a text report for SYSTEM > Diagnostics (its text goes
     /// straight back down the socket).
     Diag(&'static str),
 }
@@ -69,6 +69,7 @@ pub fn parse(line: &str) -> Option<Request> {
         "diag-sound" => Some(Request::Diag("sound")),
         "diag-yarg" => Some(Request::Diag("yarg")),
         "diag-system" => Some(Request::Diag("system")),
+        "diag-keys" => Some(Request::Diag("keys")),
         _ => {
             if let Some(dev) = line.strip_prefix("songs-mount ") {
                 return disk_path(dev).map(|d| Request::SongsMount(d.to_string()));
@@ -267,11 +268,12 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_are_four_fixed_reports() {
+    fn diagnostics_are_five_fixed_reports() {
         assert_eq!(parse("diag-bluetooth\n"), Some(Request::Diag("bluetooth")));
         assert_eq!(parse("diag-sound"), Some(Request::Diag("sound")));
         assert_eq!(parse("diag-yarg"), Some(Request::Diag("yarg")));
         assert_eq!(parse("diag-system"), Some(Request::Diag("system")));
+        assert_eq!(parse("diag-keys"), Some(Request::Diag("keys")));
         assert_eq!(parse("diag-other"), None);
         assert_eq!(parse("diag-sound x"), None);
         assert_eq!(parse("diag-"), None);

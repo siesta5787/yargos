@@ -704,7 +704,7 @@ pub fn volume_toggle_mute() -> Option<VolumeNow> {
 }
 
 /// The report pages of SYSTEM > Diagnostics: (title, helper word).
-pub const DIAG_PAGES: [(&str, &str); 4] = [("BLUETOOTH", "diag-bluetooth"), ("SOUND", "diag-sound"), ("YARG", "diag-yarg"), ("SYSTEM", "diag-system")];
+pub const DIAG_PAGES: [(&str, &str); 5] = [("BLUETOOTH", "diag-bluetooth"), ("SOUND", "diag-sound"), ("YARG", "diag-yarg"), ("SYSTEM", "diag-system"), ("KEYBOARD TEST", "diag-keys")];
 
 /// One report page as lines of text (the helper streams them back; a failure is a line saying so).
 pub fn diag_report(page: usize) -> Vec<String> {
