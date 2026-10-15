@@ -16,6 +16,8 @@ pub enum Request {
     Sound(u32, u32),
     /// `sound-temp CARD DEV`: the same, but a chosen Bluetooth output stays the preference (used when it is switched off).
     SoundTemp(u32, u32),
+    /// `sound-prepare`: switch on the digital output of the chosen sound card (HDMI sound is silent until it is on).
+    SoundPrepare,
     /// `sound-bt AA:BB:CC:DD:EE:FF`: play on that Bluetooth headset (and prefer it from now on).
     SoundBt(String),
     /// `os-check`, `os-update`, `os-update-offline`, `os-find`, `os-cancel`, `os-goback`, `os-ack`: the system updater, always without arguments (the
@@ -62,6 +64,7 @@ pub fn parse(line: &str) -> Option<Request> {
         "volume-save" => Some(Request::Fixed("alsactl", &["store"])),
         "os-update-offline" => Some(Request::Os("install-offline")),
         "songs-umount" => Some(Request::SongsUmount),
+        "sound-prepare" => Some(Request::SoundPrepare),
         "diag-bluetooth" => Some(Request::Diag("bluetooth")),
         "diag-sound" => Some(Request::Diag("sound")),
         "diag-yarg" => Some(Request::Diag("yarg")),
@@ -98,6 +101,23 @@ fn write_sound_bt(mac: &str) -> std::io::Result<()> {
     write_atomic(crate::sys::ASOUND_PREFER, &format!("{mac}\n"))
 }
 
+/// The digital outputs of a sound card (HDMI, S/PDIF) start switched OFF in the kernel and make no sound until something
+/// turns them on (a desktop's sound server does, plain ALSA does not): that was the silent TV. Failures are not
+/// interesting: a card without these controls has nothing to switch.
+fn enable_digital_out(card: u32) {
+    for i in 0..8 {
+        let _ = Command::new("amixer").args(["-q", "-c", &card.to_string(), "sset", &format!("IEC958,{i}"), "on"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    }
+}
+
+/// Switch the digital output on for the card the configuration names now.
+fn prepare_sound() {
+    let conf = std::fs::read_to_string(crate::sys::ASOUND).unwrap_or_default();
+    if let Some((card, _)) = crate::sys::parse_asound(&conf, &crate::sys::read_cards()) {
+        enable_digital_out(card);
+    }
+}
+
 fn write_sound(card: u32, dev: u32, keep_bt_preference: bool) -> std::io::Result<()> {
     if !keep_bt_preference {
         let _ = std::fs::remove_file(crate::sys::ASOUND_PREFER);
@@ -107,7 +127,9 @@ fn write_sound(card: u32, dev: u32, keep_bt_preference: bool) -> std::io::Result
     let id = std::fs::read_to_string(format!("/proc/asound/card{card}/id")).ok().map(|s| s.trim().to_string());
     let id = id.filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
     std::fs::write(&tmp, crate::sys::asound_text(id.as_deref(), card, dev))?;
-    std::fs::rename(&tmp, crate::sys::ASOUND)
+    std::fs::rename(&tmp, crate::sys::ASOUND)?;
+    enable_digital_out(card);
+    Ok(())
 }
 
 pub fn run() -> i32 {
@@ -149,6 +171,11 @@ pub fn run() -> i32 {
             Ok(s) if s.success() => 0,
             _ => 1,
         },
+        Some(Request::SoundPrepare) => {
+            prepare_sound();
+            println!("ok");
+            0
+        }
         Some(Request::SongsUmount) => match Command::new("/usr/bin/yargos-songs").arg("umount").status() {
             Ok(s) if s.success() => 0,
             _ => 1,
@@ -196,6 +223,8 @@ mod tests {
 
     #[test]
     fn only_the_known_requests_are_accepted() {
+        assert_eq!(parse("sound-prepare"), Some(Request::SoundPrepare));
+        assert_eq!(parse("sound-prepare 1"), None);
         assert_eq!(parse("poweroff\n"), Some(Request::Fixed("systemctl", &["poweroff"])));
         assert_eq!(parse(" reboot "), Some(Request::Fixed("systemctl", &["reboot"])));
         assert_eq!(parse("poweroff; rm -rf /"), None);

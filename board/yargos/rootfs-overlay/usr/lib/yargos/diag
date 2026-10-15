@@ -45,6 +45,10 @@ case ${1:-} in
         echo "== mixer of the chosen card =="
         card=$(sed -n 's/.*hw:CARD=\([^,"]*\).*/\1/p' /data/asound.conf 2>/dev/null | head -n 1)
         t amixer -c "${card:-0}" scontrols | head -8
+        for i in 0 1 2 3; do
+            v=$(amixer -c "${card:-0}" sget "IEC958,$i" 2>/dev/null | grep -o '\[o[nf]*\]' | head -n 1)
+            [ -n "$v" ] && echo "digital output $i (HDMI sound) switch: $v"
+        done
         echo "== bluealsa =="
         t bluealsa-cli list-pcms -v | head -22
         ;;

@@ -351,6 +351,7 @@ pub fn ensure_sound() -> Option<String> {
             let _ = ctl_request(&format!("{} {card} {dev}", if keep_bt { "sound-temp" } else { "sound" }));
         }
     }
+    let _ = ctl_request("sound-prepare");   // (an HDMI output makes no sound until its digital output is switched on)
     // The headset is the output now: wake its audio link up before YARG asks for it, and do not hand YARG a dead one.
     let conf = std::fs::read_to_string(ASOUND).unwrap_or_default();
     let mac = parse_asound_bt(&conf)?;
@@ -775,6 +776,7 @@ pub fn wav_bytes(secs: f32) -> Vec<u8> {
 pub fn sound_test() -> Result<String, String> {
     let path = "/tmp/yargos-test.wav";
     std::fs::write(path, wav_bytes(1.0)).map_err(|e| e.to_string())?;
+    let _ = ctl_request("sound-prepare");
     run_timeout("aplay", &["-q", path], 10).map(|_| "Played a test sound".into()).map_err(|e| format!("Could not play sound: {e}"))
 }
 
