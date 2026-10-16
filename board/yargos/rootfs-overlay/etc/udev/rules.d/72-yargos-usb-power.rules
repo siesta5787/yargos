@@ -1,3 +1,8 @@
 # No USB autosuspend (this is a mains-powered console): a wireless-keyboard receiver that went to sleep did not always wake
 # on a key press after it was plugged back in, so the keyboard stayed dead until a reboot. Hubs are left alone.
 ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}!="09", TEST=="power/control", ATTR{power/control}="on"
+
+# A wireless-keyboard receiver plugged in while running is silent until it has been enumerated twice: see usb-kick.
+# (24ae = the receiver this was found with; and any USB boot keyboard)
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="24ae", TAG+="systemd", ENV{SYSTEMD_WANTS}+="yargos-usb-kick@%k.service"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTR{bInterfaceClass}=="03", ATTR{bInterfaceSubClass}=="01", ATTR{bInterfaceProtocol}=="01", TAG+="systemd", ENV{SYSTEMD_WANTS}+="yargos-usb-kick@%k.service"

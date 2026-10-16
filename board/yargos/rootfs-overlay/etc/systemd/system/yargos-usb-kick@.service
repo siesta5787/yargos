@@ -1,0 +1,6 @@
+[Unit]
+Description=Re-enumerate a USB keyboard receiver (%i)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/yargos/usb-kick %i

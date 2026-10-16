@@ -1,0 +1,21 @@
+#!/bin/sh
+# usb-kick NAME: switch a USB device off and on once (it enumerates again). A wireless-keyboard receiver that is plugged in
+# while the system runs can stay silent (the kernel gets no key presses from it, power and driver look fine) until it has been
+# enumerated a second time. Started by udev (72-yargos-usb-power.rules) as yargos-usb-kick@NAME.service. Devices that were
+# there at start-up work, so it does nothing in the first minute; and it kicks a device only once in 30 seconds, because the
+# kick itself makes udev announce the device again.
+dev=${1%%:*}
+d=/sys/bus/usb/devices/$dev
+[ -f "$d/authorized" ] || exit 0
+now=$(cut -d. -f1 /proc/uptime)
+[ "$now" -ge 45 ] || exit 0
+m=/run/yargos-usb-kick.$dev
+last=$(cat "$m" 2>/dev/null || echo -100)
+[ $((now - last)) -ge 30 ] || exit 0
+echo "$now" > "$m"
+sleep 4
+[ -f "$d/authorized" ] || exit 0
+echo "yargos-usb-kick: re-enumerating $dev ($(cat "$d/product" 2>/dev/null))"
+echo 0 > "$d/authorized"
+sleep 1
+echo 1 > "$d/authorized"
