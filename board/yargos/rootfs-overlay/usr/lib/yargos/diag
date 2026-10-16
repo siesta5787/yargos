@@ -75,22 +75,53 @@ case ${1:-} in
         t journalctl -b -p warning --no-pager | sed 's/^[A-Z][a-z][a-z] [0-9]* //;s/ yargos / /' | grep -v "Adv Monitor" | tail -22
         ;;
     keys)
-        # Press keys on the keyboard while this reads (5 seconds): says whether the kernel gets them from each keyboard.
+        # Press keys on the keyboard while this reads: says whether the kernel gets them from each keyboard. A USB keyboard that
+        # got none is then reset (autosuspend off, the USB device switched off and on) and counted once more, so the page
+        # also shows whether that brings it back.
+        usbdev() {   # the USB device directory behind an input node
+            p=$(readlink -f "/sys/class/input/$1/device" 2>/dev/null)
+            while [ -n "$p" ] && [ "$p" != / ] && [ ! -f "$p/idVendor" ]; do p=${p%/*}; done
+            [ -f "$p/idVendor" ] && echo "$p"
+        }
+        count_keys() {   # count_keys SECONDS: key presses per keyboard node, listed in /tmp/diag-keys.list
+            awk -F'"' '/^N: Name=/ {n=$2} /^H: Handlers=.*kbd/ { if (match($0, /event[0-9]+/) && n !~ /Button|Video|Sleep|Lid/) print substr($0, RSTART, RLENGTH) "|" n }' /proc/bus/input/devices > /tmp/diag-keys.list
+            pids=
+            while IFS='|' read -r e n; do
+                evtest "/dev/input/$e" > "/tmp/diag-ev.$e" 2>&1 &
+                pids="$pids $!"
+            done < /tmp/diag-keys.list
+            sleep "$1"
+            { kill -9 $pids; wait $pids; } 2>/dev/null   # (background jobs ignore INT; evtest writes each line at once)
+            while IFS='|' read -r e n; do
+                c=$(grep -c 'type 1 (EV_KEY).*value 1' "/tmp/diag-ev.$e" 2>/dev/null)
+                echo "$n ($e): $c key presses"
+                [ "$c" = 0 ] && echo "$e" >> /tmp/diag-keys.dead
+                rm -f "/tmp/diag-ev.$e"
+            done < /tmp/diag-keys.list
+        }
+        rm -f /tmp/diag-keys.dead
         echo "== key presses the kernel received in 5 seconds =="
-        list=/tmp/diag-keys.$$
-        awk -F'"' '/^N: Name=/ {n=$2} /^H: Handlers=.*kbd/ { if (match($0, /event[0-9]+/) && n !~ /Button|Video|Sleep|Lid/) print substr($0, RSTART, RLENGTH) "|" n }' /proc/bus/input/devices > "$list"
-        pids=
-        while IFS='|' read -r e n; do
-            evtest "/dev/input/$e" > "/tmp/diag-ev.$e" 2>&1 &
-            pids="$pids $!"
-        done < "$list"
-        sleep 5
-        { kill -9 $pids; wait $pids; } 2>/dev/null   # (background jobs ignore INT; evtest writes each line at once)
-        while IFS='|' read -r e n; do
-            echo "$n ($e): $(grep -c 'type 1 (EV_KEY).*value 1' "/tmp/diag-ev.$e" 2>/dev/null) key presses"
-            rm -f "/tmp/diag-ev.$e"
-        done < "$list"
-        rm -f "$list"
+        count_keys 5
+        for e in $(cat /tmp/diag-keys.dead 2>/dev/null); do
+            d=$(usbdev "$e") || continue
+            echo "$e is USB $(basename "$d"): power $(cat "$d/power/control" 2>/dev/null), now $(cat "$d/power/runtime_status" 2>/dev/null)"
+        done
+        d=
+        for e in $(cat /tmp/diag-keys.dead 2>/dev/null); do
+            d=$(usbdev "$e") && break
+            d=
+        done
+        if [ -n "$d" ]; then
+            echo "== a USB keyboard heard nothing: resetting it, press keys again =="
+            echo on > "$d/power/control" 2>/dev/null
+            echo 0 > "$d/authorized" 2>/dev/null
+            sleep 1
+            echo 1 > "$d/authorized" 2>/dev/null
+            sleep 3
+            rm -f /tmp/diag-keys.dead
+            count_keys 5
+        fi
+        rm -f /tmp/diag-keys.list /tmp/diag-keys.dead
         echo "== the display server after the last keyboard was removed =="
         awk '/removing device/ {n = NR} {l[NR] = $0} END {if (n) for (i = n; i <= NR && i < n + 22; i++) print l[i]}' /tmp/Xorg.0.log 2>/dev/null | grep -v -E "modeset|Modeline|EDID|DDC|UnloadModule|Option" | sed 's/^\[ *\([0-9]*\)\.[0-9]*\] (\(..\)) /\1s \2 /' | cut -c1-96 | head -14
         ;;
