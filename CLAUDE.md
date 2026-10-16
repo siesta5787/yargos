@@ -179,6 +179,13 @@ earbuds fail halfway. asound.conf only ever names a headset by a validated addre
 programs). `/data/asound.prefer` is the chosen headset; `plan_sound` (before every YARG start) uses it only while connected, else
 a real sound card via `sound-temp`: YARG must always find an existing default output. Never scan for Wiimotes while YARG runs.
 
+## Wi-Fi and Bluetooth share a radio
+
+On many laptops (the test HP Envy: Realtek 8822CE) Wi-Fi and Bluetooth are one chip. The dashboard's automatic Wiimote scan runs
+almost all the time, and an OS update crawled at 0% (no error: the updater only gives up below 2 KB/s). So `sys::ScanPause`
+(held by the OS update, the YARG update/install jobs) stops the scan while a download runs, and the update screen shows MB done
+and KB/s (`PROGRESS percent MB-done MB-total KB/s`). Never add a download without pausing the scan.
+
 ## Volume
 
 `sys::volume_*`: a card's mixer (knob = Master else PCM/Speaker/...; the other controls are opened once) or a headset through

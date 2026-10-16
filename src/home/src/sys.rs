@@ -1142,6 +1142,9 @@ pub enum WiiAuto {
 static BT_POWERED: AtomicBool = AtomicBool::new(false);
 
 pub fn wii_auto_step() -> WiiAuto {
+    if SCAN_PAUSES.load(Ordering::Relaxed) > 0 {
+        return WiiAuto::Nothing;
+    }
     let Ok(_busy) = BT_BUSY.try_lock() else { return WiiAuto::Nothing };
     // (switched on once: every extra `bluetoothctl` start is work for the controller)
     if !BT_POWERED.swap(true, Ordering::Relaxed) {
@@ -1748,6 +1751,37 @@ pub fn os_error(lines: &[String]) -> String {
 
 /// Ask the root helper to run a system updater command (`os-check`, `os-update`, `os-goback`...). Progress comes back as
 /// lines ("Downloading the update… 40%"); Ok holds the messages, Err the reason.
+/// A `PROGRESS percent [MB-done MB-total [KB/s]]` line (what follows the word) -> the text on the screen.
+pub fn progress_text(phase: &str, fields: &str) -> Option<String> {
+    let f: Vec<&str> = fields.split_whitespace().collect();
+    let pct: u32 = f.first()?.parse().ok()?;
+    let mut text = format!("{phase}\u{2026} {}%", pct.min(100));
+    if let (Some(Ok(done)), Some(Ok(total))) = (f.get(1).map(|v| v.parse::<u64>()), f.get(2).map(|v| v.parse::<u64>())) {
+        text += &format!("  ({done} of {total} MB");
+        if let Some(Ok(kb)) = f.get(3).map(|v| v.parse::<u64>()) {
+            text += &if kb >= 1024 { format!(", {:.1} MB/s", kb as f64 / 1024.0) } else if kb < 50 { format!(", only {kb} KB/s: very slow") } else { format!(", {kb} KB/s") };
+        }
+        text += ")";
+    }
+    Some(text)
+}
+
+/// While any of these exist the automatic Wiimote scan sits out: on many laptops Wi-Fi and Bluetooth share one radio chip and
+/// a scan that never stops starves a download (an update crawled at 0%).
+static SCAN_PAUSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub struct ScanPause;
+impl ScanPause {
+    pub fn new() -> Self {
+        SCAN_PAUSES.fetch_add(1, Ordering::Relaxed);
+        ScanPause
+    }
+}
+impl Drop for ScanPause {
+    fn drop(&mut self) {
+        SCAN_PAUSES.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 pub fn os_run(word: &str, mut on_progress: impl FnMut(String)) -> Result<Vec<String>, String> {
     CANCELLED.store(false, Ordering::Relaxed);
     let mut s = std::os::unix::net::UnixStream::connect(CTL_SOCKET).map_err(|e| format!("cannot reach the system helper: {e}"))?;
@@ -1755,8 +1789,8 @@ pub fn os_run(word: &str, mut on_progress: impl FnMut(String)) -> Result<Vec<Str
     let (mut phase, mut text, mut ended_ok) = ("Downloading the update".to_string(), vec![], false);
     for line in std::io::BufReader::new(s).lines().map_while(Result::ok) {
         let t = line.trim().trim_start_matches("yargos-os-update: ").to_string();
-        if let Some(n) = t.strip_prefix("PROGRESS ").and_then(|n| n.trim().parse::<u32>().ok()) {
-            on_progress(format!("{phase}\u{2026} {}%", n.min(100)));
+        if let Some(text) = t.strip_prefix("PROGRESS ").and_then(|f| progress_text(&phase, f)) {
+            on_progress(text);
         } else if let Some(step) = t.strip_prefix("STEP ") {
             phase = match step.trim() {
                 "downloading" => "Downloading the update",
@@ -2172,6 +2206,29 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!(outs[1].label, "HDMI 1 (HD-Audio Generic)");
         // best_output still avoids screens
         assert_eq!(best_output(&outs).map(|o| o.dev), Some(0));
+    }
+
+    #[test]
+    fn download_progress_shows_size_and_speed() {
+        assert_eq!(progress_text("Downloading", "7").as_deref(), Some("Downloading\u{2026} 7%"));
+        assert_eq!(progress_text("Downloading", "7 12 158").as_deref(), Some("Downloading\u{2026} 7%  (12 of 158 MB)"));
+        assert_eq!(progress_text("Downloading", "7 12 158 850").as_deref(), Some("Downloading\u{2026} 7%  (12 of 158 MB, 850 KB/s)"));
+        assert_eq!(progress_text("Downloading", "0 0 158 4").as_deref(), Some("Downloading\u{2026} 0%  (0 of 158 MB, only 4 KB/s: very slow)"));
+        assert_eq!(progress_text("Downloading", "50 79 158 2560").as_deref(), Some("Downloading\u{2026} 50%  (79 of 158 MB, 2.5 MB/s)"));
+        assert_eq!(progress_text("Downloading", "x"), None);
+        assert_eq!(progress_text("Downloading", "").as_deref(), None);
+    }
+
+    #[test]
+    fn the_wiimote_scan_sits_out_while_a_download_runs() {
+        assert_eq!(SCAN_PAUSES.load(Ordering::Relaxed), 0);
+        let a = ScanPause::new();
+        let b = ScanPause::new();
+        assert!(matches!(wii_auto_step(), WiiAuto::Nothing));
+        drop(a);
+        assert_eq!(SCAN_PAUSES.load(Ordering::Relaxed), 1);
+        drop(b);
+        assert_eq!(SCAN_PAUSES.load(Ordering::Relaxed), 0);
     }
 
     #[test]

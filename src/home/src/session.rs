@@ -152,6 +152,7 @@ fn done(tx: &Sender<Event>, r: Result<String, String>) {
 
 /// Install YARG for the first time and refresh the status (so PLAY YARG appears).
 fn yarg_install_job(tx: &Sender<Event>, zip: Option<String>, upd: &UpdInfo) {
+    let _quiet = sys::ScanPause::new();
     let r = sys::yarg_install(zip.as_deref(), |t| res(tx, Res::Progress(t)));
     res(tx, Res::YargInstalled(r));
     res(tx, Res::Status(sys::status(&sys::sound_label(), upd)));
@@ -201,6 +202,7 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
             Cmd::Refresh(Screen::Updates) => bg(tx, move |tx| res(tx, Res::Upd(sys::upd_info(&upd)))),
             Cmd::UpdCheck => bg(tx, move |tx| res(tx, Res::Upd(sys::upd_check(&upd)))),
             Cmd::UpdApply => bg(tx, move |tx| {
+                let _quiet = sys::ScanPause::new();
                 done(tx, sys::upd_apply(|t| res(tx, Res::Progress(t))));
                 let mut u = sys::upd_info(&upd);
                 u.available = false;
@@ -215,6 +217,7 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Os(sys::os_info()));
             }),
             Cmd::OsInstall => bg(tx, move |tx| {
+                let _quiet = sys::ScanPause::new();
                 let r = sys::os_run("os-update", |t| res(tx, Res::Progress(t)));
                 res(tx, Res::OsDone(r.map(|_| "The update is installed. Restart to use it".to_string())));
                 res(tx, Res::Os(sys::os_info()));

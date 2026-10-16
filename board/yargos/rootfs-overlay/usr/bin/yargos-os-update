@@ -359,8 +359,13 @@ cmd_install() {
                 curl -fsSL -C - --connect-timeout 20 --speed-limit 2000 --speed-time 45 --max-time 7200 \
                     -o "$xzf.part" -w '%{http_code}' "$BASE/$IMG_FILE" > "$RUN/http" 2>/dev/null &
                 dlpid=$!
+                # PROGRESS percent MB-done MB-total [KB/s over the last 3 s]: a slow link shows as a speed, not a silent 0%
+                sz0=$(fsize "$xzf.part"); n=0; kb=
                 while kill -0 "$dlpid" 2>/dev/null; do
-                    log "PROGRESS $(($(fsize "$xzf.part") * 100 / IMG_SIZE))"
+                    cur=$(fsize "$xzf.part")
+                    n=$((n + 1))
+                    if [ $n -ge 3 ]; then kb=$(( (cur - sz0) / 1024 / n )); sz0=$cur; n=0; fi
+                    log "PROGRESS $((cur * 100 / IMG_SIZE)) $((cur / 1048576)) $((IMG_SIZE / 1048576)) $kb"
                     sleep 1
                 done
                 wait "$dlpid"
