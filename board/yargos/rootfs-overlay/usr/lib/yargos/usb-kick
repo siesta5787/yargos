@@ -1,21 +1,54 @@
 #!/bin/sh
-# usb-kick NAME: switch a USB device off and on once (it enumerates again). A wireless-keyboard receiver that is plugged in
-# while the system runs can stay silent (the kernel gets no key presses from it, power and driver look fine) until it has been
-# enumerated a second time. Started by udev (72-yargos-usb-power.rules) as yargos-usb-kick@NAME.service. Devices that were
-# there at start-up work, so it does nothing in the first minute; and it kicks a device only once in 30 seconds, because the
-# kick itself makes udev announce the device again.
-dev=${1%%:*}
+# usb-kick NAME (the USB device, e.g. 3-2): a wireless-keyboard receiver that is plugged in while the system runs can stay
+# silent (the kernel gets no key presses from it; power and driver look fine) until it has been configured again. This
+# watches the receiver's input nodes for a real key press or mouse movement and, while nothing comes, switches the device
+# off and on (authorized 0/1) again and again with growing waits; it stops at the first input, when the receiver is
+# unplugged, or after ~9 minutes. A working but idle keyboard only loses a second now and then. It also logs what
+# the receiver sent (raw HID reports, USB traffic) so that a failure can be understood from SYSTEM > Diagnostics.
+# Started by udev (72-yargos-usb-power.rules) as yargos-usb-kick@NAME.service. Devices present at start-up work: skipped.
+dev=$1
 d=/sys/bus/usb/devices/$dev
+r=/run/yargos-usb-kick.$dev
+up() { cut -d. -f1 /proc/uptime; }
 [ -f "$d/authorized" ] || exit 0
-now=$(cut -d. -f1 /proc/uptime)
-[ "$now" -ge 45 ] || exit 0
-m=/run/yargos-usb-kick.$dev
-last=$(cat "$m" 2>/dev/null || echo -100)
-[ $((now - last)) -ge 30 ] || exit 0
-echo "$now" > "$m"
-sleep 4
-[ -f "$d/authorized" ] || exit 0
-echo "yargos-usb-kick: re-enumerating $dev ($(cat "$d/product" 2>/dev/null))"
-echo 0 > "$d/authorized"
-sleep 1
-echo 1 > "$d/authorized"
+[ "$(up)" -ge 45 ] || exit 0
+num=$(cat "$d/devnum"); bus=$(cat "$d/busnum")
+# the input / hidraw nodes that belong to this USB device
+under() { for n in $1; do case $(readlink -f "$n/device") in */$dev/$dev:*) echo "${n##*/}" ;; esac; done; }
+# heard SECONDS: 0 = a key or movement reached evdev, 1 = nothing, 2 = the device went away / came back
+heard() {
+    rm -f "$r".*
+    pids=
+    for e in $(under "/sys/class/input/event*"); do evtest "/dev/input/$e" > "$r.$e" 2>/dev/null & pids="$pids $!"; done
+    for h in $(under "/sys/class/hidraw/hidraw*"); do dd if="/dev/$h" of="$r.$h" bs=64 count=1 2>/dev/null & pids="$pids $!"; done
+    i=0; s=1
+    while [ $i -lt "$1" ] && [ $s = 1 ]; do
+        sleep 1; i=$((i + 1))
+        [ "$(cat "$d/devnum" 2>/dev/null)" = "$num" ] || s=2
+        grep -q '^Event: time .*type [12] (EV_' "$r".event* 2>/dev/null && s=0
+    done
+    { kill $pids; wait $pids; } 2>/dev/null
+    raw=$(for f in "$r".hidraw*; do [ -s "$f" ] && echo "${f##*.}"; done)
+    rm -f "$r".*
+    return $s
+}
+mp=
+m=/sys/kernel/debug/usb/usbmon/${bus}u
+if [ -r "$m" ]; then   # what the receiver sent, for the Diagnostics page (the first 4000 lines of this device)
+    awk -v p=":$bus:$(printf %03d "$num"):" 'index($0, p) { print; fflush(); if (++n >= 4000) exit }' "$m" > "/run/yargos-usbmon.$dev" 2>/dev/null &
+    mp=$!
+fi
+stop() { [ -n "$mp" ] && kill "$mp" 2>/dev/null; exit "${1:-0}"; }
+t0=$(up); k=0
+echo "$(cat "$d/idVendor"):$(cat "$d/idProduct") $(cat "$d/product" 2>/dev/null) plugged in at $t0 s, nodes: $(under "/sys/class/input/event*" | tr '\n' ' ')"
+for w in 10 20 30 60 60 60 120 120; do
+    heard "$w"; s=$?
+    [ -f "$d/authorized" ] || { echo "unplugged after $(($(up) - t0)) s, $k kicks"; stop; }
+    if [ $s = 2 ]; then echo "plugged in again"; [ -n "$mp" ] && kill "$mp"; exec "$0" "$dev"; fi
+    [ $s = 0 ] && { echo "input arrived $(($(up) - t0)) s after plug-in, after $k kicks"; stop; }
+    k=$((k + 1))
+    echo "nothing for $w s (raw HID reports from: ${raw:-none}; $(cat "$d/power/runtime_status")): kick $k"
+    echo 0 > "$d/authorized"; sleep 1; echo 1 > "$d/authorized"; sleep 2
+done
+echo "still silent after $k kicks, giving up"
+stop

@@ -1,6 +1,6 @@
 [Unit]
-Description=Re-enumerate a USB keyboard receiver (%i)
+Description=Watch a USB keyboard receiver and re-enumerate it while it stays silent (%i)
 
 [Service]
-Type=oneshot
+Type=simple
 ExecStart=/usr/lib/yargos/usb-kick %i
