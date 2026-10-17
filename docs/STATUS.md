@@ -58,9 +58,9 @@ latest tests below (over-the-air updates, HDMI sound, Bluetooth earbuds, USB key
   (`tools/test-songdrive.sh`); not yet seen on the real machine. The first scan of newly imported songs from a USB stick may
   still take a while: that is YARG reading thousands of files.
 - Volume (the Sound screen's Volume row, the volume keys and Ctrl+Alt+Up/Down/M with the level bar, headset volume through
-  bluealsa): unit-tested, and the sound card path and the key grabs checked in QEMU (`tools/test-volume.sh`). Not tried on the
-  real machine (whether its Fn volume keys reach X as media keys; whether Master alone sets the speaker loudness), nor with a
-  real headset (the bluealsa volume calls need a connected headset).
+  bluealsa): unit-tested, and the sound card path and the key grabs checked in QEMU (`tools/test-volume.sh`). The owner confirmed
+  that the physical volume keys of a USB keyboard work on the mini PC. Not tried: a laptop's own Fn volume keys, the on-screen
+  Volume row and the level bar over a real YARG window, or the headset's volume (bluealsa volume calls on real earbuds).
 - SYSTEM > Storage (import a portable drive to the internal songs, browse, delete): unit-tested, and `tools/test-songs.sh`
   drives the real dashboard in QEMU with three fake ext4 USB drives (import, same-name drives, a drive already mounted as
   the song drive, YARG's folder list, deleting a folder, a song and everything: all pass). Not tried on real hardware: real
