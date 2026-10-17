@@ -82,7 +82,8 @@ The first boot grows the data partition to fill the stick. Wired networks work w
   2. `stable.json` (names the image and its checksum),
   3. `stable.json.sig` (the signature on `stable.json`).
 
-  Put them on the song drive (top level or one folder down) and choose SYSTEM > Updates > System updates > *Install from the
+  Put them on the song drive (top level or one folder down; with several versions on the drive, in separate folders, the newest
+  complete one is used, and a `beta.json` from a pre-release page works as it is) and choose SYSTEM > Updates > System updates > *Install from the
   song drive*. It does the same signature and checksum checks as a download, and only installs a version newer than the one
   running. The other release files (`yargos-<version>.img.xz`, the full disk image for flashing a new stick, and
   `legal-<version>.tar`, the licences) are not needed.

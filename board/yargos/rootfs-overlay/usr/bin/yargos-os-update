@@ -191,16 +191,30 @@ fetch_manifest() {
     verify_manifest
 }
 
-# The folder on the song drive that holds release files copied there by hand: <channel>.json, <channel>.json.sig and the
-# image the manifest names (top level of the drive, or one folder down). Nothing if there is no song drive: touching the
-# empty automount would make the system wait for a drive that is not there.
-offline_dir() {
+# Choose, among the release files copied onto the song drive by hand, the newest one that can be installed. A release is
+# <channel>.json (this device's channel first, then stable.json and beta.json: a file straight from a release page works
+# whatever it is called), its .sig, and the image the manifest names, in the top folder of the drive or one folder down.
+# Several can be there (an old and a new version in different folders): every manifest is checked (signature, image present
+# with the right size) and the highest version wins. Sets OFFLINE_DIR and OFFLINE_NAME. When nothing is complete it settles
+# on the first folder that has a manifest, so that `find` can say what is wrong with it. Returns 1 if there is none at all
+# (or no song drive: touching the empty automount would make the system wait for a drive that is not there).
+offline_pick() {
     if [ "$SONGS" = /media/songs ] && [ ! -e /dev/disk/by-label/YARGSONGS ]; then return 1; fi
-    n=$(conf_channel).json
+    firstd=; firstn=; bestd=; bestn=; bestv=
     for d in "$SONGS" "$SONGS"/*/; do
         d=${d%/}
-        [ -f "$d/$n" ] && [ -f "$d/$n.sig" ] && { echo "$d"; return 0; }
+        for n in "$(conf_channel).json" stable.json beta.json; do
+            [ -f "$d/$n" ] && [ -f "$d/$n.sig" ] || continue
+            [ -n "$firstd" ] || { firstd=$d; firstn=$n; }
+            OFFLINE_DIR=$d; OFFLINE_NAME=$n
+            local_manifest || continue
+            read_manifest || continue
+            [ "$(fsize "$d/$IMG_FILE")" = "$IMG_SIZE" ] || continue
+            if [ -z "$bestd" ] || ver_gt "$LATEST" "$bestv"; then bestd=$d; bestn=$n; bestv=$LATEST; fi
+        done
     done
+    if [ -n "$bestd" ]; then OFFLINE_DIR=$bestd; OFFLINE_NAME=$bestn; return 0; fi
+    if [ -n "$firstd" ]; then OFFLINE_DIR=$firstd; OFFLINE_NAME=$firstn; return 0; fi
     return 1
 }
 
@@ -210,7 +224,7 @@ local_manifest() {
     mkdir -p "$RUN"
     chmod 0700 "$RUN"
     url=
-    name=$(conf_channel).json
+    name=${OFFLINE_NAME:-$(conf_channel).json}
     rm -f "${RUN:?}/${name:?}" "${RUN:?}/${name:?}.sig"
     # (small files only: /run is memory, and anyone can put anything on a drive)
     [ "$(fsize "$OFFLINE_DIR/$name")" -le 65536 ] && [ "$(fsize "$OFFLINE_DIR/$name.sig")" -le 1024 ] || return 1
@@ -282,7 +296,7 @@ drop_entries_for() {
 # What is on the song drive: "offline VERSION" (ready to install), "offline-old VERSION" (not newer than this system),
 # "offline-missing FILE" (its image file is not beside the manifest or is the wrong size), "offline-bad" (not signed by us).
 cmd_find() {
-    OFFLINE_DIR=$(offline_dir) || return 0
+    offline_pick || return 0
     local_manifest
     case $? in 0) ;; 2) echo "offline-bad"; return 0 ;; *) return 0 ;; esac
     read_manifest || { echo "offline-bad"; return 0; }
@@ -304,7 +318,7 @@ cmd_install() {
     on_trial && die "this system has not been confirmed as good yet; try again after it has run for a while"
     [ -n "$(status_get staged)" ] && die "an update ($(status_get staged)) is already waiting for a restart"
     if [ -n "${OFFLINE:-}" ]; then
-        OFFLINE_DIR=$(offline_dir) || die "no update was found on the song drive"
+        offline_pick || die "no update was found on the song drive"
         local_manifest
         rc=$?
         [ $rc = 0 ] || die "$([ $rc = 2 ] && echo 'the update information on the drive is not signed by us' || echo 'the update files on the drive could not be read')"

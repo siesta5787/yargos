@@ -38,6 +38,10 @@ YARGOS_IMAGES="$W/img" "$HERE/tools/release.sh" $NEW --fast --no-legal --notes "
 
 # The song drive holds the three release files.
 cp "$W/rel/stable.json" "$W/rel/stable.json.sig" "$W/rel/rootfs-$NEW.img.xz" "$W/songs/"
+# ...and, for the test of several versions on one drive, an OLDER signed manifest (same image file: only `find` looks at it).
+mkdir -p "$W/songs/old-manifest"
+jq '.version = "2098.1.1"' "$W/rel/stable.json" > "$W/songs/old-manifest/stable.json"
+openssl pkeyutl -sign -inkey "${YARGOS_KEY:-$HOME/.yargos/release-ed25519.pem}" -rawin -in "$W/songs/old-manifest/stable.json" -out "$W/songs/old-manifest/stable.json.sig" || { echo "cannot sign the old manifest"; exit 1; }
 mkfs.ext4 -q -F -L YARGSONGS -d "$W/songs" "$W/songs.img" 400M || exit 1
 
 echo "== starting the guest with the song drive"
@@ -93,6 +97,23 @@ eq "an image of the wrong size is reported" "offline-missing rootfs-$NEW.img.xz"
 g 'cp /media/songs/rootfs-2099.1.1.img.xz /tmp/sd/ && dd if=/dev/urandom of=/tmp/sd/rootfs-2099.1.1.img.xz bs=1 seek=5000 count=16 conv=notrunc 2>/dev/null' >/dev/null
 has "a damaged image of the right size is refused" "damaged" "$(g 'YARGOS_SONGS=/tmp/sd yargos-os-update install-offline 2>&1 | tail -1')"
 eq "  ...and nothing was staged" "0" "$(g "ls /efi/loader/entries | grep -c 'yargos-2099'")"
+
+echo "== several versions on one drive: the newest one is chosen"
+# (scratch folders in the guest; the image file is a link to the one on the drive)
+g 'rm -rf /tmp/multi; mkdir -p /tmp/multi/a_old /tmp/multi/z_new /tmp/multi/m_beta' >/dev/null
+g 'cp /media/songs/old-manifest/stable.json /media/songs/old-manifest/stable.json.sig /tmp/multi/a_old/ && ln -s /media/songs/rootfs-2099.1.1.img.xz /tmp/multi/a_old/rootfs-2099.1.1.img.xz' >/dev/null
+g 'cp /media/songs/stable.json /media/songs/stable.json.sig /tmp/multi/z_new/ && ln -s /media/songs/rootfs-2099.1.1.img.xz /tmp/multi/z_new/rootfs-2099.1.1.img.xz' >/dev/null
+eq "the old version comes first in the listing but the newer one is found" "offline $NEW" "$(g 'YARGOS_SONGS=/tmp/multi yargos-os-update find 2>/dev/null')"
+g 'rm -rf /tmp/multi/z_new' >/dev/null
+eq "with only the older one it is that one" "offline 2098.1.1" "$(g 'YARGOS_SONGS=/tmp/multi yargos-os-update find 2>/dev/null')"
+# a release page's beta.json is found on a device that follows the stable channel
+g 'cp /media/songs/stable.json /tmp/multi/m_beta/beta.json && cp /media/songs/stable.json.sig /tmp/multi/m_beta/beta.json.sig && ln -s /media/songs/rootfs-2099.1.1.img.xz /tmp/multi/m_beta/rootfs-2099.1.1.img.xz' >/dev/null
+eq "beta.json is found too, and the newest of all wins" "offline $NEW" "$(g 'YARGOS_SONGS=/tmp/multi yargos-os-update find 2>/dev/null')"
+# a folder whose image is missing does not hide a complete one
+g 'rm /tmp/multi/m_beta/rootfs-2099.1.1.img.xz' >/dev/null
+eq "an incomplete newer release does not hide a complete older one" "offline 2098.1.1" "$(g 'YARGOS_SONGS=/tmp/multi yargos-os-update find 2>/dev/null')"
+g 'rm -rf /tmp/multi/a_old' >/dev/null
+eq "and when nothing is complete it says what is missing" "offline-missing rootfs-$NEW.img.xz" "$(g 'YARGOS_SONGS=/tmp/multi yargos-os-update find 2>/dev/null')"
 
 echo "== the dashboard"
 g 'rm -rf /data/os-update' >/dev/null
