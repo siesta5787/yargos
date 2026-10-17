@@ -245,6 +245,8 @@ pub enum Cmd {
     OsInstall,
     /// Install the update found on the song drive (no internet).
     OsInstallOffline,
+    /// Look on the song drive again for a system update (the dashboard asks again every few seconds while the screen is open).
+    OsFindOffline,
     OsCancel,
     OsGoBack,
     OsAck,
@@ -345,6 +347,8 @@ pub enum Res {
     Wifi { dev: Option<String>, nets: Vec<Network> },
     /// Is the Wi-Fi adapter on?
     WifiPower(bool),
+    /// What the song drive holds as a system update (or why not), see Cmd::OsFindOffline.
+    OsOffline { offline: Option<String>, hint: Option<String> },
     Sound { outputs: Vec<Output>, current: Option<(u32, u32)>, current_bt: Option<String>, volume: Option<(u32, u8)> },
     Bt { present: bool, devs: Vec<BtDevice> },
     Upd(UpdInfo),
@@ -476,6 +480,9 @@ pub const HOME_ITEMS: [&str; 5] = ["PLAY YARG", "SOUND", "BLUETOOTH", "CONNECTED
 
 /// SYSTEM: four rows (Wi-Fi, Updates, Storage, Diagnostics), then the two power icons: Restart, Shut down.
 pub const SYSTEM_ROWS: usize = 4;
+
+/// The busy text while "Install from the song drive" looks at the drive again.
+pub const LOOKING_ON_DRIVE: &str = "Looking on the song drive\u{2026}";
 const INSTALL_YARG: &str = "INSTALL YARG";
 
 pub struct Model {
@@ -1188,8 +1195,9 @@ impl Model {
                         return vec![];
                     }
                     if self.os.offline.is_none() {
-                        self.toast(self.os.offline_hint.clone().unwrap_or_else(|| "No update found on the song drive".into()));
-                        return vec![];
+                        // nothing known yet: look at the drive again (it may have been plugged in after this screen opened)
+                        self.busy = Some(LOOKING_ON_DRIVE.into());
+                        return vec![Cmd::OsFindOffline];
                     }
                     self.busy = Some("Copying the update from the song drive\u{2026}".into());
                     self.cancel = Some(Cmd::OsCancel);
@@ -1259,6 +1267,18 @@ impl Model {
                     self.alert_ack = true;
                 }
                 self.status = s;
+            }
+            Res::OsOffline { offline, hint } => {
+                let looking = self.busy.as_deref() == Some(LOOKING_ON_DRIVE);
+                self.os.offline = offline.clone();
+                self.os.offline_hint = hint.clone();
+                if looking {
+                    self.busy = None;
+                    match offline {
+                        Some(v) => self.toast(format!("Found {v} on the song drive: choose Install from the song drive again to install it")),
+                        None => self.toast(hint.unwrap_or_else(|| "No update found on the song drive".into())),
+                    }
+                }
             }
             Res::WifiPower(on) => {
                 self.wifi_on = on;
@@ -1839,7 +1859,11 @@ mod tests {
         m.sel = 1;
         assert!(m.handle(Nav::Ok).is_empty(), "nothing available");
         m.sel = 2;
-        assert!(m.handle(Nav::Ok).is_empty(), "nothing on the song drive");
+        // nothing known on the song drive: OK looks at the drive again, and says what it found
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsFindOffline]);
+        assert_eq!(m.busy.as_deref(), Some(LOOKING_ON_DRIVE));
+        m.apply(Res::OsOffline { offline: None, hint: None });
+        assert!(m.busy.is_none());
         assert!(m.live_toast().unwrap().contains("No update found"));
         m.sel = 3;
         assert!(m.handle(Nav::Ok).is_empty(), "nothing waiting");
@@ -1865,7 +1889,23 @@ mod tests {
         let mut m = os_screen();
         m.os.offline_hint = Some("The file on the song drive is not signed by us.".into());
         m.sel = 2;
-        assert!(m.handle(Nav::Ok).is_empty() && m.live_toast().unwrap().contains("not signed"));
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsFindOffline]);
+        m.apply(Res::OsOffline { offline: None, hint: Some("The file on the song drive is not signed by us.".into()) });
+        assert!(m.live_toast().unwrap().contains("not signed"));
+        // A drive plugged in after the screen opened is found when OK looks again, and a second OK installs it.
+        let mut m = os_screen();
+        m.sel = 2;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsFindOffline]);
+        m.apply(Res::OsOffline { offline: Some("2026.11.1".into()), hint: None });
+        assert!(m.busy.is_none() && m.live_toast().unwrap().contains("Found 2026.11.1"));
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsInstallOffline]);
+        // The screen's own look every few seconds changes the row quietly: it never clears something else that is busy.
+        let mut m = os_screen();
+        m.busy = Some("Downloading the update".into());
+        m.apply(Res::OsOffline { offline: Some("3".into()), hint: None });
+        assert_eq!(m.busy.as_deref(), Some("Downloading the update"));
+        assert_eq!(m.os.offline.as_deref(), Some("3"));
+        assert!(m.live_toast().is_none());
         // An update already waiting for a restart is not stacked up with another.
         let mut m = os_screen();
         m.os.offline = Some("2".into());

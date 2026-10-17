@@ -244,6 +244,10 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Os(sys::os_info()));
                 res(tx, Res::Status(sys::status(&sys::sound_label(), &upd)));
             }),
+            Cmd::OsFindOffline => bg(tx, |tx| {
+                let i = sys::os_info();
+                res(tx, Res::OsOffline { offline: i.offline, hint: i.offline_hint });
+            }),
             Cmd::OsCancel => bg(tx, |_| sys::os_cancel()),
             Cmd::OsGoBack => bg(tx, move |tx| {
                 let r = sys::os_run("os-goback", |_| {});
@@ -369,6 +373,7 @@ pub fn run() -> i32 {
     // The main menu's status card is read again every few seconds while it is up: things change after it first drew
     // (the Wi-Fi gets its name, a restarted system closes its update, a guitar connects).
     let mut status_read = Instant::now();
+    let mut os_find_read = Instant::now();
     let mut notice: Option<String> = None;
     let started = Instant::now();
     // YARGOS_DEBUG_FPS=1: log how fast the dashboard draws and any frame that took long (to the journal).
@@ -525,6 +530,12 @@ pub fn run() -> i32 {
         if matches!(mode, Mode::Dash) && model.screen == Screen::Home && model.busy.is_none() && model.alert.is_none() && status_read.elapsed() >= Duration::from_secs(8) {
             status_read = Instant::now();
             exec(vec![Cmd::Refresh(Screen::Home)], &model, &tx);
+        }
+
+        // The System updates screen looks at the song drive again every few seconds (it may be plugged in while the screen is open).
+        if matches!(mode, Mode::Dash) && model.screen == Screen::OsUpdate && model.busy.is_none() && model.alert.is_none() && os_find_read.elapsed() >= Duration::from_secs(4) {
+            os_find_read = Instant::now();
+            exec(vec![Cmd::OsFindOffline], &model, &tx);
         }
 
         // Animations run on the clock, not on idle moments: a steady stream of events (a moving mouse, a controller
