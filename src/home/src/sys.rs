@@ -1524,6 +1524,12 @@ pub fn grow_data() -> Result<String, String> {
     Ok("The rest of the drive is now in use".into())
 }
 
+/// Does the system run from a disk built into the computer? (Then "Install on this computer's disk" has nothing to do.)
+/// Unknown counts as "no": the install row is then shown, which is harmless.
+pub fn running_from_internal() -> bool {
+    run("yargos-install", &["where"]).map(|o| o.trim() == "internal").unwrap_or(false)
+}
+
 pub fn storage_info() -> StorageInfo {
     let (total, free) = data_space();
     let used = run("du", &["-sk", songcopy::ROOT]).ok().and_then(|o| o.split_whitespace().next().and_then(|n| n.parse().ok())).unwrap_or(0);
@@ -1534,6 +1540,7 @@ pub fn storage_info() -> StorageInfo {
         reserve_kib: reserve_kib(total),
         folders: songcopy::list(std::path::Path::new(songcopy::ROOT)).len(),
         slack_kib: data_slack_kib(),
+        on_stick: !running_from_internal(),
     }
 }
 

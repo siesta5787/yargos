@@ -115,7 +115,7 @@ implementation differs from the first plan.
 - **go-back**: renames the running system's entry to `+0`, so the other system becomes the default at the next restart.
 - **Tests**: `tools/test-os-update.sh` (QEMU, ~30 min): good update, bad update that falls back, power cut mid-write,
   going back. `tools/release.sh` makes and signs a release and refuses an image that holds YARG, BASS, Discord or Unity.
-- Dashboard: SYSTEM > System update (check, install with a percentage, BACK cancels, "Restart now?", automatic on/off,
+- Dashboard: SYSTEM > Updates > System updates (check, install with a percentage, BACK cancels, "Restart now?", automatic on/off,
   go back); a rolled-back update raises an ATTENTION box that is acknowledged once; the main menu card says when a system
   update is waiting. The root helper only accepts the fixed words `os-check`, `os-update`, `os-update-offline`, `os-find`, `os-cancel`, `os-goback`, `os-ack`.
   `yargos-os-update.timer` checks 5 minutes after boot and daily (never while YARG runs, never restarts).

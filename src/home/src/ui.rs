@@ -2,7 +2,7 @@
 
 use crate::gfx::{rgb, Canvas, Fonts, Rgb};
 use crate::logo::{draw_logo, GOLD};
-use crate::model::{human_kib, Key, Model, Power, Screen, SongKind, HOME_ITEMS};
+use crate::model::{human_kib, Key, Model, Power, Screen, SongKind, StorageRow, HOME_ITEMS, SYSTEM_ROWS};
 
 const TEXT: Rgb = rgb(232, 236, 244);
 const DIM: Rgb = rgb(160, 172, 190);
@@ -121,25 +121,28 @@ fn rows(m: &Model) -> Vec<Row> {
             v.push(Row { value: if m.songs.auto { "ON".into() } else { "OFF".into() }, ..row("Add song folders to YARG") });
             v
         }
+        // (the Restart and Shut down icons under these rows are drawn by draw_list_screen)
         Screen::System => vec![
-            row("Restart"),
-            row("Shut down"),
-            row("Install on this computer's disk"),
-            row("Connected devices"),
-            Row { tag: m.os.staged.as_ref().map(|_| ("READY", GREEN)).or(m.os.available.as_ref().map(|_| ("NEW", AMBER))), ..row("System update") },
+            row("Wi-Fi"),
+            Row { tag: os_tag(m).or(if m.upd.available { Some(("NEW", AMBER)) } else { None }), ..row("Updates") },
             row("Storage"),
             row("Diagnostics"),
         ],
-        Screen::Storage => {
-            let mut v = vec![
-                row("Import from a portable drive"),
-                Row { value: if m.storage.used_kib > 0 { human_kib(m.storage.used_kib) } else { String::new() }, ..row("Manage internal songs") },
-            ];
-            if m.storage.slack_kib >= crate::model::SLACK_WORTH_KIB {
-                v.push(Row { value: human_kib(m.storage.slack_kib), tag: Some(("NOT IN USE", AMBER)), ..row("Use the rest of this drive") });
-            }
-            v
-        }
+        Screen::UpdatesMenu => vec![
+            Row { tag: os_tag(m), ..row("System updates") },
+            Row { tag: if m.upd.available { Some(("NEW", AMBER)) } else { None }, ..row("YARG updates") },
+        ],
+        Screen::Storage => m
+            .storage_rows()
+            .into_iter()
+            .map(|r| match r {
+                StorageRow::Import => row("Import from a portable drive"),
+                StorageRow::Manage => Row { value: if m.storage.used_kib > 0 { human_kib(m.storage.used_kib) } else { String::new() }, ..row("Manage internal songs") },
+                StorageRow::SongDrive => Row { value: m.status.songs.clone(), ..row("Song drive") },
+                StorageRow::UseRest => Row { value: human_kib(m.storage.slack_kib), tag: Some(("NOT IN USE", AMBER)), ..row("Use the rest of this drive") },
+                StorageRow::Install => row("Install on this computer's disk"),
+            })
+            .collect(),
         Screen::ImportPick => {
             let mut v = vec![row("Look for drives again")];
             for d in &m.drives {
@@ -273,9 +276,16 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
                 v.push("An update is ready to install.".into());
             }
             v.extend(m.upd.log.iter().cloned());
-            ("UPDATES", v)
+            ("YARG UPDATES", v)
         }
-        Screen::Songs => ("SONGS", {
+        Screen::UpdatesMenu => (
+            "UPDATES",
+            vec![
+                "System updates: YARG OS itself. Check, install, go back to the earlier system, automatic updates on or off.".into(),
+                "YARG updates: the game. Check, install, go back, automatic updates on or off.".into(),
+            ],
+        ),
+        Screen::Songs => ("SONG DRIVE", {
             let mut v = vec![m.songs.detail.clone()];
             if m.songs.mounted {
                 v.push(if !m.songs.auto {
@@ -289,6 +299,8 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             v.push("Name your song drive YARGSONGS (ext4, exFAT, NTFS or FAT).".into());
             v
         }),
+        Screen::System if m.sel == SYSTEM_ROWS => ("RESTART", vec!["Restarts the computer. It asks first. Left and Right choose between Restart and Shut down.".into()]),
+        Screen::System if m.sel > SYSTEM_ROWS => ("SHUT DOWN", vec!["Turns the computer off. It asks first. Left and Right choose between Restart and Shut down.".into()]),
         Screen::System => ("SYSTEM", m.sysinfo.clone()),
         Screen::Storage => {
             let s = &m.storage;
@@ -408,19 +420,25 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
     }
 }
 
+/// The tag of a system update (READY once installed and waiting for a restart, NEW when one can be installed).
+fn os_tag(m: &Model) -> Option<(&'static str, Rgb)> {
+    m.os.staged.as_ref().map(|_| ("READY", GREEN)).or(m.os.available.as_ref().map(|_| ("NEW", AMBER)))
+}
+
 fn title_of(s: Screen) -> &'static str {
     match s {
         Screen::Home => "",
         Screen::Wifi | Screen::Password => "WI-FI",
         Screen::Sound => "SOUND",
         Screen::Bluetooth => "BLUETOOTH",
-        Screen::Updates => "UPDATES",
-        Screen::Songs => "SONGS",
+        Screen::Updates => "YARG UPDATES",
+        Screen::UpdatesMenu => "UPDATES",
+        Screen::Songs => "SONG DRIVE",
         Screen::System => "SYSTEM",
         Screen::Devices => "DEVICES",
         Screen::Install => "INSTALL",
         Screen::Yarg => "INSTALL YARG",
-        Screen::OsUpdate => "SYSTEM UPDATE",
+        Screen::OsUpdate => "SYSTEM UPDATES",
         Screen::Storage => "STORAGE",
         Screen::Diag => "DIAGNOSTICS",
         Screen::ImportPick => "IMPORT SONGS",
@@ -519,7 +537,7 @@ fn draw_home(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &mut V
         }
         let color = if sel { rgb(255, 255, 255) } else { rgb(190, 198, 212) };
         fonts.draw(cv, label, x, y, 46.0 * u, true, color, if sel { 1.0 } else { 0.72 });
-        hits.push(Hit { x: (x - 40.0 * u) as i32, y: y as i32, w: (460.0 * u) as i32, h: step as i32, row: i });
+        hits.push(Hit { x: (x - 40.0 * u) as i32, y: y as i32, w: (600.0 * u) as i32, h: step as i32, row: i });
     }
 
     // Status card, sized to its content.
@@ -563,6 +581,48 @@ fn draw_home(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &mut V
             fonts.draw(cv, text, cx + 28.0 * u, y + 20.0 * u + j as f32 * line * u, 22.0 * u, false, TEXT, 1.0);
         }
         y += gap * u + lines.len() as f32 * line * u;
+    }
+}
+
+/// Dots along a circle's arc (angles in degrees, 0 = right, growing clockwise on the screen): a thick curved line.
+fn arc(cv: &mut Canvas, cx: f32, cy: f32, r: f32, from: f32, sweep: f32, thick: f32, alpha: f32) {
+    let steps = ((sweep.abs().to_radians() * r) / (thick * 0.35)).ceil().max(2.0) as usize;
+    for i in 0..=steps {
+        let a = (from + sweep * i as f32 / steps as f32).to_radians();
+        cv.circle(cx + r * a.cos(), cy + r * a.sin(), thick / 2.0, rgb(255, 255, 255), alpha);
+    }
+}
+
+/// SYSTEM: Restart and Shut down as two small square icons at the bottom of the screen, under the rows (they are the last
+/// two stops of the menu: DOWN from the last row, then LEFT/RIGHT).
+fn draw_power_icons(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits: &mut Vec<Hit>, x0: f32, y: f32) {
+    let (size, gap) = (56.0 * u, 14.0 * u);
+    for k in 0..2 {
+        let id = SYSTEM_ROWS + k;
+        let sel = m.sel == id;
+        let x = x0 + k as f32 * (size + gap);
+        cv.rrect(x as i32, y as i32, size as i32, size as i32, 14.0 * u, rgb(255, 255, 255), if sel { 0.18 } else { 0.07 });
+        if sel {
+            cv.rect(x as i32, (y + size - 5.0 * u) as i32, size as i32, (5.0 * u) as i32, GOLD, 1.0);
+        }
+        let alpha = if sel { 1.0 } else { 0.7 };
+        let (cx, cy, r, t) = (x + size / 2.0, y + size / 2.0 + 1.0 * u, 13.0 * u, 3.6 * u);
+        if k == 0 {
+            // Restart: an open circle with an arrow head at its end
+            arc(cv, cx, cy, r, -30.0, 300.0, t, alpha);
+            let tip = (cx + 9.0 * u, cy - r);
+            let tri = vec![tip, (cx - 2.0 * u, cy - r - 7.0 * u), (cx - 2.0 * u, cy - r + 7.0 * u)];
+            cv.polygons(&[tri], &|_, _| rgb(255, 255, 255), alpha);
+        } else {
+            // Shut down: a circle open at the top with a bar through the gap
+            arc(cv, cx, cy, r, -60.0, 300.0, t, alpha);
+            cv.rrect((cx - t / 2.0) as i32, (cy - r - 4.0 * u) as i32, t as i32 + 1, (r + 3.0 * u) as i32, t / 2.0, rgb(255, 255, 255), alpha);
+        }
+        hits.push(Hit { x: x as i32, y: y as i32, w: size as i32, h: size as i32, row: id });
+    }
+    if m.sel >= SYSTEM_ROWS {
+        let label = if m.sel == SYSTEM_ROWS { "Restart" } else { "Shut down" };
+        fonts.draw(cv, label, x0 + 2.0 * (size + gap) + 6.0 * u, y + 15.0 * u, 26.0 * u, true, TEXT, 0.95);
     }
 }
 
@@ -643,6 +703,10 @@ fn draw_list_screen(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, u: f32, hits:
     }
     if first + visible < rs.len() {
         fonts.draw_centered(cv, "\u{25BC}", lx + lw / 2.0, top + visible as f32 * (rh + gap), 18.0 * u, false, DIM, 0.8);
+    }
+
+    if m.screen == Screen::System {
+        draw_power_icons(cv, fonts, m, u, hits, lx, cv.h as f32 - 150.0 * u);
     }
 
     // Side panel.

@@ -97,7 +97,8 @@ eq "  ...and nothing was staged" "0" "$(g "ls /efi/loader/entries | grep -c 'yar
 echo "== the dashboard"
 g 'rm -rf /data/os-update' >/dev/null
 sleep 2
-for i in 1; do "$HERE/tools/qemu-key.sh" down down down down down down ret; sleep 2; "$HERE/tools/qemu-key.sh" down down down down ret; sleep 4; done
+# (SYSTEM is the 5th main row; Updates its 2nd; System updates the first row of that menu)
+for i in 1; do "$HERE/tools/qemu-key.sh" down down down down ret; sleep 2; "$HERE/tools/qemu-key.sh" down ret; sleep 2; "$HERE/tools/qemu-key.sh" ret; sleep 4; done
 "$HERE/tools/qemu-shot.sh" "$W/os-screen.png" >/dev/null 2>&1
 "$HERE/tools/qemu-key.sh" down down ret
 until_g "sed -n s/^staged=//p /data/os-update/status | grep -q $NEW" 180; r=$?

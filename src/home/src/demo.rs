@@ -57,7 +57,7 @@ pub fn model(name: &str) -> Model {
         Disk { path: "/dev/sdb".into(), bytes: 1_000_204_886_016, model: "Samsung Portable SSD".into(), removable: true },
     ];
     m.tick = 3;
-    m.storage = StorageInfo { used_kib: 46_000_000, free_kib: 180_000_000, total_kib: 235_000_000, reserve_kib: 4_000_000, folders: 2, slack_kib: 0 };
+    m.storage = StorageInfo { used_kib: 46_000_000, free_kib: 180_000_000, total_kib: 235_000_000, reserve_kib: 4_000_000, folders: 2, slack_kib: 0, on_stick: true };
     m.drives = vec![
         ImportDrive { dev: "/dev/sdb1".into(), label: "YARGSONGS".into(), fs: "EXFAT".into(), bytes: 931_000_000_000, uuid: "1234-ABCD".into() },
         ImportDrive { dev: "/dev/sdc1".into(), label: String::new(), fs: "NTFS".into(), bytes: 64_000_000_000, uuid: "ZZ".into() },
@@ -91,10 +91,11 @@ pub fn model(name: &str) -> Model {
             ];
         }
         "storage" => { m.screen = Screen::Storage; m.sel = 1; }
+        "storage-internal" => { m.screen = Screen::Storage; m.storage.on_stick = false; }
         "storage-slack" => {
             m.screen = Screen::Storage;
             m.sel = 2;
-            m.storage = StorageInfo { used_kib: 0, free_kib: 20_000, total_kib: 700_000, reserve_kib: 1_500_000, folders: 0, slack_kib: 233_000_000 };
+            m.storage = StorageInfo { used_kib: 0, free_kib: 20_000, total_kib: 700_000, reserve_kib: 1_500_000, folders: 0, slack_kib: 233_000_000, on_stick: true };
         }
         "import" => { m.screen = Screen::ImportPick; m.sel = 1; }
         "import-none" => { m.screen = Screen::ImportPick; m.drives.clear(); }
@@ -147,7 +148,7 @@ pub fn model(name: &str) -> Model {
         }
         "system" => {
             m.screen = Screen::System;
-            m.sel = 4;
+            m.sel = 1;
             m.os = OsInfo { running: "2026.10.11.2".into(), latest: Some("2026.11.1".into()), available: Some("2026.11.1".into()), notes: "Faster start-up and a fix for Wii guitars.".into(), previous: Some("2026.10.11.1".into()), auto: true, ..Default::default() };
         }
         "os-update" => {
@@ -226,7 +227,12 @@ pub fn model(name: &str) -> Model {
         "bluetooth" => { m.screen = Screen::Bluetooth; m.sel = 1; }
         "updates" => { m.screen = Screen::Updates; m.sel = 1; }
         "songs" => { m.screen = Screen::Songs; }
-        "system" => { m.screen = Screen::System; m.sel = 2; }
+        "system-power" => { m.screen = Screen::System; m.sel = 4; }
+        "system-shutdown" => { m.screen = Screen::System; m.sel = 5; }
+        "updates-menu" => {
+            m.screen = Screen::UpdatesMenu;
+            m.os = OsInfo { running: "2026.10.11.2".into(), latest: Some("2026.11.1".into()), available: Some("2026.11.1".into()), ..Default::default() };
+        }
         "busy" => { m.screen = Screen::Wifi; m.busy = Some("Connecting to Neighbour 5G…".into()); }
         "confirm" => { m.screen = Screen::System; m.sel = 1; m.confirm = Some(Power::Shutdown); m.confirm_sel = 1; }
         "bt-battery" => {

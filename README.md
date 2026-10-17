@@ -12,7 +12,7 @@ updates itself like a console.
 
 ## What it does
 
-- **Boots like a console:** UEFI -> splash -> dashboard (Wi-Fi, Sound, Bluetooth, Updates, Songs, System) -> YARG fullscreen.
+- **Boots like a console:** UEFI -> splash -> dashboard (Play, Sound, Bluetooth, Connected devices, System) -> YARG fullscreen. SYSTEM holds Wi-Fi, Updates (system and YARG), Storage (internal songs, the song drive, install to the computer's disk) and Diagnostics, with Restart and Shut down as two small icons at the bottom.
   Everything is reachable with a game controller, keyboard or mouse. Nobody needs a terminal.
 - **YARG on demand:** the first start offers INSTALL YARG (a ~120 MB download with a percentage, checked against the SHA-256
   GitHub publishes; or install from a zip on your song drive when offline). YARG updates itself over the air without touching
@@ -33,7 +33,7 @@ updates itself like a console.
   digital output is switched on for you.
 - **Diagnostics:** SYSTEM > Diagnostics shows what the system sees (Bluetooth, Sound, YARG, System, and a keyboard test) as text
   made to be photographed, so nobody needs a terminal to report a problem.
-- **Song drive:** any drive labelled `YARGSONGS` (exFAT, NTFS, FAT, ext4) mounts itself; each top-level folder that holds songs
+- **Song drive** (SYSTEM > Storage > Song drive): any drive labelled `YARGSONGS` (exFAT, NTFS, FAT, ext4) mounts itself; each top-level folder that holds songs
   becomes its own song source in YARG.
 - **Internal songs:** SYSTEM > Storage copies a whole portable drive (folders exactly as they are) onto the computer's
   own disk, so the songs are there without the drive. Imported songs become YARG song sources like the song drive does,
@@ -56,16 +56,16 @@ You need an x86_64 PC with UEFI, a USB stick of 8 GB or more (USB 3 is nicer), a
 2. Turn **Secure Boot off** in the PC's firmware settings (the boot loader is unsigned), and boot from the stick (usually
    F7, F11, F12 or Del at power-on). A small menu shows for 5 seconds: *YARG OS* (default), *Install YARG OS on this computer*,
    and a verbose troubleshooting entry.
-3. Connect Wi-Fi (WI-FI), then choose **INSTALL YARG**. Name your song drive `YARGSONGS` and plug it in.
-4. Choose PLAY YARG. To keep it on the computer's own disk: SYSTEM > *Install on this computer's disk*.
+3. Connect Wi-Fi (SYSTEM > Wi-Fi; the INSTALL YARG screen also leads there), then choose **INSTALL YARG**. Name your song drive `YARGSONGS` and plug it in.
+4. Choose PLAY YARG. To keep it on the computer's own disk: SYSTEM > Storage > *Install on this computer's disk* (it only shows while the system runs from a USB stick).
 
 The first boot grows the data partition to fill the stick. Wired networks work without setup.
 
 ## Updates
 
-- **YARG** is updated by `yargos-update` (daily, can be switched off on the Updates screen). The new version runs "on trial"
+- **YARG** is updated by `yargos-update` (daily, can be switched off: SYSTEM > Updates > YARG updates). The new version runs "on trial"
   and is rolled back if it does not stay up.
-- **The system** is updated by `yargos-os-update` (SYSTEM > System update; a daily check can be switched off). A signed
+- **The system** is updated by `yargos-os-update` (SYSTEM > Updates > System updates; a daily check can be switched off). A signed
   release is written to the other system slot and gets a boot entry that is tried twice; if the new system does not bring
   up the dashboard and keep it running, the boot loader falls back to the old one by itself and the update is not tried
   again. "Go back to the earlier system" is one press. Releases are signed (Ed25519); the public keys are in
@@ -73,7 +73,7 @@ The first boot grows the data partition to fill the stick. Wired networks work w
   error, a full disk) and is retried, resuming where it stopped.
 - **No internet on the device?** Download `rootfs-<version>.img.xz`, `stable.json` and `stable.json.sig` from the release
   page (the `os-<version>` release) on another computer, put the three files on the song drive (top level or one folder
-  down) and choose SYSTEM > System update > *Install from the song drive*. Same signature and checksum checks as a download.
+  down) and choose SYSTEM > Updates > System updates > *Install from the song drive*. Same signature and checksum checks as a download.
 
 Design and the reasoning: [docs/OTA-PLAN.md](docs/OTA-PLAN.md), [docs/DESIGN.md](docs/DESIGN.md).
 

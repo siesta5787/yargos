@@ -204,6 +204,14 @@ and KB/s (`PROGRESS percent MB-done MB-total KB/s`). Never add a download withou
 `bluealsa-cli volume` (software volume; the model marks it `BT_VOLUME`). The session grabs the volume keys on the root window
 (`x::grab_volume_keys`) so YARG does not get them; the level shows in the banner window. HDMI has no mixer on purpose.
 
+## Menus
+
+Main menu (`HOME_ITEMS`): Play, Sound, Bluetooth, Connected devices, System. SYSTEM rows: Wi-Fi, Updates (a menu: System updates /
+YARG updates), Storage (import, manage, song drive, use the rest, install to disk), Diagnostics; then two power icons that are
+extra stops (`SYSTEM_ROWS`, sel 4/5: DOWN from the last row, LEFT/RIGHT). BACK always returns to the row you came from (`back_to`).
+Key-driven QEMU tests navigate these paths (`tools/test-songs.sh`, `tools/test-offline-update.sh`): change them with the menus.
+The install row only exists while `StorageInfo.on_stick` (`yargos-install where` is not "internal").
+
 ## Internal songs (SYSTEM > Storage)
 
 Read docs/DESIGN.md ("The internal song library"). Rules: songs live in `/data/songs/<drive name>/` on the data partition (no

@@ -133,11 +133,15 @@ boots to the **dashboard**; PLAY YARG (the first entry, so one OK press) runs YA
 menu, or a crash, which also shows a message) the dashboard appears again.
 
 The dashboard is software-rendered (no GPU needed), works with a keyboard, mouse or the instruments, and
-has these screens: Wi-Fi (scan, join, an on-screen keyboard for passwords), Sound (pick the output, volume,
+has these screens. The main menu: Play (or INSTALL YARG), Sound (pick the output, volume,
 test tone; writes `/data/asound.conf`), Bluetooth (scan, pair/connect, forget; Wiimotes get their own
-hold-1+2 flow), Updates (YARG: check, install, automatic on/off, go back), Songs (the drive, and one YARG song source
-per folder on it) and System (restart, shut down, install to this computer's disk, connected devices, system update,
-storage: import songs to the internal drive, browse them and delete a song, a folder or everything with LEFT). Instruments navigate like YARG's menus: strum or cymbals move up/down, green
+hold-1+2 flow), Connected devices and System. System: Wi-Fi (scan, join, an on-screen keyboard for passwords), Updates (a menu of
+System updates: check, install, restart, automatic on/off, go back, from the song drive; and YARG updates: check, install,
+automatic on/off, go back), Storage (import songs to the internal drive, browse them and delete a song, a folder or everything
+with LEFT; Song drive: the drive, and one YARG song source per folder on it; Use the rest of this drive when there is unused room;
+Install on this computer's disk, only while the system runs from a USB or removable drive: `yargos-install where` says
+"internal" for a built-in disk) and Diagnostics; Restart and Shut down are two small square icons under the rows (DOWN from the
+last row reaches them, LEFT/RIGHT choose, both ask first). BACK walks the same path up with the row you came from highlighted. Instruments navigate like YARG's menus: strum or cymbals move up/down, green
 fret/pad = OK, red = Back, the two outer frets/pads = left/right. Everything that needs root goes through a helper
 (`yargos-ctl.socket`, `yargos-home ctl`) that accepts only a few fixed requests: `poweroff`, `reboot`, `install /dev/<disk>`,
 `sound <card> <device>`, `songs-mount /dev/<partition>`, `songs-umount`, `grow-data` and the system update words (`os-check`, `os-update`, `os-cancel`, `os-goback`, `os-ack`).
@@ -181,10 +185,10 @@ kernel is `/yargos/<version>/bzImage` on the ESP. The installer writes `loader.c
 
 ## Updating the system over the air
 
-The system updates itself like a console: `yargos-os-update` (root; the dashboard's SYSTEM > System update reaches it
+The system updates itself like a console: `yargos-os-update` (root; the dashboard's SYSTEM > Updates > System updates reaches it
 through the root helper) downloads a signed release into the OTHER system slot, adds a boot entry that tries it twice and
 never restarts by itself. The new system must bring up the launcher and keep it running (`yargos-boot-ok`), otherwise the
-boot loader falls back to the old system after two tries and the update is remembered as rejected. SYSTEM > System update
+boot loader falls back to the old system after two tries and the update is remembered as rejected. SYSTEM > Updates > System updates
 also has automatic updates on/off (`OS_AUTO_UPDATE=no`), restart to use a waiting update, and going back to the earlier
 system. `tools/release.sh` makes and signs a release (`YARGOS_VERSION=2026.11.1 tools/br.sh` first); it refuses an image that
 holds YARG. `tools/test-os-update.sh` tests all of it in QEMU. Details and the design: docs/OTA-PLAN.md. Releases are signed

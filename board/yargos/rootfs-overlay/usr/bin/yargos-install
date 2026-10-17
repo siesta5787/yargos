@@ -51,6 +51,16 @@ list() {
     done
 }
 
+# `where`: "internal" when the running system sits on a disk that is built into the computer (not USB, not removable), else
+# "stick". The dashboard hides "Install on this computer's disk" on an internal disk: there is nothing to install.
+where() {
+    rd=$(root_disk)
+    [ -n "$rd" ] || { echo stick; return; }
+    tran=$(lsblk -dno TRAN "/dev/$rd" 2>/dev/null | tr -d ' ')
+    rm=$(lsblk -dno RM "/dev/$rd" 2>/dev/null | tr -d ' ')
+    if [ "$rm" = 0 ] && [ "$tran" != usb ]; then echo internal; else echo stick; fi
+}
+
 step() { echo "STEP $1/$STEPS $2"; }
 
 cleanup() {
@@ -156,6 +166,7 @@ EOF
 
 case ${1:-} in
     list) list ;;
+    where) where ;;
     run) run "${2:-}" ;;
     *) sed -n '2,10p' "$0"; exit 2 ;;
 esac

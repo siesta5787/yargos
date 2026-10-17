@@ -27,9 +27,13 @@ pub enum Screen {
     Password,
     Sound,
     Bluetooth,
+    /// YARG's own updates (the game): check, install, automatic on/off, go back.
     Updates,
+    /// The song drive (the portable drive labelled YARGSONGS); it lives under Storage.
     Songs,
     System,
+    /// SYSTEM > Updates: the choice between the system's updates and YARG's.
+    UpdatesMenu,
     Install,
     Devices,
     /// The system (YARG OS itself): check for, install and go back from an over-the-air update.
@@ -115,6 +119,21 @@ pub struct StorageInfo {
     pub folders: usize,
     /// Room on the drive after the data partition that is not in use (the partition did not grow to fill it).
     pub slack_kib: u64,
+    /// The system runs from a USB stick or another removable drive (so "Install on this computer's disk" makes sense). False
+    /// once it runs from a disk built into the computer.
+    pub on_stick: bool,
+}
+
+/// The rows of the Storage screen, in order: some only exist when they have something to do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StorageRow {
+    Import,
+    Manage,
+    SongDrive,
+    /// Unused room after the data partition.
+    UseRest,
+    /// Copy this system to the computer's own disk (only while running from a stick).
+    Install,
 }
 
 /// Unused room worth offering to grow into.
@@ -449,7 +468,10 @@ impl Osk {
 
 // ---- model -----------------------------------------------------------------------------------
 
-pub const HOME_ITEMS: [&str; 7] = ["PLAY YARG", "WI-FI", "SOUND", "BLUETOOTH", "UPDATES", "SONGS", "SYSTEM"];
+pub const HOME_ITEMS: [&str; 5] = ["PLAY YARG", "SOUND", "BLUETOOTH", "CONNECTED DEVICES", "SYSTEM"];
+
+/// SYSTEM: four rows (Wi-Fi, Updates, Storage, Diagnostics), then the two power icons: Restart, Shut down.
+pub const SYSTEM_ROWS: usize = 4;
 const INSTALL_YARG: &str = "INSTALL YARG";
 
 pub struct Model {
@@ -476,6 +498,8 @@ pub struct Model {
     /// YARG release zips on the song drive (full paths).
     pub yarg_zips: Vec<String>,
     pub storage: StorageInfo,
+    /// The Wi-Fi screen was opened from the YARG install screen (BACK returns there, not to SYSTEM).
+    wifi_from_yarg: bool,
     pub drives: Vec<ImportDrive>,
     pub browse: Browse,
     /// SYSTEM > Diagnostics: which report, its lines, and how far it is scrolled.
@@ -528,6 +552,7 @@ impl Model {
             devices: vec![],
             yarg_zips: vec![],
             storage: StorageInfo::default(),
+            wifi_from_yarg: false,
             drives: vec![],
             browse: Browse::default(),
             back_to: None,
@@ -580,10 +605,11 @@ impl Model {
             Screen::Sound => self.outputs.len() + 2, // the outputs, the volume row (always there), the test sound
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
+            Screen::UpdatesMenu => 2,
             Screen::Songs => 2 + usize::from(self.songs.mounted),
-            Screen::System => 7,
+            Screen::System => SYSTEM_ROWS + 2,
             Screen::Diag => 0,
-            Screen::Storage => 2 + usize::from(self.storage.slack_kib >= SLACK_WORTH_KIB),
+            Screen::Storage => self.storage_rows().len(),
             Screen::ImportPick => 1 + self.drives.len(),
             Screen::Manage => 1 + self.browse.entries.len(),
             Screen::OsUpdate => 6,
@@ -594,6 +620,18 @@ impl Model {
         }
     }
 
+    /// The rows of the Storage screen now.
+    pub fn storage_rows(&self) -> Vec<StorageRow> {
+        let mut v = vec![StorageRow::Import, StorageRow::Manage, StorageRow::SongDrive];
+        if self.storage.slack_kib >= SLACK_WORTH_KIB {
+            v.push(StorageRow::UseRest);
+        }
+        if self.storage.on_stick {
+            v.push(StorageRow::Install);
+        }
+        v
+    }
+
     /// Go straight to a screen (the "Install" boot menu entry opens the installer).
     pub fn open(&mut self, screen: Screen) -> Vec<Cmd> {
         self.enter(screen)
@@ -602,6 +640,11 @@ impl Model {
     fn enter(&mut self, screen: Screen) -> Vec<Cmd> {
         self.screen = screen;
         self.sel = 0;
+        if screen == Screen::UpdatesMenu {
+            // two choices, shown at once; both updaters are asked so that their NEW tags are right
+            self.loading = false;
+            return vec![Cmd::Refresh(Screen::OsUpdate), Cmd::Refresh(Screen::Updates)];
+        }
         self.loading = screen != Screen::Home && screen != Screen::Password;
         if screen == Screen::Home { vec![Cmd::Refresh(Screen::Home)] } else { vec![Cmd::Refresh(screen)] }
     }
@@ -767,23 +810,58 @@ impl Model {
 
     fn handle_list(&mut self, nav: Nav) -> Vec<Cmd> {
         let n = self.row_count();
+        // SYSTEM: the two power icons are one line under the rows: DOWN from the last row reaches them, LEFT/RIGHT choose
+        // between them, UP goes back to the last row.
+        if self.screen == Screen::System {
+            let on_icons = self.sel >= SYSTEM_ROWS;
+            match nav {
+                Nav::Down => {
+                    self.sel = if on_icons { 0 } else { self.sel + 1 };
+                    return vec![];
+                }
+                Nav::Up => {
+                    self.sel = if self.sel == 0 { SYSTEM_ROWS } else if on_icons { SYSTEM_ROWS - 1 } else { self.sel - 1 };
+                    return vec![];
+                }
+                Nav::Left | Nav::Right if on_icons => {
+                    self.sel = if self.sel == SYSTEM_ROWS { SYSTEM_ROWS + 1 } else { SYSTEM_ROWS };
+                    return vec![];
+                }
+                _ => {}
+            }
+        }
         match nav {
             Nav::Up if n > 0 => self.sel = (self.sel + n - 1) % n,
             Nav::Down if n > 0 => self.sel = (self.sel + 1) % n,
             Nav::Left | Nav::Right | Nav::Up | Nav::Down | Nav::Ok | Nav::Submit if self.screen == Screen::Diag => return self.handle_diag(nav),
             Nav::Back => match self.screen {
                 Screen::Home => {}
-                Screen::Diag => {
-                    let cmds = self.enter(Screen::System);
-                    self.sel = 6;
-                    return cmds;
-                }
+                Screen::Diag => return self.back_to(Screen::System, 3),
                 Screen::ImportPick => return self.enter(Screen::Storage),
                 Screen::Manage => return self.manage_up(),
-                Screen::Storage => {
-                    let cmds = self.enter(Screen::System);
-                    self.sel = 5;
+                Screen::Storage => return self.back_to(Screen::System, 2),
+                Screen::Songs => return self.back_to(Screen::Storage, 2),
+                Screen::Install => {
+                    let cmds = self.back_to(Screen::Storage, 0);
+                    self.sel = self.storage_rows().iter().position(|r| *r == StorageRow::Install).unwrap_or(0);
                     return cmds;
+                }
+                Screen::UpdatesMenu => return self.back_to(Screen::System, 1),
+                Screen::OsUpdate => return self.back_to(Screen::UpdatesMenu, 0),
+                Screen::Updates => return self.back_to(Screen::UpdatesMenu, 1),
+                Screen::Wifi if std::mem::take(&mut self.wifi_from_yarg) => return self.enter(Screen::Yarg),
+                Screen::Wifi => return self.back_to(Screen::System, 0),
+                Screen::System => {
+                    self.screen = Screen::Home;
+                    self.sel = HOME_ITEMS.len() - 1;
+                    return vec![Cmd::Refresh(Screen::Home)];
+                }
+                Screen::Sound | Screen::Bluetooth | Screen::Devices => {
+                    // (back on the main menu with the row we came from highlighted)
+                    let sel = match self.screen { Screen::Sound => 1, Screen::Bluetooth => 2, _ => 3 };
+                    self.screen = Screen::Home;
+                    self.sel = sel;
+                    return vec![Cmd::Refresh(Screen::Home)];
                 }
                 _ => {
                     self.screen = Screen::Home;
@@ -796,6 +874,13 @@ impl Model {
             _ => {}
         }
         vec![]
+    }
+
+    /// BACK to a screen, with the row we came from highlighted.
+    fn back_to(&mut self, screen: Screen, sel: usize) -> Vec<Cmd> {
+        let cmds = self.enter(screen);
+        self.sel = sel;
+        cmds
     }
 
     /// Diagnostics: LEFT/RIGHT change the report, UP/DOWN scroll it, OK reads it again.
@@ -880,9 +965,8 @@ impl Model {
             Screen::Home => match self.sel {
                 0 if self.yarg_missing() => self.enter(Screen::Yarg),
                 0 => vec![Cmd::LaunchYarg],
-                4 if self.yarg_missing() => self.enter(Screen::Yarg), // UPDATES: there is nothing to update yet
                 i => {
-                    let s = [Screen::Wifi, Screen::Sound, Screen::Bluetooth, Screen::Updates, Screen::Songs, Screen::System][i - 1];
+                    let s = [Screen::Sound, Screen::Bluetooth, Screen::Devices, Screen::System][i - 1];
                     self.enter(s)
                 }
             },
@@ -961,7 +1045,15 @@ impl Model {
                         vec![]
                     }
                 },
-                _ => self.enter(Screen::Wifi),
+                _ => {
+                    self.wifi_from_yarg = true;
+                    self.enter(Screen::Wifi)
+                }
+            },
+            Screen::UpdatesMenu => match self.sel {
+                0 => self.enter(Screen::OsUpdate),
+                _ if self.yarg_missing() => self.enter(Screen::Yarg), // there is no YARG to update yet: install it
+                _ => self.enter(Screen::Updates),
             },
             Screen::Updates => match self.sel {
                 0 => {
@@ -1002,25 +1094,32 @@ impl Model {
                 self.songs.auto = !self.songs.auto;
                 vec![Cmd::SongsAuto(self.songs.auto)]
             }
-            Screen::System if self.sel == 2 => self.enter(Screen::Install),
-            Screen::System if self.sel == 3 => self.enter(Screen::Devices),
-            Screen::System if self.sel == 4 => self.enter(Screen::OsUpdate),
-            Screen::System if self.sel == 5 => self.enter(Screen::Storage),
-            Screen::System if self.sel == 6 => {
+            Screen::System if self.sel == 0 => {
+                self.wifi_from_yarg = false;
+                self.enter(Screen::Wifi)
+            }
+            Screen::System if self.sel == 1 => self.enter(Screen::UpdatesMenu),
+            Screen::System if self.sel == 2 => self.enter(Screen::Storage),
+            Screen::System if self.sel == 3 => {
                 self.diag = vec![];
                 self.diag_page = 0;
                 self.diag_top = 0;
                 self.enter(Screen::Diag)
             }
-            Screen::Storage if self.sel == 0 => self.enter(Screen::ImportPick),
-            Screen::Storage if self.sel == 2 => {
-                self.busy = Some("Using the rest of the drive\u{2026}".into());
-                vec![Cmd::GrowData]
-            }
-            Screen::Storage => {
-                self.browse = Browse::default();
-                self.enter(Screen::Manage)
-            }
+            Screen::Storage => match self.storage_rows().get(self.sel).copied() {
+                Some(StorageRow::Import) => self.enter(Screen::ImportPick),
+                Some(StorageRow::Manage) => {
+                    self.browse = Browse::default();
+                    self.enter(Screen::Manage)
+                }
+                Some(StorageRow::SongDrive) => self.enter(Screen::Songs),
+                Some(StorageRow::UseRest) => {
+                    self.busy = Some("Using the rest of the drive\u{2026}".into());
+                    vec![Cmd::GrowData]
+                }
+                Some(StorageRow::Install) => self.enter(Screen::Install),
+                None => vec![],
+            },
             Screen::ImportPick if self.sel == 0 => {
                 self.busy = Some("Looking for drives\u{2026}".into());
                 vec![Cmd::Refresh(Screen::ImportPick)]
@@ -1113,7 +1212,8 @@ impl Model {
                 vec![]
             }
             Screen::System => {
-                self.confirm = Some(if self.sel == 0 { Power::Restart } else { Power::Shutdown });
+                // the icons: Restart, then Shut down
+                self.confirm = Some(if self.sel == SYSTEM_ROWS { Power::Restart } else { Power::Shutdown });
                 self.confirm_sel = 0;
                 vec![]
             }
@@ -1364,10 +1464,109 @@ mod tests {
     fn entering_a_screen_asks_for_its_data_and_back_returns_home() {
         let mut m = Model::new();
         m.handle(Nav::Down);
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Sound)]);
+        assert_eq!(m.screen, Screen::Sound);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::Home)]);
+        assert_eq!((m.screen, m.sel), (Screen::Home, 1), "back on the row it came from");
+    }
+
+    #[test]
+    fn the_main_menu_has_play_sound_bluetooth_devices_and_system() {
+        assert_eq!(HOME_ITEMS, ["PLAY YARG", "SOUND", "BLUETOOTH", "CONNECTED DEVICES", "SYSTEM"]);
+        let mut m = Model::new();
+        m.sel = 3;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Devices)]);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::Home)]);
+        assert_eq!((m.screen, m.sel), (Screen::Home, 3));
+        m.sel = 4;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::System)]);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::Home)]);
+        assert_eq!((m.screen, m.sel), (Screen::Home, 4));
+    }
+
+    #[test]
+    fn wifi_is_the_first_row_of_system_and_back_returns_there() {
+        let mut m = Model::new();
+        m.screen = Screen::System;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Wifi)]);
         assert_eq!(m.screen, Screen::Wifi);
-        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::Home)]);
-        assert_eq!(m.screen, Screen::Home);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
+        assert_eq!((m.screen, m.sel), (Screen::System, 0));
+    }
+
+    #[test]
+    fn wifi_opened_from_the_yarg_install_screen_goes_back_to_it() {
+        let mut m = without_yarg();
+        m.screen = Screen::Yarg;
+        m.sel = 2;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Wifi)]);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::Yarg)]);
+        assert_eq!(m.screen, Screen::Yarg);
+        // and the flag does not stick: Wi-Fi from SYSTEM goes back to SYSTEM
+        m.screen = Screen::System;
+        m.sel = 0;
+        m.handle(Nav::Ok);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
+    }
+
+    #[test]
+    fn the_power_icons_are_one_stop_below_the_system_rows() {
+        let mut m = Model::new();
+        m.screen = Screen::System;
+        assert_eq!(m.row_count(), 6);
+        for want in [1, 2, 3, 4] {
+            m.handle(Nav::Down);
+            assert_eq!(m.sel, want);
+        }
+        // on the icons: Left/Right choose, Up returns to the last row, Down wraps to the top
+        m.handle(Nav::Right);
+        assert_eq!(m.sel, 5);
+        m.handle(Nav::Right);
+        assert_eq!(m.sel, 4, "it toggles between the two");
+        m.handle(Nav::Right);
+        m.handle(Nav::Up);
+        assert_eq!(m.sel, 3, "from either icon UP is the last row");
+        m.handle(Nav::Down);
+        m.handle(Nav::Down);
+        assert_eq!(m.sel, 0, "DOWN from the icons wraps to the first row");
+        m.handle(Nav::Up);
+        assert_eq!(m.sel, 4, "UP from the first row reaches the icons");
+        // OK on an icon asks first
+        assert!(m.handle(Nav::Ok).is_empty());
+        assert_eq!(m.confirm, Some(Power::Restart));
+        m.confirm = None;
+        m.sel = 5;
+        m.handle(Nav::Ok);
+        assert_eq!(m.confirm, Some(Power::Shutdown));
+        // a click on an icon does the same
+        m.confirm = None;
+        assert!(m.click(4).is_empty());
+        assert_eq!(m.confirm, Some(Power::Restart));
+    }
+
+    #[test]
+    fn updates_is_a_menu_of_system_updates_and_yarg_updates() {
+        let mut m = Model::new();
+        m.screen = Screen::System;
+        m.sel = 1;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::OsUpdate), Cmd::Refresh(Screen::Updates)]);
+        assert_eq!((m.screen, m.loading), (Screen::UpdatesMenu, false));
+        assert_eq!(m.row_count(), 2);
+        // System updates, and back to the menu with that row highlighted
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::OsUpdate)]);
+        assert_eq!(m.screen, Screen::OsUpdate);
+        m.apply(Res::Os(OsInfo { running: "1".into(), auto: true, ..Default::default() }));
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::OsUpdate), Cmd::Refresh(Screen::Updates)]);
+        assert_eq!((m.screen, m.sel), (Screen::UpdatesMenu, 0));
+        // YARG updates (the screen that used to be on the main menu), and back
+        m.sel = 1;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Updates)]);
+        assert_eq!(m.screen, Screen::Updates);
+        m.apply(Res::Upd(UpdInfo { installed: "0.15.0".into(), auto: true, ..Default::default() }));
+        m.handle(Nav::Back);
+        assert_eq!((m.screen, m.sel), (Screen::UpdatesMenu, 1));
+        m.handle(Nav::Back);
+        assert_eq!((m.screen, m.sel), (Screen::System, 1));
     }
 
     #[test]
@@ -1454,7 +1653,7 @@ mod tests {
     fn clicking_a_row_selects_and_activates_it() {
         let mut m = Model::new();
         assert_eq!(m.click(0), vec![Cmd::LaunchYarg]);
-        assert_eq!(m.click(2), vec![Cmd::Refresh(Screen::Sound)]);
+        assert_eq!(m.click(1), vec![Cmd::Refresh(Screen::Sound)]);
         assert_eq!(m.screen, Screen::Sound);
     }
 
@@ -1483,7 +1682,7 @@ mod tests {
     fn power_actions_need_confirmation() {
         let mut m = Model::new();
         m.screen = Screen::System;
-        m.sel = 1;
+        m.sel = 5;
         assert!(m.handle(Nav::Ok).is_empty());
         assert_eq!(m.confirm, Some(Power::Shutdown));
         // Default choice is Cancel.
@@ -1521,15 +1720,16 @@ mod tests {
 
         let mut m = without_yarg();
         assert_eq!(m.home_label(0), "INSTALL YARG");
-        assert_eq!(m.home_label(1), "WI-FI");
+        assert_eq!(m.home_label(1), "SOUND");
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Yarg)]);
         assert_eq!(m.screen, Screen::Yarg);
     }
 
     #[test]
-    fn updates_with_no_yarg_leads_to_the_install_screen() {
+    fn yarg_updates_with_no_yarg_leads_to_the_install_screen() {
         let mut m = without_yarg();
-        m.sel = 4;
+        m.screen = Screen::UpdatesMenu;
+        m.sel = 1;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Yarg)]);
         assert_eq!(m.screen, Screen::Yarg);
     }
@@ -1601,10 +1801,9 @@ mod tests {
     }
 
     #[test]
-    fn the_system_screen_leads_to_system_updates() {
+    fn the_updates_menu_leads_to_system_updates() {
         let mut m = Model::new();
-        m.screen = Screen::System;
-        m.sel = 4;
+        m.screen = Screen::UpdatesMenu;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::OsUpdate)]);
         assert_eq!(m.screen, Screen::OsUpdate);
     }
@@ -1711,7 +1910,7 @@ mod tests {
     fn diagnostics_pages_are_read_changed_scrolled_and_left_with_back() {
         let mut m = Model::new();
         m.screen = Screen::System;
-        m.sel = 6;
+        m.sel = 3;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Diag)]);
         assert_eq!(m.screen, Screen::Diag);
         m.apply(Res::Diag { page: 0, lines: (0..40).map(|i| format!("line {i}")).collect() });
@@ -1731,7 +1930,7 @@ mod tests {
         assert_eq!(m.handle(Nav::Left), vec![Cmd::DiagLoad(4)], "it wraps round");
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::DiagLoad(4)], "OK reads it again");
         assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
-        assert_eq!((m.screen, m.sel), (Screen::System, 6));
+        assert_eq!((m.screen, m.sel), (Screen::System, 3));
     }
 
     #[test]
@@ -1839,12 +2038,26 @@ mod tests {
     }
 
     #[test]
-    fn the_system_screen_leads_to_the_installer() {
+    fn storage_leads_to_the_installer_only_while_running_from_a_stick() {
         let mut m = Model::new();
-        m.screen = Screen::System;
-        m.sel = 2;
+        m.screen = Screen::Storage;
+        assert_eq!(m.storage_rows(), [StorageRow::Import, StorageRow::Manage, StorageRow::SongDrive], "no row until we know it is a stick");
+        m.apply(Res::Storage(StorageInfo { on_stick: true, ..Default::default() }));
+        assert_eq!(m.row_count(), 4);
+        m.sel = 3;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Install)]);
         assert_eq!(m.screen, Screen::Install);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::Storage)]);
+        assert_eq!((m.screen, m.sel), (Screen::Storage, 3), "back on the install row");
+        // installed on the computer's own disk: the row is gone
+        m.apply(Res::Storage(StorageInfo { on_stick: false, ..Default::default() }));
+        assert_eq!(m.row_count(), 3);
+        assert!(!m.storage_rows().contains(&StorageRow::Install));
+        // with room to grow as well: import, manage, song drive, use the rest, install
+        m.apply(Res::Storage(StorageInfo { on_stick: true, slack_kib: 233_000_000, ..Default::default() }));
+        assert_eq!(m.storage_rows(), [StorageRow::Import, StorageRow::Manage, StorageRow::SongDrive, StorageRow::UseRest, StorageRow::Install]);
+        m.sel = 4;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Install)]);
     }
 
     #[test]
@@ -1945,9 +2158,8 @@ mod tests {
     }
 
     #[test]
-    fn the_devices_screen_is_reached_from_system_and_lists_what_is_plugged_in() {
+    fn the_devices_screen_is_reached_from_the_main_menu_and_lists_what_is_plugged_in() {
         let mut m = Model::new();
-        m.screen = Screen::System;
         m.sel = 3;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Devices)]);
         assert_eq!(m.screen, Screen::Devices);
@@ -1986,29 +2198,41 @@ mod tests {
     fn storage_is_a_row_of_the_system_screen_and_back_returns_to_it() {
         let mut m = Model::new();
         m.screen = Screen::System;
-        m.sel = 5;
+        m.sel = 2;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Storage)]);
         assert_eq!(m.screen, Screen::Storage);
         assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
-        assert_eq!((m.screen, m.sel), (Screen::System, 5));
+        assert_eq!((m.screen, m.sel), (Screen::System, 2));
+    }
+
+    #[test]
+    fn the_song_drive_is_a_row_of_storage_and_back_returns_there() {
+        let mut m = Model::new();
+        m.screen = Screen::Storage;
+        assert_eq!(m.row_count(), 3);
+        m.sel = 2;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Songs)]);
+        assert_eq!(m.screen, Screen::Songs);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::Storage)]);
+        assert_eq!((m.screen, m.sel), (Screen::Storage, 2));
     }
 
     #[test]
     fn unused_room_on_the_drive_is_offered_and_growing_runs_once_asked() {
         let mut m = Model::new();
         m.screen = Screen::Storage;
-        assert_eq!(m.row_count(), 2);
-        m.apply(Res::Storage(StorageInfo { slack_kib: 233_000_000, ..Default::default() }));
         assert_eq!(m.row_count(), 3);
-        m.sel = 2;
+        m.apply(Res::Storage(StorageInfo { slack_kib: 233_000_000, ..Default::default() }));
+        assert_eq!(m.row_count(), 4);
+        m.sel = 3;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::GrowData]);
         assert!(m.busy.is_some());
         m.apply(Res::Done("The rest of the drive is now in use".into()));
         m.apply(Res::Storage(StorageInfo::default()));
-        assert_eq!(m.row_count(), 2, "the row goes away once the room is used");
+        assert_eq!(m.row_count(), 3, "the row goes away once the room is used");
         // A little leftover (a few MB) is not worth a row.
         m.apply(Res::Storage(StorageInfo { slack_kib: 4096, ..Default::default() }));
-        assert_eq!(m.row_count(), 2);
+        assert_eq!(m.row_count(), 3);
     }
 
     #[test]

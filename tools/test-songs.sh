@@ -67,7 +67,7 @@ g 'echo songs-umount | yargos-home ctl' >/dev/null
 check "  ...and unmounts it again" [ "$(g 'mountpoint -q /run/yargos-import/mnt && echo mounted')" != mounted ]
 
 # ---- import, with the dashboard ----
-to_storage() { k down down down down down down ret; sleep 2; k down down down down down ret; sleep 3; }
+to_storage() { k down down down down ret; sleep 2; k down down ret; sleep 3; }   # (SYSTEM is the 5th main row, Storage its 3rd)
 import_drive() { # import_drive N: the N-th drive of the list, then wait for the dialog and agree
     k ret; sleep 4; k $(printf 'down %.0s' $(seq 1 "$1")) ret; sleep 10; shot "confirm-$1"; k right ret
 }
