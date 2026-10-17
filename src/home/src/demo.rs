@@ -214,7 +214,8 @@ pub fn model(name: &str) -> Model {
         "install-failed" => { m.screen = Screen::Install; m.install_error = Some("Could not partition /dev/sda".into()); }
         "home" => {}
         "home-select" => m.sel = 3,
-        "wifi" => { m.screen = Screen::Wifi; m.sel = 2; }
+        "wifi" => { m.screen = Screen::Wifi; m.sel = 3; }
+        "wifi-off" => { m.screen = Screen::Wifi; m.wifi_on = false; m.nets.clear(); m.status.network = "Wi-Fi is off".into(); }
         "wifi-none" => { m.screen = Screen::Wifi; m.wifi_dev = None; m.nets.clear(); }
         "password" => {
             m.screen = Screen::Password;

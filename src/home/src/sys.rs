@@ -100,9 +100,49 @@ pub fn wifi_device() -> Option<String> {
     names.into_iter().next()
 }
 
+/// Did the owner switch Wi-Fi off (SYSTEM > Wi-Fi > Turn Wi-Fi off)? Kept in /data/yargos.conf as `WIFI=no`.
+pub fn wifi_wanted_on() -> bool {
+    std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| !c.lines().any(|l| l.trim() == "WIFI=no")).unwrap_or(true)
+}
+
+/// `iwctl device X show` -> is the adapter powered ("Powered   on")?
+pub fn parse_powered(out: &str) -> Option<bool> {
+    strip_ansi(out).lines().find_map(|l| {
+        let mut w = l.split_whitespace();
+        (w.next()? == "Powered").then(|| w.next().map(|v| v == "on"))?
+    })
+}
+
+/// Is the Wi-Fi adapter on right now? (No adapter, or no answer: counts as on, there is nothing to show as off.)
+pub fn wifi_powered() -> bool {
+    let Some(d) = wifi_device() else { return true };
+    run("iwctl", &["device", &d, "show"]).ok().and_then(|o| parse_powered(&o)).unwrap_or(true)
+}
+
+/// Switch the Wi-Fi adapter on or off, and remember it (it stays off after a restart: the dashboard applies it when it starts).
+pub fn wifi_set_power(on: bool) -> Result<String, String> {
+    let d = wifi_device().ok_or("No Wi-Fi adapter found")?;
+    run_timeout("iwctl", &["device", &d, "set-property", "Powered", if on { "on" } else { "off" }], 15).map_err(|e| {
+        let e = strip_ansi(&e);
+        format!("Could not switch Wi-Fi {}: {}", if on { "on" } else { "off" }, e.lines().next().unwrap_or("").trim())
+    })?;
+    write_conf_flag("WIFI", on)?;
+    Ok(format!("Wi-Fi is {}", if on { "on" } else { "off" }))
+}
+
+/// At start-up: if Wi-Fi was switched off before, keep it off (the network daemon powers the adapter on at boot).
+pub fn wifi_apply_saved() {
+    if !wifi_wanted_on() {
+        if let Some(d) = wifi_device() {
+            let _ = run_timeout("iwctl", &["device", &d, "set-property", "Powered", "off"], 15);
+        }
+    }
+}
+
 pub fn net_status() -> String {
     let addrs = run("ip", &["-4", "-o", "addr", "show", "scope", "global"]).map(|o| parse_ip_addr(&o)).unwrap_or_default();
     match addrs.first() {
+        None if wifi_device().is_some() && !wifi_wanted_on() => "Wi-Fi is off".into(),
         None => "not connected".into(),
         Some((dev, ip)) if dev.starts_with("wl") => {
             let ssid = run("iwctl", &["station", dev, "show"])
@@ -2245,6 +2285,15 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!(SCAN_PAUSES.load(Ordering::Relaxed), 1);
         drop(b);
         assert_eq!(SCAN_PAUSES.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn the_wifi_adapter_power_is_read_from_iwctl() {
+        let on = "\x1b[1;90m                                  Device: wlan0\x1b[0m\n  Name                wlan0\n  Powered             on\n  Adapter             phy0\n";
+        let off = "  Name                wlan0\n  Powered             off\n";
+        assert_eq!(parse_powered(on), Some(true));
+        assert_eq!(parse_powered(off), Some(false));
+        assert_eq!(parse_powered("no such device"), None);
     }
 
     #[test]

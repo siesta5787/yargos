@@ -168,8 +168,23 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 let label = sys::sound_label();
                 res(tx, Res::Status(sys::status(&label, &upd)));
             }),
-            Cmd::Refresh(Screen::Wifi) => bg(tx, |tx| res(tx, sys::wifi_refresh(false))),
+            Cmd::Refresh(Screen::Wifi) => bg(tx, |tx| {
+                let on = sys::wifi_powered();
+                res(tx, Res::WifiPower(on));
+                res(tx, if on { sys::wifi_refresh(false) } else { Res::Wifi { dev: sys::wifi_device(), nets: vec![] } });
+            }),
             Cmd::WifiScan => bg(tx, |tx| res(tx, sys::wifi_refresh(true))),
+            Cmd::WifiPower(on) => bg(tx, move |tx| {
+                let r = sys::wifi_set_power(on);
+                if on && r.is_ok() {
+                    std::thread::sleep(Duration::from_secs(3)); // (the adapter needs a moment before it can list networks)
+                }
+                res(tx, Res::WifiPower(sys::wifi_powered()));
+                done(tx, r);
+                if on {
+                    res(tx, sys::wifi_refresh(true));
+                }
+            }),
             Cmd::WifiConnect { ssid, pass } => bg(tx, move |tx| {
                 done(tx, sys::wifi_connect(&ssid, pass.as_deref()));
                 res(tx, sys::wifi_refresh(false));
@@ -371,6 +386,9 @@ pub fn run() -> i32 {
             }
         }
     });
+
+    // Wi-Fi switched off before stays off.
+    bg(&tx, |_| sys::wifi_apply_saved());
 
     // Boot to the dashboard: YARG starts when PLAY YARG is chosen. The cursor only shows once a mouse moves.
     active.store(true, Ordering::Relaxed);

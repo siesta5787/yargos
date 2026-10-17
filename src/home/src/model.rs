@@ -222,6 +222,8 @@ pub enum Cmd {
     LaunchYarg,
     Refresh(Screen),
     WifiScan,
+    /// Switch the Wi-Fi adapter on (true) or off (false).
+    WifiPower(bool),
     WifiConnect { ssid: String, pass: Option<String> },
     SoundSelect { card: u32, dev: u32 },
     /// Play on this Bluetooth headset (its address).
@@ -341,6 +343,8 @@ pub struct SongsInfo {
 pub enum Res {
     Status(Status),
     Wifi { dev: Option<String>, nets: Vec<Network> },
+    /// Is the Wi-Fi adapter on?
+    WifiPower(bool),
     Sound { outputs: Vec<Output>, current: Option<(u32, u32)>, current_bt: Option<String>, volume: Option<(u32, u8)> },
     Bt { present: bool, devs: Vec<BtDevice> },
     Upd(UpdInfo),
@@ -479,6 +483,8 @@ pub struct Model {
     pub sel: usize,
     pub status: Status,
     pub wifi_dev: Option<String>,
+    /// The Wi-Fi adapter is on (it can be switched off on the Wi-Fi screen).
+    pub wifi_on: bool,
     pub nets: Vec<Network>,
     pub osk: Osk,
     pub outputs: Vec<Output>,
@@ -535,6 +541,7 @@ impl Model {
             sel: 0,
             status: Status::default(),
             wifi_dev: None,
+            wifi_on: true,
             nets: vec![],
             osk: Osk::new(""),
             outputs: vec![],
@@ -601,7 +608,7 @@ impl Model {
     pub fn row_count(&self) -> usize {
         match self.screen {
             Screen::Home => HOME_ITEMS.len(),
-            Screen::Wifi => 1 + self.nets.len(),
+            Screen::Wifi => 2 + self.nets.len(), // the on/off switch, scan again, the networks
             Screen::Sound => self.outputs.len() + 2, // the outputs, the volume row (always there), the test sound
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
@@ -972,10 +979,18 @@ impl Model {
             },
             Screen::Wifi => {
                 if self.sel == 0 {
+                    self.busy = Some(if self.wifi_on { "Turning Wi-Fi off\u{2026}" } else { "Turning Wi-Fi on\u{2026}" }.into());
+                    return vec![Cmd::WifiPower(!self.wifi_on)];
+                }
+                if self.sel == 1 {
+                    if !self.wifi_on {
+                        self.toast("Wi-Fi is off: turn it on first");
+                        return vec![];
+                    }
                     self.busy = Some("Scanning for networks…".into());
                     return vec![Cmd::WifiScan];
                 }
-                let net = self.nets[self.sel - 1].clone();
+                let net = self.nets[self.sel - 2].clone();
                 if net.connected {
                     self.toast(format!("Already connected to {}", net.name));
                     vec![]
@@ -1244,6 +1259,14 @@ impl Model {
                     self.alert_ack = true;
                 }
                 self.status = s;
+            }
+            Res::WifiPower(on) => {
+                self.wifi_on = on;
+                self.busy = None;
+                if !on {
+                    self.nets.clear();
+                }
+                self.sel = self.sel.min(self.row_count().saturating_sub(1));
             }
             Res::Wifi { dev, nets } => {
                 self.wifi_dev = dev;
@@ -1572,7 +1595,7 @@ mod tests {
     #[test]
     fn secured_unknown_network_opens_the_password_screen() {
         let mut m = at_wifi();
-        m.sel = 1; // Home (row 0 is "scan")
+        m.sel = 2; // Home (row 0 is "scan")
         assert!(m.handle(Nav::Ok).is_empty());
         assert_eq!(m.screen, Screen::Password);
         assert_eq!(m.osk.ssid, "Home");
@@ -1581,17 +1604,17 @@ mod tests {
     #[test]
     fn open_and_saved_networks_connect_without_a_password() {
         let mut m = at_wifi();
-        m.sel = 2;
+        m.sel = 3;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::WifiConnect { ssid: "Cafe".into(), pass: None }]);
         let mut m = at_wifi();
-        m.sel = 3;
+        m.sel = 4;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::WifiConnect { ssid: "Saved".into(), pass: None }]);
     }
 
     #[test]
     fn connected_network_is_not_reconnected() {
         let mut m = at_wifi();
-        m.sel = 4;
+        m.sel = 5;
         assert!(m.handle(Nav::Ok).is_empty());
         assert!(m.live_toast().unwrap().contains("Already connected"));
     }
@@ -1599,7 +1622,7 @@ mod tests {
     #[test]
     fn typing_a_password_on_a_physical_keyboard_and_submitting() {
         let mut m = at_wifi();
-        m.sel = 1;
+        m.sel = 2;
         m.handle(Nav::Ok);
         for c in "hunter22".chars() {
             m.handle(Nav::Char(c));
@@ -1612,7 +1635,7 @@ mod tests {
     #[test]
     fn short_passwords_are_rejected_before_connecting() {
         let mut m = at_wifi();
-        m.sel = 1;
+        m.sel = 2;
         m.handle(Nav::Ok);
         m.handle(Nav::Char('a'));
         assert!(m.handle(Nav::Submit).is_empty());
@@ -1622,7 +1645,7 @@ mod tests {
     #[test]
     fn onscreen_keyboard_can_type_with_only_a_d_pad_and_ok() {
         let mut m = at_wifi();
-        m.sel = 1;
+        m.sel = 2;
         m.handle(Nav::Ok);
         // Starts on row 1 (qwerty), col 0 = 'q'
         m.handle(Nav::Ok);
@@ -1638,7 +1661,7 @@ mod tests {
     #[test]
     fn shift_cycles_layers_and_back_leaves_the_keyboard() {
         let mut m = at_wifi();
-        m.sel = 1;
+        m.sel = 2;
         m.handle(Nav::Ok);
         m.osk.row = 4;
         m.osk.col = 0;
@@ -1660,7 +1683,7 @@ mod tests {
     #[test]
     fn clicking_onscreen_keys_types_them_and_clicking_confirm_buttons_works() {
         let mut m = at_wifi();
-        m.sel = 1;
+        m.sel = 2;
         m.handle(Nav::Ok);
         m.click(2 * 16 + 4); // row 2 ("asdf..."), col 4 = 'g'
         assert_eq!(m.osk.text, "g");
@@ -2023,11 +2046,35 @@ mod tests {
     #[test]
     fn results_clear_the_busy_overlay_and_clamp_the_selection() {
         let mut m = at_wifi();
-        m.sel = 4;
+        m.sel = 5;
         m.busy = Some("x".into());
         m.apply(Res::Wifi { dev: Some("wlan0".into()), nets: vec![] });
         assert!(m.busy.is_none());
-        assert_eq!(m.sel, 0);
+        assert_eq!(m.sel, 1, "the on/off row and the scan row are always there");
+    }
+
+    #[test]
+    fn wifi_has_an_on_off_row_and_off_means_no_networks_and_no_scanning() {
+        let mut m = at_wifi();
+        assert_eq!(m.row_count(), 6, "on/off, scan again, four networks");
+        // OK on the first row turns Wi-Fi off
+        m.sel = 0;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::WifiPower(false)]);
+        assert!(m.busy.is_some());
+        m.apply(Res::WifiPower(false));
+        assert!(!m.wifi_on && m.busy.is_none() && m.nets.is_empty());
+        assert_eq!(m.row_count(), 2);
+        // scanning while it is off only says so
+        m.sel = 1;
+        assert!(m.handle(Nav::Ok).is_empty());
+        assert!(m.live_toast().unwrap().contains("turn it on first"));
+        // and OK on the first row turns it on again
+        m.sel = 0;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::WifiPower(true)]);
+        m.apply(Res::WifiPower(true));
+        assert!(m.wifi_on);
+        m.sel = 1;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::WifiScan]);
     }
 
     fn disks() -> Vec<Disk> {

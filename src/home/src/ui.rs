@@ -46,7 +46,10 @@ fn row(label: impl Into<String>) -> Row {
 fn rows(m: &Model) -> Vec<Row> {
     match m.screen {
         Screen::Wifi => {
-            let mut v = vec![Row { value: if m.wifi_dev.is_some() { String::new() } else { "no adapter".into() }, ..row("Scan again") }];
+            let mut v = vec![
+                Row { value: if m.wifi_on { "ON".into() } else { "OFF".into() }, ..row(if m.wifi_on { "Turn Wi-Fi off" } else { "Turn Wi-Fi on" }) },
+                Row { enabled: m.wifi_on, value: if m.wifi_dev.is_some() { String::new() } else { "no adapter".into() }, ..row("Scan again") },
+            ];
             for n in &m.nets {
                 let mut r = row(n.name.clone());
                 r.kind = Kind::Signal(n.signal);
@@ -230,11 +233,17 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             "WI-FI",
             if m.wifi_dev.is_none() && !m.loading {
                 vec!["No Wi-Fi adapter found.".into(), "Plug in a USB Wi-Fi adapter, or use the Ethernet port.".into()]
+            } else if !m.wifi_on {
+                vec![
+                    "Wi-Fi is off: the computer has no wireless network. A wired network keeps working.".into(),
+                    "Turn Wi-Fi on to find and join a network. It stays off after a restart until you do.".into(),
+                ]
             } else {
                 vec![
                     m.status.network.clone(),
                     "Pick a network. Saved networks reconnect without a password.".into(),
                     "Typing works with a keyboard, or use the on-screen keys with the strum bar and frets.".into(),
+                    "Turn Wi-Fi off switches the radio off, also after a restart.".into(),
                 ]
             },
         ),
