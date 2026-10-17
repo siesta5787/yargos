@@ -142,7 +142,7 @@ must not. `tools/test-os-update.sh` rebuilds the image several times and leaves 
 Staged releases: `tools/release.sh VER --github --channel beta` (writes beta.json), `tools/publish.sh VER --channel beta --yes`
 (GitHub PRE-release, only beta.json goes into os-channel), try it on a device with SYSTEM > Updates > System updates > Test versions
 (beta), then `tools/promote.sh VER --yes` (stable.json is beta.json byte for byte with the same signature; the release stops being a
-pre-release). A plain release (`--channel stable`, the default) goes straight to everyone.
+pre-release). A plain release (`--channel stable`, the default) goes straight to everyone. GitHub serves release assets through a cache: right after `publish.sh` or `promote.sh` a plain fetch of `stable.json` can still return the old file for a minute or two (promoting 2026.10.28 took about 90 s); check from outside with a retry loop, not once.
 
 ## Disk identity and the installer
 
