@@ -39,6 +39,7 @@ updates itself like a console.
   own disk, so the songs are there without the drive. Imported songs become YARG song sources like the song drive does,
   and a song, a folder or everything can be deleted again from the same screen, all with a game controller. No formatting:
   the songs go in a folder on the data partition, which already fills the disk; the last few GB stay free for the system.
+- **Wi-Fi switch:** SYSTEM > Wi-Fi > *Turn Wi-Fi off* switches the radio off (it stays off after a restart) and *Turn Wi-Fi on* brings it back.
 - **Screens:** HDMI/TV mirroring, and a closed laptop lid keeps the external screen on.
 - **System updates over the air:** two system slots (A/B), signed releases, automatic fallback if a new system does not come up.
   It never restarts by itself. See [Updates](#updates).

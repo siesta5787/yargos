@@ -108,7 +108,8 @@ pub fn wifi_wanted_on() -> bool {
 /// `iwctl device X show` -> is the adapter powered ("Powered   on")?
 pub fn parse_powered(out: &str) -> Option<bool> {
     strip_ansi(out).lines().find_map(|l| {
-        let mut w = l.split_whitespace();
+        // (iwctl marks the settable properties with a leading "*")
+        let mut w = l.split_whitespace().filter(|w| *w != "*");
         (w.next()? == "Powered").then(|| w.next().map(|v| v == "on"))?
     })
 }
@@ -2289,8 +2290,8 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
 
     #[test]
     fn the_wifi_adapter_power_is_read_from_iwctl() {
-        let on = "\x1b[1;90m                                  Device: wlan0\x1b[0m\n  Name                wlan0\n  Powered             on\n  Adapter             phy0\n";
-        let off = "  Name                wlan0\n  Powered             off\n";
+        let on = "\x1b[1;90m                                  Device: wlan0\x1b[0m\n  Name                wlan0\n         *  Powered               on                                               \n  Adapter             phy0\n";
+        let off = "  Name                wlan0\n         *  Powered               off\n";
         assert_eq!(parse_powered(on), Some(true));
         assert_eq!(parse_powered(off), Some(false));
         assert_eq!(parse_powered("no such device"), None);

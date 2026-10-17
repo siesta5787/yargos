@@ -135,7 +135,7 @@ menu, or a crash, which also shows a message) the dashboard appears again.
 The dashboard is software-rendered (no GPU needed), works with a keyboard, mouse or the instruments, and
 has these screens. The main menu: Play (or INSTALL YARG), Sound (pick the output, volume,
 test tone; writes `/data/asound.conf`), Bluetooth (scan, pair/connect, forget; Wiimotes get their own
-hold-1+2 flow), Connected devices and System. System: Wi-Fi (scan, join, an on-screen keyboard for passwords), Updates (a menu of
+hold-1+2 flow), Connected devices and System. System: Wi-Fi (turn the radio off or on: `iwctl device X set-property Powered`, remembered as `WIFI=no` in `/data/yargos.conf` and applied when the dashboard starts; scan, join, an on-screen keyboard for passwords), Updates (a menu of
 System updates: check, install, restart, automatic on/off, go back, from the song drive; and YARG updates: check, install,
 automatic on/off, go back), Storage (import songs to the internal drive, browse them and delete a song, a folder or everything
 with LEFT; Song drive: the drive, and one YARG song source per folder on it; Use the rest of this drive when there is unused room;

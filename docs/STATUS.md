@@ -45,6 +45,12 @@ latest tests below (over-the-air updates, HDMI sound, Bluetooth earbuds, USB key
 
 ## Not yet tried on real hardware
 
+- The menu remodel (main menu: Play, Sound, Bluetooth, Connected devices, System; SYSTEM: Wi-Fi, Updates, Storage with the song drive
+  and install-to-disk, Diagnostics, Restart/Shut down icons) and the Wi-Fi on/off row. Run in QEMU on the real dashboard with key
+  presses (`tools/test-songs.sh`, `tools/test-offline-update.sh`: both pass through the new menus); the Wi-Fi switch was tried
+  against a virtual radio (`mac80211_hwsim` + iwd): off and on from the screen, kept in `yargos.conf`, applied again after the
+  dashboard restarted. Not tried with a real Wi-Fi adapter (the install row on a real internal disk is likewise only QEMU-tested).
+
 - The automatic Wii connect, the sound-quality fix (sample-rate conversion),
   some of the newest dashboard screens,
   the guitar's touch bar, pitch detection from a real microphone, eMMC / SD readers / Intel VMD disks, Secure Boot machines
