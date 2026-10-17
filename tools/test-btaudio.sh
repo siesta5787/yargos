@@ -66,7 +66,7 @@ t0=$SECONDS; r=$(g 'aplay -D default -d 1 /dev/zero 2>&1 | tail -1'); took=$((SE
 "$HERE/tools/qemu-key.sh" ret; sleep 10
 eq "the stand-in game started" yes "$(g 'pidof sleep >/dev/null && echo yes')"
 eq "the choice of headset is kept" "$MAC" "$(g 'cat /data/asound.prefer')"
-eq "but asound.conf now names a real sound card, not the absent headset" 0 "$(g 'grep -c bluealsa /data/asound.conf')"
+eq "but asound.conf now names a real sound card, not the absent headset" 0 "$(g 'grep -c type.bluealsa /data/asound.conf')"
 has "a real card is in the config" "hw:CARD=" "$(g 'cat /data/asound.conf')"
 eq "and the default output opens" 0 "$(g 'aplay -D default -d 1 /dev/zero >/dev/null 2>&1; echo $?')"
 
@@ -75,10 +75,10 @@ eq "ok" ok "$(g "echo 'sound 1 0' | yargos-home ctl | tail -1")"
 eq "the preference is gone" no "$(g '[ -e /data/asound.prefer ] && echo yes || echo no')"
 echo "== a stale headset config with nothing chosen is replaced when YARG starts"
 g "echo 'sound-bt $MAC' | yargos-home ctl >/dev/null; rm -f /data/asound.prefer" >/dev/null
-eq "(set up: the config names the headset, no preference)" 1 "$(g 'grep -c bluealsa /data/asound.conf')"
+eq "(set up: the config names the headset, no preference)" 1 "$(g 'grep -c type.bluealsa /data/asound.conf')"
 g 'kill $(pidof sleep)' >/dev/null 2>&1; sleep 8     # the stand-in game ends: back on the dashboard
 "$HERE/tools/qemu-key.sh" ret; sleep 10
-eq "the stale config was replaced by a real sound card" 0 "$(g 'grep -c bluealsa /data/asound.conf')"
+eq "the stale config was replaced by a real sound card" 0 "$(g 'grep -c type.bluealsa /data/asound.conf')"
 
 qstop
 echo
