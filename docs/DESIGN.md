@@ -189,7 +189,7 @@ The system updates itself like a console: `yargos-os-update` (root; the dashboar
 through the root helper) downloads a signed release into the OTHER system slot, adds a boot entry that tries it twice and
 never restarts by itself. The new system must bring up the launcher and keep it running (`yargos-boot-ok`), otherwise the
 boot loader falls back to the old system after two tries and the update is remembered as rejected. SYSTEM > Updates > System updates
-also has automatic updates on/off (`OS_AUTO_UPDATE=no`), restart to use a waiting update, and going back to the earlier
+also has automatic updates on/off (`OS_AUTO_UPDATE=no`), a switch for test versions (`OS_CHANNEL=beta`: the device then reads `beta.json` instead of `stable.json`; see `tools/publish.sh` and `tools/promote.sh`), restart to use a waiting update, and going back to the earlier
 system. The System updates screen looks at the song drive again every 4 s while it is open (`Cmd::OsFindOffline`, a result that only changes the "Install from the song drive" row), and OK on that row with nothing found looks again at once and says what it found: a drive plugged in after the screen opened is noticed. `tools/release.sh` makes and signs a release (`YARGOS_VERSION=2026.11.1 tools/br.sh` first); it refuses an image that
 holds YARG. `tools/test-os-update.sh` tests all of it in QEMU. Details and the design: docs/OTA-PLAN.md. Releases are signed
 with the key in `~/.yargos/release-ed25519.pem` (not in the repo, back it up); the matching public keys are in

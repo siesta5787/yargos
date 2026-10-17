@@ -245,6 +245,8 @@ pub enum Cmd {
     OsInstall,
     /// Install the update found on the song drive (no internet).
     OsInstallOffline,
+    /// Follow the beta channel (true: test versions) or only the stable one (false).
+    OsChannel(bool),
     /// Look on the song drive again for a system update (the dashboard asks again every few seconds while the screen is open).
     OsFindOffline,
     OsCancel,
@@ -297,6 +299,8 @@ pub struct OsInfo {
     pub offline: Option<String>,
     /// Something is on the song drive but cannot be used: a sentence for the side panel.
     pub offline_hint: Option<String>,
+    /// This device follows the beta channel: test versions before everyone else.
+    pub beta: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -626,7 +630,7 @@ impl Model {
             Screen::Storage => self.storage_rows().len(),
             Screen::ImportPick => 1 + self.drives.len(),
             Screen::Manage => 1 + self.browse.entries.len(),
-            Screen::OsUpdate => 6,
+            Screen::OsUpdate => 7,
             Screen::Devices => 1 + self.devices.len(),
             Screen::Yarg => 3,
             Screen::Install => if self.installed.is_some() { 2 } else { 1 + self.disks.len() },
@@ -1216,13 +1220,17 @@ impl Model {
                     self.os.auto = !self.os.auto;
                     vec![Cmd::OsAuto(self.os.auto)]
                 }
-                _ => {
+                5 => {
                     if self.os.previous.is_none() {
                         self.toast("There is no earlier system to go back to");
                         return vec![];
                     }
                     self.busy = Some("Going back to the earlier system\u{2026}".into());
                     vec![Cmd::OsGoBack]
+                }
+                _ => {
+                    self.os.beta = !self.os.beta;
+                    vec![Cmd::OsChannel(self.os.beta)]
                 }
             },
             Screen::Devices if self.sel == 0 => {
@@ -1841,6 +1849,18 @@ mod tests {
         m.screen = Screen::OsUpdate;
         m.os = OsInfo { running: "1".into(), auto: true, ..Default::default() };
         m
+    }
+
+    #[test]
+    fn test_versions_are_a_switch_on_the_system_updates_screen() {
+        let mut m = os_screen();
+        assert_eq!(m.row_count(), 7);
+        assert!(!m.os.beta);
+        m.sel = 6;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsChannel(true)]);
+        assert!(m.os.beta);
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::OsChannel(false)]);
+        assert!(!m.os.beta);
     }
 
     #[test]

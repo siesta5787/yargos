@@ -139,6 +139,11 @@ built with its own version. Test builds (`YARGOS_TEST_CONSOLE=1`) get a serial c
 must not. `tools/test-os-update.sh` rebuilds the image several times and leaves a test image in `images/`: run
 `tools/br.sh` afterwards.
 
+Staged releases: `tools/release.sh VER --github --channel beta` (writes beta.json), `tools/publish.sh VER --channel beta --yes`
+(GitHub PRE-release, only beta.json goes into os-channel), try it on a device with SYSTEM > Updates > System updates > Test versions
+(beta), then `tools/promote.sh VER --yes` (stable.json is beta.json byte for byte with the same signature; the release stops being a
+pre-release). A plain release (`--channel stable`, the default) goes straight to everyone.
+
 ## Disk identity and the installer
 
 Never find a root or data partition by label: the flashed image uses fixed partition GUIDs (`...0001` system A,

@@ -1241,11 +1241,16 @@ pub fn read_auto_update() -> bool {
 
 /// Set `KEY=yes|no` in /data/yargos.conf, keeping the other lines.
 fn write_conf_flag(key: &str, on: bool) -> Result<(), String> {
+    write_conf_value(key, if on { "yes" } else { "no" })
+}
+
+/// Set `KEY=value` in /data/yargos.conf, keeping the other lines.
+fn write_conf_value(key: &str, value: &str) -> Result<(), String> {
     let path = format!("{DATA}/yargos.conf");
     let old = std::fs::read_to_string(&path).unwrap_or_default();
     let prefix = format!("{key}=");
     let mut lines: Vec<String> = old.lines().filter(|l| !l.trim().starts_with(&prefix)).map(String::from).collect();
-    lines.push(format!("{key}={}", if on { "yes" } else { "no" }));
+    lines.push(format!("{key}={value}"));
     std::fs::write(&path, lines.join("\n") + "\n").map_err(|e| e.to_string())
 }
 
@@ -1745,6 +1750,7 @@ pub fn os_info_from(kv: &std::collections::HashMap<String, String>, running: &st
         why: get("check_why"),
         offline: None,
         offline_hint: None,
+        beta: false,
     }
 }
 
@@ -1770,7 +1776,9 @@ pub fn os_info_base() -> OsInfo {
     let kv = parse_kv(&std::fs::read_to_string(format!("{DATA}/os-update/status")).unwrap_or_default());
     let running = std::fs::read_to_string("/usr/lib/yargos/version").unwrap_or_default().trim().to_string();
     let auto = std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| !c.lines().any(|l| l.trim() == "OS_AUTO_UPDATE=no")).unwrap_or(true);
-    os_info_from(&kv, &running, auto)
+    let mut info = os_info_from(&kv, &running, auto);
+    info.beta = os_channel_beta();
+    info
 }
 
 pub fn os_info() -> OsInfo {
@@ -1782,6 +1790,16 @@ pub fn os_info() -> OsInfo {
         }
     }
     info
+}
+
+/// Does this device follow the beta channel (test versions before everyone else)? `OS_CHANNEL=beta` in /data/yargos.conf.
+pub fn os_channel_beta() -> bool {
+    std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| c.lines().any(|l| l.trim() == "OS_CHANNEL=beta")).unwrap_or(false)
+}
+
+pub fn write_os_channel(beta: bool) -> Result<String, String> {
+    write_conf_value("OS_CHANNEL", if beta { "beta" } else { "stable" })?;
+    Ok(if beta { "Test versions on. Choose Check for a system update".into() } else { "Test versions off: only stable versions from now on".to_string() })
 }
 
 pub fn write_auto_os(on: bool) -> Result<String, String> {

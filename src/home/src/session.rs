@@ -244,6 +244,7 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Os(sys::os_info()));
                 res(tx, Res::Status(sys::status(&sys::sound_label(), &upd)));
             }),
+            Cmd::OsChannel(beta) => bg(tx, move |tx| done(tx, sys::write_os_channel(beta))),
             Cmd::OsFindOffline => bg(tx, |tx| {
                 let i = sys::os_info();
                 res(tx, Res::OsOffline { offline: i.offline, hint: i.offline_hint });

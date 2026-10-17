@@ -72,6 +72,10 @@ The first boot grows the data partition to fill the stick. Wired networks work w
   again. "Go back to the earlier system" is one press. Releases are signed (Ed25519); the public keys are in
   `board/yargos/rootfs-overlay/usr/lib/yargos/keys/`. A failed download says why (no DNS, a stalled connection, an HTTP
   error, a full disk) and is retried, resuming where it stopped.
+- **Test versions (beta):** SYSTEM > Updates > System updates > *Test versions (beta)* makes this computer follow the beta
+  channel: releases published as GitHub pre-releases (`tools/publish.sh VER --channel beta`) reach only computers that switched
+  this on, also by automatic update. When a beta has been tried, `tools/promote.sh VER --yes` makes it the stable release for
+  everyone (same signed manifest, no rebuild). Turning it off returns to stable.
 - **No internet on the device?** Download these three files from the release page (the `os-<version>` release) on another
   computer. **All three are needed**; the rootfs file alone is not enough:
   1. `rootfs-<version>.img.xz` (the system image, about 160 MB),

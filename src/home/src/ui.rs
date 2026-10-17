@@ -181,6 +181,7 @@ fn rows(m: &Model) -> Vec<Row> {
             Row { enabled: m.os.staged.is_some(), value: m.os.staged.clone().unwrap_or_default(), ..row("Restart to use the update") },
             Row { value: if m.os.auto { "ON".into() } else { "OFF".into() }, ..row("Automatic system updates") },
             Row { enabled: m.os.previous.is_some(), value: m.os.previous.clone().unwrap_or_default(), ..row("Go back to the earlier system") },
+            Row { value: if m.os.beta { "ON".into() } else { "OFF".into() }, ..row("Test versions (beta)") },
         ],
         Screen::Devices => {
             let mut v = vec![row("Look again")];
@@ -378,9 +379,13 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             } else if let Some(h) = &m.os.offline_hint {
                 v.push(h.clone());
             } else {
-                v.push("No internet? Put the release files (stable.json, stable.json.sig and rootfs-<version>.img.xz, from the release page on GitHub) on the song drive.".into());
+                let c = if m.os.beta { "beta" } else { "stable" };
+                v.push(format!("No internet? Put the release files ({c}.json, {c}.json.sig and rootfs-<version>.img.xz, from the release page on GitHub) on the song drive."));
             }
             v.push("It never restarts without asking. A new system that does not start is replaced by the earlier one by itself.".into());
+            if m.os.beta {
+                v.push("Test versions are ON: this computer also gets beta releases (automatic updates too) before they are made stable. Turn it off to follow only stable ones.".into());
+            }
             ("SYSTEM UPDATE", v)
         }
         Screen::Devices => (

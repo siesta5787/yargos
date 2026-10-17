@@ -6,6 +6,11 @@
 # It publishes in this order: the image and the legal bundle as release os-<version>; then the channel files into the
 # standing release "os-channel" (devices look there). Devices ignore the new version until the channel files change,
 # so the order makes a half-finished publish harmless. Needs `gh` logged in; the repo must be public.
+#
+# Staged releases: `tools/release.sh VER --github --channel beta` then `tools/publish.sh VER --channel beta --yes` publishes
+# the version as a GitHub PRE-RELEASE and writes beta.json into os-channel. Only devices that switched on SYSTEM > Updates >
+# System updates > "Test versions (beta)" read beta.json, so automatic updates on everyone else's device do not see it.
+# When it has been tried: `tools/promote.sh VER --yes` makes it the stable release (stable.json, no longer a pre-release).
 set -eu
 BUILD=${YARGOS_BUILD_DIR:-$HOME/yargos-build}
 VERSION=${1:-}; [ -n "$VERSION" ] || { sed -n '2,10p' "$0"; exit 2; }
@@ -33,9 +38,12 @@ echo "release:     os-$VERSION  <- $(for a in "${ASSETS[@]}"; do printf '%s (%s 
 echo "channel:     os-channel  <- $CHANNEL.json, $CHANNEL.json.sig (replaces the old ones)"
 [ "$YES" = yes ] || { echo "(nothing done: add --yes)"; exit 0; }
 NOTES=$(jq -r '.notes // ""' "$DIR/$CHANNEL.json")
-gh release create "os-$VERSION" "${ASSETS[@]}" --repo "$REPO" \
-    --title "YARG OS $VERSION" --notes "${NOTES:-YARG OS $VERSION}. yargos-$VERSION.img.xz is the whole disk image to write to a USB stick (tools/flash.sh takes it as it is); rootfs-$VERSION.img.xz is what installed devices download themselves (SYSTEM > System update). No internet on the device? Download rootfs-$VERSION.img.xz, $CHANNEL.json and $CHANNEL.json.sig from this page, put the three files on the song drive and choose SYSTEM > System update > Install from the song drive. The legal file has the licences and the source of the GPL/LGPL parts."
+FLAGS=(); TITLE="YARG OS $VERSION"
+[ "$CHANNEL" = stable ] || { FLAGS=(--prerelease --latest=false); TITLE="YARG OS $VERSION (beta)"; }
+gh release create "os-$VERSION" "${ASSETS[@]}" --repo "$REPO" "${FLAGS[@]}" \
+    --title "$TITLE" --notes "${NOTES:-YARG OS $VERSION}. yargos-$VERSION.img.xz is the whole disk image to write to a USB stick (tools/flash.sh takes it as it is); rootfs-$VERSION.img.xz is what installed devices download themselves (SYSTEM > Updates > System updates). No internet on the device? Download rootfs-$VERSION.img.xz, $CHANNEL.json and $CHANNEL.json.sig from this page (all three are needed), put them on the song drive and choose SYSTEM > Updates > System updates > Install from the song drive. The legal file has the licences and the source of the GPL/LGPL parts."
 gh release view os-channel --repo "$REPO" >/dev/null 2>&1 ||
     gh release create os-channel --repo "$REPO" --title "Update channel" --notes "Files the devices read to find the newest system. Do not edit by hand." --latest=false
 gh release upload os-channel "$DIR/$CHANNEL.json" "$DIR/$CHANNEL.json.sig" --repo "$REPO" --clobber
 echo "check: $(curl -fsSL "https://github.com/$REPO/releases/download/os-channel/$CHANNEL.json" | jq -r .version)"
+[ "$CHANNEL" = stable ] || echo "this is a PRE-RELEASE: only devices with Test versions (beta) switched on see it. When it is good: tools/promote.sh $VERSION --yes"
