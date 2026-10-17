@@ -193,7 +193,7 @@ again. `usb-kick` is only a safety net. `tools/fake-dongle.rs` imitates such a t
 
 ## Wi-Fi and Bluetooth share a radio
 
-On many laptops (the test HP Envy: Realtek 8822CE) Wi-Fi and Bluetooth are one chip. The dashboard's automatic Wiimote scan runs
+On many machines Wi-Fi and Bluetooth are one radio module (the test mini PC has a Realtek RTL8822CU Bluetooth adapter). The dashboard's automatic Wiimote scan runs
 almost all the time, and an OS update crawled at 0% (no error: the updater only gives up below 2 KB/s). So `sys::ScanPause`
 (held by the OS update, the YARG update/install jobs) stops the scan while a download runs, and the update screen shows MB done
 and KB/s (`PROGRESS percent MB-done MB-total KB/s`). Never add a download without pausing the scan.

@@ -29,7 +29,7 @@ updates itself like a console.
 - **Bluetooth headphones:** earbuds and headphones pair on the Bluetooth screen and become a choice on the Sound screen
   (SBC audio through `bluez-alsa`; no sound server). If they are switched off when YARG starts, the speakers play. Tried with
   Anker Soundcore Liberty 4 earbuds and a Wii guitar at the same time.
-- **HDMI sound:** the Sound screen says which HDMI output has a screen on it (a laptop's graphics chip offers three), and the
+- **HDMI sound:** the Sound screen says which HDMI output has a screen on it (the graphics chip offers three), and the
   digital output is switched on for you.
 - **Diagnostics:** SYSTEM > Diagnostics shows what the system sees (Bluetooth, Sound, YARG, System, and a keyboard test) as text
   made to be photographed, so nobody needs a terminal to report a problem.
@@ -137,10 +137,10 @@ console; see its header) and `yargos-home screenshot <screen> out.png` renders a
 
 ## Status
 
-Tested on a 2020 HP laptop (Ryzen 4000) from a USB stick and installed to its disk: boot, Wi-Fi, sound, YARG, NTFS song
-drive, Wii guitar, ION drums, microphone, USB piano, HDMI mirroring and HDMI sound, Bluetooth earbuds, importing songs to the
-internal disk, and over-the-air system updates (2026.10.14 to 2026.10.26). Still unproven: the mini PC the system is meant for, the
-offline update from a song drive, drums in every lane, a low-battery notice drawn over a real YARG window. A cheap 2.4 GHz
+Tested on a 2020 HP laptop (Ryzen 4000) from a USB stick and installed to its disk (boot, Wi-Fi, sound, YARG, NTFS song
+drive, Wii guitar, ION drums, microphone, USB piano, HDMI mirroring), and on the BOSGAME E5 Plus mini PC the system is meant for
+(HDMI sound, Bluetooth earbuds, importing songs to the internal disk, USB keyboards, and over-the-air system updates, 2026.10.14
+to 2026.10.26). Still unproven: the offline update from a song drive, drums in every lane, a low-battery notice drawn over a real YARG window. A cheap 2.4 GHz
 wireless keyboard needed switching off and on after being replugged (a standard USB keyboard does not). The full, honest list of
 what is and is not verified is in [docs/STATUS.md](docs/STATUS.md).
 

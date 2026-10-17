@@ -6,8 +6,9 @@ Nothing is listed as working unless it was run.
 
 ## Confirmed on real hardware (reported)
 
-Test machine: a 2020 HP Envy x360 (Ryzen 5 4000, Radeon graphics, NVMe), booted from a 256 GB USB stick and also
-installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target and has not been tried yet.
+Test machines: a 2020 HP Envy x360 (Ryzen 5 4000, Radeon graphics, NVMe), booted from a 256 GB USB stick and also
+installed to its internal disk (the early tests); and the BOSGAME E5 Plus mini PC, the intended target, which has arrived: the
+latest tests below (over-the-air updates, HDMI sound, Bluetooth earbuds, USB keyboards, Diagnostics) were run on it.
 
 - Boot to the launcher, Wi-Fi (built-in and a USB adapter), sound, touchpad, keyboard and mouse, an NTFS song drive on a USB
   flash drive, HDMI mirroring with the laptop lid closed (the TV can show glitches for a few seconds after a change; the newest
@@ -18,16 +19,16 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
 - Installing the system to the laptop's internal disk.
 - System updates over the air from GitHub, several in a row (2026.10.14 up to 2026.10.26), through the SYSTEM > System update screen.
   One update crawled at "0%" with no error while Wii guitars and earbuds were connected; with the controllers switched off it
-  went through. The cause is probably the laptop's Wi-Fi and Bluetooth sharing one radio chip (the dashboard's Wii scan never
+  went through. The cause is probably Wi-Fi and Bluetooth sharing one radio module (the dashboard's Wii scan never
   stops while it is up): since 2026.10.25 the scan pauses during downloads and the screen shows MB done and KB/s. Not confirmed
   that the pause alone cures it.
 - Importing a portable drive into the internal songs and deleting songs, folders and everything again (SYSTEM > Storage); the
   address tag that tells two Wii guitars with the same name apart; the song drive's 4th folder; the sound default (speakers, not
-  HDMI); the Wii guitar battery level on the Bluetooth screen; SYSTEM > Diagnostics (read and photographed on the laptop).
+  HDMI); the Wii guitar battery level on the Bluetooth screen; SYSTEM > Diagnostics (read and photographed on the mini PC).
 - HDMI sound on the TV. It was silent on all three HDMI outputs because the sound card's digital output switch (ALSA
   `IEC958 Playback Switch`) starts OFF and nothing in this system turned it on; the dashboard now turns it on when an output is
   chosen, before the test sound and before YARG starts. The Sound screen also says which HDMI output has a screen on it
-  ("TCL connected", "nothing connected"; the laptop's graphics chip offers three).
+  ("TCL connected", "nothing connected"; the AMD graphics chip offers three HDMI/DisplayPort audio outputs).
 - Bluetooth earbuds (Anker Soundcore Liberty 4) as the sound output while YARG runs, with a Wii guitar connected (2026.10.26).
   The failure before: YARG's audio start asked for a different rate than the live 44.1 kHz stream, bluealsa renegotiated the
   codec, the earbuds never answered ("No reply to Open request"), YARG hung exactly 25 s on its splash and the link dropped
@@ -45,7 +46,7 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
 - The automatic Wii connect, the sound-quality fix (sample-rate conversion),
   some of the newest dashboard screens, drums in every lane,
   the guitar's touch bar, pitch detection from a real microphone, eMMC / SD readers / Intel VMD disks, Secure Boot machines
-  (not supported: turn it off), the mini PC.
+  (not supported: turn it off).
 - A laptop disk installed with the pre-A/B installer has no second system slot: system updates cannot work there until it is
   reinstalled from a current stick (SYSTEM > Install on this computer's disk). Running from the USB stick needs no install.
 - Wii guitar battery (level on the Bluetooth screen, low notice on the dashboard and over the game): unit-tested and run in
@@ -58,7 +59,7 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   still take a while: that is YARG reading thousands of files.
 - Volume (the Sound screen's Volume row, the volume keys and Ctrl+Alt+Up/Down/M with the level bar, headset volume through
   bluealsa): unit-tested, and the sound card path and the key grabs checked in QEMU (`tools/test-volume.sh`). Not tried on the
-  real laptop (whether its Fn volume keys reach X as media keys; whether Master alone sets the speaker loudness), nor with a
+  real machine (whether its Fn volume keys reach X as media keys; whether Master alone sets the speaker loudness), nor with a
   real headset (the bluealsa volume calls need a connected headset).
 - SYSTEM > Storage (import a portable drive to the internal songs, browse, delete): unit-tested, and `tools/test-songs.sh`
   drives the real dashboard in QEMU with three fake ext4 USB drives (import, same-name drives, a drive already mounted as
@@ -76,7 +77,7 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   drive) has not been tried on real hardware.
 - YARG's "Failed to initialize audio device" on the laptop: ALSA's default was card 0 device 0, an HDMI-only card on AMD. Fixed
   (the output is saved by card id, and one is chosen before YARG starts if the saved one is gone; the speakers are the default,
-  not HDMI): the owner confirmed the default works. One risk remains: both of that laptop's sound cards are named "Generic" /
+  not HDMI): the owner confirmed the default works. One risk remains: both sound cards of the machine it was seen on are named "Generic" /
   "Generic_1" by the kernel; if their order ever swapped between boots a saved choice could point at the wrong card (not seen).
 - Whether `hid-sony` claims the virtual `12BA:0100` / `12BA:0210` devices on every kernel (fallback: impersonate a Santroller
   device, `1209:2882`).
@@ -221,7 +222,7 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
 - Devices screen: one row per thing YARG can use (keyboards and mice with their USB id, sound cards, MIDI ports, pads);
   a raw USB row only for a device the kernel made nothing of; a keyboard whose receiver has no input device says NO INPUT.
   An owner's 2.4G keyboard receiver (24ae:9db6) typed nothing after a hot-plug until the keyboard was switched off and on (see
-  the confirmed list); a standard USB keyboard hot-plugs fine in QEMU and on the laptop. A different, earlier "Rii" receiver that
+  the confirmed list); a standard USB keyboard hot-plugs fine in QEMU and on the mini PC. A different, earlier "Rii" receiver that
   typed nothing was never looked at again.
 - Wii bridge lifetime (QEMU, fake Wiimote): the bridge starts when a Wiimote's HID device appears, is restarted
   two seconds after it dies while the Wiimote is still there, and stops when the Wiimote disconnects

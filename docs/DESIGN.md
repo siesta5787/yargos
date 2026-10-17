@@ -47,7 +47,7 @@ docs/STATUS.md says what has and has not been verified.
   sound card (`sound-temp`, which keeps the preference) so YARG always has a default output; picking a sound card forgets
   the preference. The Sound screen lists connected headsets as outputs (their volume is the Volume row, see below). Latency is that of SBC (roughly 150-250 ms): YARG's audio calibration compensates for a steady delay. A2DP
   traffic shares the radio with the Wii guitars; the Wii auto-connect scan only runs on the dashboard, never during YARG (and it
-  sits out while an OS or YARG download runs: on many laptops Wi-Fi and Bluetooth are one chip, and a scan that never stops
+  sits out while an OS or YARG download runs: on many machines Wi-Fi and Bluetooth are one module, and a scan that never stops
   starved a download to "0%"). The headset's ALSA slave is PINNED (`rate 44100`, `channels 2`, `format S16_LE` in `asound_text_bt`)
   and bluealsa runs with `--a2dp-force-audio-cd` (44.1 kHz only): the bluealsa ALSA plugin calls SelectCodec when a program opens
   the PCM at a different rate or channel count, BlueZ then closes and reopens the live stream, and the earbuds did not answer
