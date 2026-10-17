@@ -140,7 +140,7 @@ console; see its header) and `yargos-home screenshot <screen> out.png` renders a
 Tested on a 2020 HP laptop (Ryzen 4000) from a USB stick and installed to its disk (boot, Wi-Fi, sound, YARG, NTFS song
 drive, Wii guitar, ION drums, microphone, USB piano, HDMI mirroring), and on the BOSGAME E5 Plus mini PC the system is meant for
 (HDMI sound, Bluetooth earbuds, importing songs to the internal disk, USB keyboards, and over-the-air system updates, 2026.10.14
-to 2026.10.26). Still unproven: the offline update from a song drive, drums in every lane, a low-battery notice drawn over a real YARG window. A cheap 2.4 GHz
+to 2026.10.26). Still unproven: the offline update from a song drive, a low-battery notice drawn over a real YARG window. A cheap 2.4 GHz
 wireless keyboard needed switching off and on after being replugged (a standard USB keyboard does not). The full, honest list of
 what is and is not verified is in [docs/STATUS.md](docs/STATUS.md).
 

@@ -17,6 +17,8 @@ latest tests below (over-the-air updates, HDMI sound, Bluetooth earbuds, USB key
   (ION Drum Rocker), Wii guitar and microphone vocals at the same time. A USB piano (Yamaha P-143) connects and its speaker
   works; no song has been played on piano yet.
 - Installing the system to the laptop's internal disk.
+- Every drum lane works with the ION Drum Rocker (all the pads it has, and the kick). The owner has no second kick pedal, so that
+  lane (kick2) is untested; neither is drum velocity.
 - System updates over the air from GitHub, several in a row (2026.10.14 up to 2026.10.26), through the SYSTEM > System update screen.
   One update crawled at "0%" with no error while Wii guitars and earbuds were connected; with the controllers switched off it
   went through. The cause is probably Wi-Fi and Bluetooth sharing one radio module (the dashboard's Wii scan never
@@ -44,7 +46,7 @@ latest tests below (over-the-air updates, HDMI sound, Bluetooth earbuds, USB key
 ## Not yet tried on real hardware
 
 - The automatic Wii connect, the sound-quality fix (sample-rate conversion),
-  some of the newest dashboard screens, drums in every lane,
+  some of the newest dashboard screens,
   the guitar's touch bar, pitch detection from a real microphone, eMMC / SD readers / Intel VMD disks, Secure Boot machines
   (not supported: turn it off).
 - A laptop disk installed with the pre-A/B installer has no second system slot: system updates cannot work there until it is
@@ -81,8 +83,8 @@ latest tests below (over-the-air updates, HDMI sound, Bluetooth earbuds, USB key
   "Generic_1" by the kernel; if their order ever swapped between boots a saved choice could point at the wrong card (not seen).
 - Whether `hid-sony` claims the virtual `12BA:0100` / `12BA:0210` devices on every kernel (fallback: impersonate a Santroller
   device, `1209:2882`).
-- Playing songs with the virtual drums in every lane (pads, cymbals, kick, kick2) and drum velocity for yellow and green
-  (YARG only uses velocity for bonus notes and hit-sound volume; a flagged hit always registers).
+- A second kick pedal (kick2) on the virtual drums, and drum velocity for yellow and green (YARG only uses velocity for bonus
+  notes and hit-sound volume; a flagged hit always registers). Every other lane was confirmed (see above).
 - The installer on a real machine whose firmware ignores the fallback boot file or has many stale entries, and disks that
   hold another system (it erases all of the chosen disk).
 - The dashboard's navigation with a real guitar's buttons, the Wi-Fi password flow and Bluetooth pairing on real adapters,
