@@ -72,9 +72,16 @@ The first boot grows the data partition to fill the stick. Wired networks work w
   again. "Go back to the earlier system" is one press. Releases are signed (Ed25519); the public keys are in
   `board/yargos/rootfs-overlay/usr/lib/yargos/keys/`. A failed download says why (no DNS, a stalled connection, an HTTP
   error, a full disk) and is retried, resuming where it stopped.
-- **No internet on the device?** Download `rootfs-<version>.img.xz`, `stable.json` and `stable.json.sig` from the release
-  page (the `os-<version>` release) on another computer, put the three files on the song drive (top level or one folder
-  down) and choose SYSTEM > Updates > System updates > *Install from the song drive*. Same signature and checksum checks as a download.
+- **No internet on the device?** Download these three files from the release page (the `os-<version>` release) on another
+  computer. **All three are needed**; the rootfs file alone is not enough:
+  1. `rootfs-<version>.img.xz` (the system image, about 160 MB),
+  2. `stable.json` (names the image and its checksum),
+  3. `stable.json.sig` (the signature on `stable.json`).
+
+  Put them on the song drive (top level or one folder down) and choose SYSTEM > Updates > System updates > *Install from the
+  song drive*. It does the same signature and checksum checks as a download, and only installs a version newer than the one
+  running. The other release files (`yargos-<version>.img.xz`, the full disk image for flashing a new stick, and
+  `legal-<version>.tar`, the licences) are not needed.
 
 Design and the reasoning: [docs/OTA-PLAN.md](docs/OTA-PLAN.md), [docs/DESIGN.md](docs/DESIGN.md).
 
