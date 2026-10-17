@@ -183,6 +183,14 @@ a program that opens the output at another rate or channel count makes the bluea
 reopens the live stream, the earbuds did not answer ("No reply to Open request", exactly 25 s later "Couldn't set A2DP
 configuration: Timeout"), YARG's audio start hung 25 s and the link dropped. Never let a program renegotiate a live A2DP stream.
 
+## HDMI sound and USB keyboards
+
+HDMI sound is silent until the card's `IEC958 Playback Switch` controls are on (plain ALSA never sets them; `sound-prepare`
+and every `sound*` helper write do). Which HDMI output has a TV on it is in `/proc/asound/cardN/eld#C.P` (the dashboard tags
+the rows from it). The owner's wireless 2.4 GHz keyboard (24ae:9db6) stays dead after a replug until the KEYBOARD ITSELF is
+switched off and on; the system side was proven fine (kernel and Xorg re-add it, a USB reset revives it), so do not chase it
+again. `usb-kick` is only a safety net. `tools/fake-dongle.rs` imitates such a two-node receiver with uhid (no real USB device).
+
 ## Wi-Fi and Bluetooth share a radio
 
 On many laptops (the test HP Envy: Realtek 8822CE) Wi-Fi and Bluetooth are one chip. The dashboard's automatic Wiimote scan runs

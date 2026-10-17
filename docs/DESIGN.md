@@ -45,9 +45,14 @@ docs/STATUS.md says what has and has not been verified.
   config can load programs) and `/data/asound.prefer` records the choice. Before every YARG start `ensure_sound` runs
   `plan_sound`: a preferred headset that is connected plays; one that is switched off is replaced in asound.conf by a real
   sound card (`sound-temp`, which keeps the preference) so YARG always has a default output; picking a sound card forgets
-  the preference. The Sound screen lists connected headsets as outputs; there is no volume slider for them (the headset has
-  its own). Latency is that of SBC (roughly 150-250 ms): YARG's audio calibration compensates for a steady delay. A2DP
-  traffic shares the radio with the Wii guitars; the Wii auto-connect scan only runs on the dashboard, never during YARG.
+  the preference. The Sound screen lists connected headsets as outputs (their volume is the Volume row, see below). Latency is that of SBC (roughly 150-250 ms): YARG's audio calibration compensates for a steady delay. A2DP
+  traffic shares the radio with the Wii guitars; the Wii auto-connect scan only runs on the dashboard, never during YARG (and it
+  sits out while an OS or YARG download runs: on many laptops Wi-Fi and Bluetooth are one chip, and a scan that never stops
+  starved a download to "0%"). The headset's ALSA slave is PINNED (`rate 44100`, `channels 2`, `format S16_LE` in `asound_text_bt`)
+  and bluealsa runs with `--a2dp-force-audio-cd` (44.1 kHz only): the bluealsa ALSA plugin calls SelectCodec when a program opens
+  the PCM at a different rate or channel count, BlueZ then closes and reopens the live stream, and the earbuds did not answer
+  ("No reply to Open request"; the 25 s D-Bus timeout is the 22-25 s hang of YARG's audio start, after which the link dropped).
+  An older headset config on disk is rewritten at the next YARG start.
 - Volume: one level for whatever the sound goes to. A sound card: its mixer (`Master`, else `PCM`/`Speaker`/`Headphone`/`Digital`);
   the first time a card is touched its other playback controls (Speaker, Headphone, PCM...) are opened to 100% so the one knob
   decides, because on many laptops each has its own level. A Bluetooth headset: bluealsa's volume for its A2DP PCM
@@ -58,16 +63,30 @@ docs/STATUS.md says what has and has not been verified.
   YARG too, applies a 5% step in the background, and shows the level in the banner window (the same one the low-battery
   notice uses). The mixer is stored (`alsactl store`, helper word `volume-save`) 3 s after the last key, and each headset's
   level lives in `/data/bluealsa`. `yargos-home volume get|up|down|mute` does the same from a shell.
-- Diagnostics: SYSTEM > Diagnostics shows four text reports (Bluetooth, Sound, YARG, System) read through the root helper words
-  `diag-bluetooth|sound|yarg|system`, which run `/usr/lib/yargos/diag NAME` (a fixed list, read-only, bounded). It exists so
-  that a photo of the screen shows what the system saw, instead of typing commands on the console.
+- Diagnostics: SYSTEM > Diagnostics shows five text reports (Bluetooth, Sound, YARG, System, Keyboard test) read through the root
+  helper words `diag-bluetooth|sound|yarg|system|keys`, which run `/usr/lib/yargos/diag NAME` (a fixed list, bounded; only the
+  keyboard test touches anything: it resets a USB keyboard that heard nothing). A page is read once when it opens: OK reads it
+  again. It exists so that a photo of the screen shows what the system saw, instead of typing commands on the console. The Sound
+  page lists the HDMI ports the kernel sees a screen on (the ELD files) and the digital-output switches; the System page lists the
+  keyboards, the kernel's and Xorg's view of the last hot-plug, and what `usb-kick` did.
+- HDMI sound: the HDA card's `IEC958 Playback Switch` controls (one per HDMI port) start OFF and plain ALSA never turns them on
+  (a desktop's sound server does): the helper word `sound-prepare` (and every `sound`/`sound-temp` write) switches them on, run by
+  the dashboard when an output is chosen, before the test sound and before every YARG start. The Sound screen tags each HDMI
+  output from `/proc/asound/cardN/eld#C.P` ("<monitor> connected" or "nothing connected").
+- USB: `72-yargos-usb-power.rules` turns USB autosuspend off for every non-hub device (a mains-powered console), and starts
+  `yargos-usb-kick@.service` for the 24ae receiver and for any USB device with a boot keyboard interface: after a hot-plug (never in
+  the first 45 s, devices present at start work) it watches the receiver's input nodes and switches the device off and on
+  (`authorized` 0/1) with growing waits until a key or movement arrives, logging the raw HID reports and a USB traffic summary for
+  the Diagnostics page. It was written for a wireless-keyboard receiver that stayed silent after a replug; that keyboard turned
+  out to need its own power switch cycled, so it is a harmless safety net.
 - Bluetooth radio discipline: every `bluetoothctl` start registers an advertisement monitor with BlueZ (the journal's "Adv Monitor
   app disconnected" lines) which is work for the controller, so the dashboard keeps its Bluetooth calls few: one `info` per
   device, names remembered (`bt_name`), the adapter powered on once, nothing from the main card's refresh. When PLAY is pressed
   `bt_quiet` waits for the Wii guitar scan in progress to end before the output is chosen; `ensure_sound` then plays one second
   of silence to a chosen headset (`bt_probe`) and, if it does not answer, uses the speakers this time rather than let YARG
-  block on a dead link (a headset that ignores AVDTP Open made YARG's sound start wait ~22 s and the radio drop, guitars too).
-  `bluealsa` runs with `--keep-alive=10` so the repeated opens during YARG's start do not stop and restart the stream.
+  block on a dead link. `bluealsa` runs with `--keep-alive=30` so the repeated opens during YARG's start do not stop and restart
+  the stream. (The ~22 s hang that dropped the radio, guitars too, was NOT the dashboard's Bluetooth calls: it was the live codec
+  renegotiation described above; the quiet radio and the probe stay as cheap safeguards.)
 - Wii guitar batteries: the Wiimote's status report (0x20, answer to a 0x15 request) carries a level byte (0xC8 = full) and
   a "battery low" flag. The bridge writes `/run/yargos-bridge/battery-hidrawN` (`<percent> <low 0|1>`); at connect it asks
   anyway, and while the guitar streams it asks again only after 10 s without any change on it and at most once a minute (a

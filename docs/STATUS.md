@@ -16,11 +16,34 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   (ION Drum Rocker), Wii guitar and microphone vocals at the same time. A USB piano (Yamaha P-143) connects and its speaker
   works; no song has been played on piano yet.
 - Installing the system to the laptop's internal disk.
+- System updates over the air from GitHub, several in a row (2026.10.14 up to 2026.10.26), through the SYSTEM > System update screen.
+  One update crawled at "0%" with no error while Wii guitars and earbuds were connected; with the controllers switched off it
+  went through. The cause is probably the laptop's Wi-Fi and Bluetooth sharing one radio chip (the dashboard's Wii scan never
+  stops while it is up): since 2026.10.25 the scan pauses during downloads and the screen shows MB done and KB/s. Not confirmed
+  that the pause alone cures it.
+- Importing a portable drive into the internal songs and deleting songs, folders and everything again (SYSTEM > Storage); the
+  address tag that tells two Wii guitars with the same name apart; the song drive's 4th folder; the sound default (speakers, not
+  HDMI); the Wii guitar battery level on the Bluetooth screen; SYSTEM > Diagnostics (read and photographed on the laptop).
+- HDMI sound on the TV. It was silent on all three HDMI outputs because the sound card's digital output switch (ALSA
+  `IEC958 Playback Switch`) starts OFF and nothing in this system turned it on; the dashboard now turns it on when an output is
+  chosen, before the test sound and before YARG starts. The Sound screen also says which HDMI output has a screen on it
+  ("TCL connected", "nothing connected"; the laptop's graphics chip offers three).
+- Bluetooth earbuds (Anker Soundcore Liberty 4) as the sound output while YARG runs, with a Wii guitar connected (2026.10.26).
+  The failure before: YARG's audio start asked for a different rate than the live 44.1 kHz stream, bluealsa renegotiated the
+  codec, the earbuds never answered ("No reply to Open request"), YARG hung exactly 25 s on its splash and the link dropped
+  (the guitar's too). Now the headset's ALSA slave is pinned to 44.1 kHz stereo, bluealsa offers 44.1 kHz only
+  (`--a2dp-force-audio-cd`) and keeps the stream 30 s. Found by reading the bluealsa sources and the logs; the Wi-Fi/Bluetooth
+  shared-radio theory was tested (Wi-Fi switched off) and was NOT the cause.
+- USB keyboards plugged back in while the system runs: a standard Logitech keyboard works at once. A cheap wireless 2.4 GHz one
+  (receiver 24ae:9db6, "bjx.cn 2.4G Receiver") stayed silent after a replug until the keyboard itself was switched off and on:
+  the kernel got no key presses from it (SYSTEM > Diagnostics > KEYBOARD TEST), a USB-level reset also revived it, and the
+  system and display server handled the replug correctly. Considered a quirk of that keyboard. `usb-kick` still re-enumerates
+  such a receiver with growing waits until keys arrive; it did not make that keyboard work by itself.
 
 ## Not yet tried on real hardware
 
-- The A/B system update (it has only run in QEMU), the automatic Wii connect, the sound-quality fix (sample-rate conversion),
-  the newest dashboard screens, a Rii 2.4 GHz keyboard receiver (its keys did nothing; cause unknown), drums in every lane,
+- The automatic Wii connect, the sound-quality fix (sample-rate conversion),
+  some of the newest dashboard screens, drums in every lane,
   the guitar's touch bar, pitch detection from a real microphone, eMMC / SD readers / Intel VMD disks, Secure Boot machines
   (not supported: turn it off), the mini PC.
 - A laptop disk installed with the pre-A/B installer has no second system slot: system updates cannot work there until it is
@@ -33,16 +56,6 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   hours with its old drive removed (each lookup under /media/songs waited 3 s). Measured and fixed in QEMU
   (`tools/test-songdrive.sh`); not yet seen on the real machine. The first scan of newly imported songs from a USB stick may
   still take a while: that is YARG reading thousands of files.
-- First real-hardware report on the Liberty 4 earbuds: they pair, connect, show volume and play the dashboard's test sound; but when
-  YARG starts, the earbuds' AVDTP Open request goes unanswered (bluealsa: "Couldn't set A2DP configuration: Timeout"),
-  YARG's sound start waits ~22 s, and the earbuds AND the Wii guitar disconnect. Meanwhile the dashboard was starting
-  `bluetoothctl` dozens of times a second. Changes since: quiet radio before YARG, a silent probe with speaker fallback, bluealsa
-  keep-alive, far fewer Bluetooth calls (see DESIGN.md), and SYSTEM > Diagnostics. Not yet confirmed to fix it: if guitars
-  still drop while earbuds stream, suspect the laptop's Bluetooth/Wi-Fi chip sharing one radio (a second USB Bluetooth adapter for
-  the earbuds would be the remedy).
-- Bluetooth headphones as the sound output (Anker Soundcore Liberty 4 asked for): built, the config/helper/decision logic is
-  unit-tested and the services/plugin were checked in QEMU (`tools/test-btaudio.sh`), but QEMU has no Bluetooth radio:
-  pairing, the audio link, the delay, and how it shares the radio with two Wii guitars are all untried on real hardware.
 - Volume (the Sound screen's Volume row, the volume keys and Ctrl+Alt+Up/Down/M with the level bar, headset volume through
   bluealsa): unit-tested, and the sound card path and the key grabs checked in QEMU (`tools/test-volume.sh`). Not tried on the
   real laptop (whether its Fn volume keys reach X as media keys; whether Master alone sets the speaker loudness), nor with a
@@ -52,16 +65,19 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   the song drive, YARG's folder list, deleting a folder, a song and everything: all pass). Not tried on real hardware: real
   exFAT/NTFS drives, an SD card, a big library (copy speed, how long reading a 1 TB drive takes before the question),
   cutting the power mid-copy, and the guitar as the only controller.
-- System update on real hardware: the first try, 2026.10.13 -> 2026.10.14 from the USB stick, failed with "Download failed".
+- System update on real hardware (history): the first try, 2026.10.13 -> 2026.10.14 from the USB stick, failed with "Download failed".
   The real cause (seen on the console): "No space left on device": the stick's data partition was still the image's 700 MB (full
   with YARG), so the boot step that grows it to fill the stick had not worked on that stick. Why it did not is NOT known: it
   grows fine in QEMU, on a virtual disk, an NVMe disk and a USB-attached disk. Now: the dashboard notices unused room after the
   data partition, asks the system to use it (once at start, and SYSTEM > Storage > Use the rest of this drive), and the
   updater checks free space first and says so. The updater also retries, resumes, says why it failed, and can install from the
-  song drive. Tested in QEMU (including a boot with the boot-time grow switched off); not yet on the real stick.
-- YARG's "Failed to initialize audio device" on the laptop: the suspected cause (ALSA's default is card 0 device 0, an
-  HDMI-only card on AMD, or the saved card number moved when USB devices came and went) is a guess. Fix written (the
-  output is saved by card id, and one is chosen before YARG starts if the saved one is gone) and unit-tested only.
+  song drive. Tested in QEMU (including a boot with the boot-time grow switched off). Over-the-air updates have worked on that stick
+  since (see above); it was never learned why the boot-time grow did nothing on it, and the offline route (files on the song
+  drive) has not been tried on real hardware.
+- YARG's "Failed to initialize audio device" on the laptop: ALSA's default was card 0 device 0, an HDMI-only card on AMD. Fixed
+  (the output is saved by card id, and one is chosen before YARG starts if the saved one is gone; the speakers are the default,
+  not HDMI): the owner confirmed the default works. One risk remains: both of that laptop's sound cards are named "Generic" /
+  "Generic_1" by the kernel; if their order ever swapped between boots a saved choice could point at the wrong card (not seen).
 - Whether `hid-sony` claims the virtual `12BA:0100` / `12BA:0210` devices on every kernel (fallback: impersonate a Santroller
   device, `1209:2882`).
 - Playing songs with the virtual drums in every lane (pads, cymbals, kick, kick2) and drum velocity for yellow and green
@@ -204,8 +220,9 @@ installed to its internal disk. A BOSGAME E5 Plus mini PC is the intended target
   scan on` output parsed by `parse_scan_wiimotes`) is unit-tested on sample output only: not tried on real hardware.
 - Devices screen: one row per thing YARG can use (keyboards and mice with their USB id, sound cards, MIDI ports, pads);
   a raw USB row only for a device the kernel made nothing of; a keyboard whose receiver has no input device says NO INPUT.
-  The owner's Rii 2.4G keyboard receiver was listed by the old screen but typed nothing: not diagnosed yet (needs the
-  vendor:product id and a check that the keyboard itself is switched on; a standard USB keyboard hot-plugs fine in QEMU).
+  An owner's 2.4G keyboard receiver (24ae:9db6) typed nothing after a hot-plug until the keyboard was switched off and on (see
+  the confirmed list); a standard USB keyboard hot-plugs fine in QEMU and on the laptop. A different, earlier "Rii" receiver that
+  typed nothing was never looked at again.
 - Wii bridge lifetime (QEMU, fake Wiimote): the bridge starts when a Wiimote's HID device appears, is restarted
   two seconds after it dies while the Wiimote is still there, and stops when the Wiimote disconnects
   (`BindsTo` its hidraw device, `Restart=on-failure`). The drum bridge was left as it was.
