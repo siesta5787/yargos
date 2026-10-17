@@ -352,6 +352,12 @@ pub fn ensure_sound() -> Option<String> {
         }
     }
     let _ = ctl_request("sound-prepare");   // (an HDMI output makes no sound until its digital output is switched on)
+    // A headset config written by an older version is not pinned to 44.1 kHz: write it again.
+    if let Some(mac) = parse_asound_bt(&std::fs::read_to_string(ASOUND).unwrap_or_default()) {
+        if std::fs::read_to_string(ASOUND).unwrap_or_default() != asound_text_bt(&mac) {
+            let _ = ctl_request(&format!("sound-bt {mac}"));
+        }
+    }
     // The headset is the output now: wake its audio link up before YARG asks for it, and do not hand YARG a dead one.
     let conf = std::fs::read_to_string(ASOUND).unwrap_or_default();
     let mac = parse_asound_bt(&conf)?;
@@ -457,7 +463,10 @@ pub fn parse_asound_bt(conf: &str) -> Option<String> {
 pub fn asound_text_bt(mac: &str) -> String {
     format!(
         "# Written by the YARGOS dashboard (Sound screen). Delete this file to return to the default output.\n\
-         pcm.!default {{\n    type plug\n    slave.pcm {{\n        type bluealsa\n        device \"{mac}\"\n        profile \"a2dp\"\n    }}\n}}\n"
+         # The slave is pinned to 44.1 kHz stereo so that `plug` converts whatever a program asks for: a program that opens\n\
+         # the output at another rate or channel count makes bluealsa renegotiate the codec with the live headset, which\n\
+         # the earbuds did not answer (25 s hang, then the link dropped).\n\
+         pcm.!default {{\n    type plug\n    slave {{\n        pcm {{\n            type bluealsa\n            device \"{mac}\"\n            profile \"a2dp\"\n        }}\n        rate 44100\n        channels 2\n        format S16_LE\n    }}\n}}\n"
     )
 }
 
@@ -2356,6 +2365,7 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
     fn the_bluetooth_output_config_is_read_back_and_nothing_else_looks_like_one() {
         let c = asound_text_bt("08:DF:1F:AA:BB:CC");
         assert!(c.contains("type bluealsa") && c.contains("profile \"a2dp\"") && c.contains("pcm.!default"));
+        assert!(c.contains("rate 44100") && c.contains("channels 2") && c.contains("format S16_LE"), "the slave is pinned");
         assert_eq!(parse_asound_bt(&c).as_deref(), Some("08:DF:1F:AA:BB:CC"));
         let hw = asound_text(Some("Audio"), 1, 0);
         assert_eq!(parse_asound_bt(&hw), None);

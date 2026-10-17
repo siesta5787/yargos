@@ -178,6 +178,10 @@ Pair a headset in one `bluetoothctl` session WITH an agent (see `bt_connect_audi
 earbuds fail halfway. asound.conf only ever names a headset by a validated address (`ctl::valid_mac`: an ALSA config can load
 programs). `/data/asound.prefer` is the chosen headset; `plan_sound` (before every YARG start) uses it only while connected, else
 a real sound card via `sound-temp`: YARG must always find an existing default output. Never scan for Wiimotes while YARG runs.
+The headset's ALSA slave is pinned to 44.1 kHz / 2 ch / S16 (`asound_text_bt`) and bluealsa runs with `--a2dp-force-audio-cd`:
+a program that opens the output at another rate or channel count makes the bluealsa plugin call SelectCodec, BlueZ closes and
+reopens the live stream, the earbuds did not answer ("No reply to Open request", exactly 25 s later "Couldn't set A2DP
+configuration: Timeout"), YARG's audio start hung 25 s and the link dropped. Never let a program renegotiate a live A2DP stream.
 
 ## Wi-Fi and Bluetooth share a radio
 
