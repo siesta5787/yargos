@@ -1332,7 +1332,7 @@ pub fn update_error(lines: &[String]) -> String {
     }
     let last = lines.last().cloned().unwrap_or_else(|| "it did not finish".into());
     if last.contains("offline") || last.contains("could not read the latest release") {
-        "Could not reach the internet. Choose WI-FI on the main menu, connect, and try again.".into()
+        "Could not reach the internet. Connect Wi-Fi under SYSTEM > Wi-Fi, and try again.".into()
     } else {
         last
     }
@@ -2195,7 +2195,7 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!(parse_update_line("yargos-update: UNPACK 64"), UpdLine::Unpack(64));
         assert_eq!(parse_update_line("yargos-update: STEP unpacking"), UpdLine::Step("unpacking".into()));
         assert_eq!(parse_update_line("yargos-update: downloading 0.15.0"), UpdLine::Text("downloading 0.15.0".into()));
-        assert!(update_error(&["could not read the latest release (offline?)".to_string()]).contains("WI-FI"));
+        assert!(update_error(&["could not read the latest release (offline?)".to_string()]).contains("Wi-Fi"));
         assert_eq!(update_error(&["checksum mismatch".to_string()]), "checksum mismatch");
     }
 
