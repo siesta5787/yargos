@@ -169,15 +169,31 @@ fetch() {
     return 0
 }
 
-# Check the signature of the manifest in $RUN/$name. Sets M (the manifest file) and BASE. Returns 2 if it is not signed by us.
+# Check the signature of the manifest in $MDIR/$name. Sets M (the manifest file) and BASE. Returns 2 if it is not signed by us.
+# Every read of update information (from the server, from the song drive) gets a folder of its own, named after this process
+# and a counter: the dashboard looks at the song drive every few seconds while an update check or install runs, and with one
+# shared file name the check could end up with the manifest of one and the signature of the other ("not signed by us" for a
+# release that is fine). They are removed when the process ends (mclean).
+MSEQ=0
+new_mdir() {
+    mkdir -p "$RUN"
+    chmod 0700 "$RUN"
+    MSEQ=$((MSEQ + 1))
+    MDIR=$RUN/m.$$.$MSEQ
+    rm -rf "$MDIR"
+    mkdir -p "$MDIR"
+}
+mclean() { rm -rf "$RUN"/m.$$.* 2>/dev/null; }
+trap mclean EXIT
+
 verify_manifest() {
     ok=1
     for k in "$KEYS"/*.pem; do
         [ -f "$k" ] || continue
-        if openssl pkeyutl -verify -pubin -inkey "$k" -rawin -in "$RUN/$name" -sigfile "$RUN/$name.sig" >/dev/null 2>&1; then ok=0; break; fi
+        if openssl pkeyutl -verify -pubin -inkey "$k" -rawin -in "$MDIR/$name" -sigfile "$MDIR/$name.sig" >/dev/null 2>&1; then ok=0; break; fi
     done
     [ $ok = 0 ] || { log "the signature of the update information is not valid; ignoring it" >&2; return 2; }
-    M=$RUN/$name
+    M=$MDIR/$name
     BASE=$(jq -r '.base // empty' "$M" 2>/dev/null)
     [ -n "$BASE" ] || BASE=$url
     return 0
@@ -186,8 +202,6 @@ verify_manifest() {
 # Download the manifest and its signature, check the signature. Sets M, BASE and, on failure, FETCH_WHY. Returns 1 if
 # the server could not be used, 2 if the manifest is not signed by us.
 fetch_manifest() {
-    mkdir -p "$RUN"
-    chmod 0700 "$RUN"
     url=$(conf_url)
     name=$(conf_channel).json
     # GitHub's cache can hand out the old copy of one file of the pair for a minute or two after a release (a new
@@ -197,9 +211,9 @@ fetch_manifest() {
     while :; do
         n=$((n + 1))
         bust="?t=$(date +%s)$n"
-        rm -f "${RUN:?}/${name:?}" "${RUN:?}/${name:?}.sig"
-        fetch "$RUN/$name" "$url/$name$bust" 30 || return 1
-        fetch "$RUN/$name.sig" "$url/$name.sig$bust" 30 || return 1
+        new_mdir
+        fetch "$MDIR/$name" "$url/$name$bust" 30 || return 1
+        fetch "$MDIR/$name.sig" "$url/$name.sig$bust" 30 || return 1
         verify_manifest
         rc=$?
         [ $rc = 2 ] && [ $n -lt "${YARGOS_SIG_TRIES:-3}" ] || return $rc
@@ -237,15 +251,13 @@ offline_pick() {
 # Like fetch_manifest, from a folder (OFFLINE_DIR). The same signature check: a file anyone can put on a drive is only
 # believed if we signed it.
 local_manifest() {
-    mkdir -p "$RUN"
-    chmod 0700 "$RUN"
     url=
     name=${OFFLINE_NAME:-$(conf_channel).json}
-    rm -f "${RUN:?}/${name:?}" "${RUN:?}/${name:?}.sig"
+    new_mdir
     # (small files only: /run is memory, and anyone can put anything on a drive)
     [ "$(fsize "$OFFLINE_DIR/$name")" -le 65536 ] && [ "$(fsize "$OFFLINE_DIR/$name.sig")" -le 1024 ] || return 1
-    cp "$OFFLINE_DIR/$name" "$RUN/$name" 2>/dev/null && cp "$OFFLINE_DIR/$name.sig" "$RUN/$name.sig" 2>/dev/null || return 1
-    [ -s "$RUN/$name" ] && [ -s "$RUN/$name.sig" ] || return 1
+    cp "$OFFLINE_DIR/$name" "$MDIR/$name" 2>/dev/null && cp "$OFFLINE_DIR/$name.sig" "$MDIR/$name.sig" 2>/dev/null || return 1
+    [ -s "$MDIR/$name" ] && [ -s "$MDIR/$name.sig" ] || return 1
     verify_manifest
 }
 
@@ -292,6 +304,7 @@ cleanup() {
     mountpoint -q "$RUN/slot" 2>/dev/null && umount "$RUN/slot" 2>/dev/null
     rm -f "$RUN/fifo" "$RUN/sum" "$RUN/pid"
     rmdir "$RUN/slot" 2>/dev/null
+    mclean
     write_status "installing="
 }
 
