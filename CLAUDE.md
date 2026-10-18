@@ -144,6 +144,15 @@ Staged releases: `tools/release.sh VER --github --channel beta` (writes beta.jso
 (beta), then `tools/promote.sh VER --yes` (stable.json is beta.json byte for byte with the same signature; the release stops being a
 pre-release). A plain release (`--channel stable`, the default) goes straight to everyone. GitHub serves release assets through a cache: right after `publish.sh` or `promote.sh` a plain fetch of `stable.json` can still return the old file for a minute or two (promoting 2026.10.28 took about 90 s); check from outside with a retry loop, not once.
 
+## The updater's temporary files
+
+Never give two operations of `yargos-os-update` the same temporary file name: the dashboard runs `find` (looks at the song drive)
+every 4 s on the System updates screen while a check or install fetches the update information. They shared `$RUN/<channel>.json`
+and a check could pair the drive's manifest with the server's signature: "not signed by us" for a good release (21 of 40 checks
+failed in `tools/test-update-race.sh`; the owner met it on a real device). Every read now gets its own `$RUN/m.<pid>.<n>` folder
+(`new_mdir`, removed by `mclean`). The fetch also asks for an address no cache has seen (GitHub's cache lags a minute or two
+after a release) and tries a signature again before believing it is bad (`tools/flaky-server.py`).
+
 ## Version numbers (dates, then 1.0 ...)
 
 Two kinds (entries.sh `version_era`): dates (first number >= 1000, 2026.10.30) and release numbers (1.0, 1.1, 2.0 ...). Every release
