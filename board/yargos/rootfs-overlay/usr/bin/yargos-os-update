@@ -190,10 +190,21 @@ fetch_manifest() {
     chmod 0700 "$RUN"
     url=$(conf_url)
     name=$(conf_channel).json
-    rm -f "${RUN:?}/${name:?}" "${RUN:?}/${name:?}.sig"
-    fetch "$RUN/$name" "$url/$name" 30 || return 1
-    fetch "$RUN/$name.sig" "$url/$name.sig" 30 || return 1
-    verify_manifest
+    # GitHub's cache can hand out the old copy of one file of the pair for a minute or two after a release (a new
+    # manifest with its old signature: "not signed by us" for something that is fine). So each try asks for an address no
+    # cache has seen (a query string GitHub ignores), and a signature that does not fit is tried again before it is believed.
+    n=0
+    while :; do
+        n=$((n + 1))
+        bust="?t=$(date +%s)$n"
+        rm -f "${RUN:?}/${name:?}" "${RUN:?}/${name:?}.sig"
+        fetch "$RUN/$name" "$url/$name$bust" 30 || return 1
+        fetch "$RUN/$name.sig" "$url/$name.sig$bust" 30 || return 1
+        verify_manifest
+        rc=$?
+        [ $rc = 2 ] && [ $n -lt "${YARGOS_SIG_TRIES:-3}" ] || return $rc
+        sleep "${YARGOS_SIG_WAIT:-5}"
+    done
 }
 
 # Choose, among the release files copied onto the song drive by hand, the newest one that can be installed. A release is

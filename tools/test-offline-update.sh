@@ -65,6 +65,20 @@ g "echo OS_UPDATE_URL=http://10.0.2.2:$PORT > /data/yargos.conf" >/dev/null
 has "a missing file says HTTP 404" "HTTP 404" "$(g 'yargos-os-update check 2>&1 | tail -1')"
 has "the screen's status file keeps the reason" "check_why=the update server answered" "$(g 'cat /data/os-update/status')"
 
+echo "== a signature that does not fit yet (GitHub's cache holding an old copy) is asked for again"
+kill $(ps -eo pid,args | awk '/redirect-server.py/ && !/awk/ {print $1}') 2>/dev/null
+(python3 "$HERE/tools/flaky-server.py" "$W/rel" "$PORT" 2 >"$W/http.log" 2>&1 &); sleep 1
+g 'rm -rf /data/os-update' >/dev/null
+out=$(g 'YARGOS_SIG_WAIT=1 yargos-os-update check 2>&1')
+has "two bad signatures in a row, then the check works" "update available: $NEW" "$out"
+eq "it said twice that the signature was not valid" 2 "$(grep -c 'not valid' <<< "$out")"
+kill $(ps -eo pid,args | awk '/flaky-server.py/ && !/awk/ {print $1}') 2>/dev/null
+(python3 "$HERE/tools/flaky-server.py" "$W/rel" "$PORT" 99 >"$W/http.log" 2>&1 &); sleep 1
+out=$(g 'YARGOS_SIG_WAIT=1 yargos-os-update check 2>&1')
+has "a signature that never fits is refused after three tries" "not signed by us" "$out"
+eq "three tries were made" 3 "$(grep -c 'not valid' <<< "$out")"
+kill $(ps -eo pid,args | awk '/flaky-server.py/ && !/awk/ {print $1}') 2>/dev/null
+
 echo "== a download that fails says why, after retrying"
 serve "$W/rel"; mv "$W/rel/rootfs-$NEW.img.xz" "$W/rel-img.xz"   # the manifest is served, the image is not
 out=$(g 'YARGOS_DL_TRIES=2 yargos-os-update install 2>&1 | tail -6')
