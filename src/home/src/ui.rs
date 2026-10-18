@@ -2,7 +2,7 @@
 
 use crate::gfx::{rgb, Canvas, Fonts, Rgb};
 use crate::logo::{draw_logo, GOLD};
-use crate::model::{human_kib, Key, Model, Power, Screen, SongKind, StorageRow, HOME_ITEMS, SYSTEM_ROWS};
+use crate::model::{human_kib, Key, Model, Power, Screen, SongKind, StorageRow, TzRow, HOME_ITEMS, SYSTEM_ROWS};
 
 const TEXT: Rgb = rgb(232, 236, 244);
 const DIM: Rgb = rgb(160, 172, 190);
@@ -129,8 +129,22 @@ fn rows(m: &Model) -> Vec<Row> {
             row("Wi-Fi"),
             Row { tag: os_tag(m).or(if m.upd.available { Some(("NEW", AMBER)) } else { None }), ..row("Updates") },
             row("Storage"),
+            row("Date & time"),
             row("Diagnostics"),
         ],
+        Screen::DateTime => vec![
+            Row { value: if m.tz.is_empty() { String::new() } else { m.tz.replace('_', " ") }, ..row("Time zone") },
+            Row { value: if m.clock24 { "24-hour".into() } else { "12-hour".into() }, ..row("Clock") },
+        ],
+        Screen::TimeZone => m
+            .tz_rows()
+            .into_iter()
+            .map(|r| match r {
+                TzRow::Zone(id, place, note) => Row { value: note, tag: if id == m.tz { Some(("IN USE", GREEN)) } else { None }, ..row(place) },
+                TzRow::Region(r) => row(r),
+                TzRow::More => row("More time zones\u{2026}"),
+            })
+            .collect(),
         Screen::UpdatesMenu => vec![
             Row { tag: os_tag(m), ..row("System updates") },
             Row { tag: if m.upd.available { Some(("NEW", AMBER)) } else { None }, ..row("YARG updates") },
@@ -290,6 +304,26 @@ fn panel(m: &Model) -> (&'static str, Vec<String>) {
             v.extend(m.upd.log.iter().cloned());
             ("YARG UPDATES", v)
         }
+        Screen::DateTime => (
+            "DATE & TIME",
+            vec![
+                format!("Now: {}", if m.clock.is_empty() { "\u{2026}" } else { &m.clock }),
+                format!("Time zone: {}", if m.tz.is_empty() { "\u{2026}".to_string() } else { m.tz.replace('_', " ") }),
+                match m.ntp_synced {
+                    Some(true) => "The clock is set from the internet.".to_string(),
+                    Some(false) => "The clock is not set from the internet yet. It needs a network (Wi-Fi or a cable).".to_string(),
+                    None => String::new(),
+                },
+                "The clock shows in the top corner of every screen.".to_string(),
+            ],
+        ),
+        Screen::TimeZone => (
+            "TIME ZONE",
+            vec![
+                "Choose where the computer is. The common ones come first; More time zones lists every region.".into(),
+                "LEFT and RIGHT jump through a long list.".into(),
+            ],
+        ),
         Screen::UpdatesMenu => (
             "UPDATES",
             vec![
@@ -449,6 +483,8 @@ fn title_of(s: Screen) -> &'static str {
         Screen::Bluetooth => "BLUETOOTH",
         Screen::Updates => "YARG UPDATES",
         Screen::UpdatesMenu => "UPDATES",
+        Screen::DateTime => "DATE & TIME",
+        Screen::TimeZone => "TIME ZONE",
         Screen::Songs => "SONG DRIVE",
         Screen::System => "SYSTEM",
         Screen::Devices => "DEVICES",
@@ -496,11 +532,19 @@ pub fn draw(cv: &mut Canvas, fonts: &mut Fonts, m: &Model, hits: &mut Vec<Hit>) 
         draw_list_screen(cv, fonts, m, u, hits);
     }
 
+    // The date and time, in the top right corner of every screen.
+    if !m.clock.is_empty() {
+        let px = 24.0 * u;
+        let tw = fonts.width(&m.clock, px, false);
+        fonts.draw(cv, &m.clock, w - 56.0 * u - tw, 44.0 * u, px, false, TEXT, 0.85);
+    }
+
     // Controls hint.
     let hint = match m.screen {
         Screen::Password => "Arrows: move    OK: type the key    BACK: cancel    A keyboard works too",
         Screen::Diag => "\u{25C0} \u{25B6} Report     \u{25B2}\u{25BC} Scroll     OK Read again     BACK Return",
         Screen::Manage => "\u{25B2}\u{25BC} Move     OK Open     \u{25C0} Delete     BACK Up",
+        Screen::TimeZone => "\u{25B2}\u{25BC} Move     \u{25C0} \u{25B6} Jump     OK Select     BACK Return",
         _ => "\u{25B2}\u{25BC} Move     OK Select     BACK Return",
     };
     fonts.draw_centered(cv, hint, w / 2.0, cv.h as f32 - 50.0 * u, 18.0 * u, false, DIM, 0.8);

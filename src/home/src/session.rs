@@ -96,6 +96,22 @@ fn spawn_wii_auto(tx: Sender<Event>, active: Arc<AtomicBool>) {
     });
 }
 
+/// The corner clock: its text is read every few seconds (`date`, in the chosen time zone) and sent when it changed.
+fn spawn_clock(tx: Sender<Event>) {
+    std::thread::spawn(move || {
+        sys::tz_apply_saved();
+        let mut last = String::new();
+        loop {
+            let t = sys::clock_text();
+            if !t.is_empty() && t != last {
+                last = t.clone();
+                res(&tx, Res::Clock(t));
+            }
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    });
+}
+
 /// Watch the Wii guitars' batteries (the bridge writes them): tell the main loop once when one runs low. Reading a few
 /// small files is all this does: it never talks to the guitars.
 fn spawn_battery_watch(tx: Sender<Event>) {
@@ -245,6 +261,24 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Status(sys::status(&sys::sound_label(), &upd)));
             }),
             Cmd::OsChannel(beta) => bg(tx, move |tx| done(tx, sys::write_os_channel(beta))),
+            Cmd::Refresh(Screen::DateTime) => bg(tx, |tx| {
+                res(tx, Res::TimeInfo { tz: sys::tz_current(), synced: sys::ntp_synced() });
+                res(tx, Res::Clock(sys::clock_text()));
+            }),
+            Cmd::Refresh(Screen::TimeZone) => bg(tx, |tx| {
+                res(tx, Res::TimeInfo { tz: sys::tz_current(), synced: sys::ntp_synced() });
+                res(tx, Res::Zones(sys::zone_list()));
+            }),
+            Cmd::TzSet(id) => bg(tx, move |tx| {
+                let r = sys::tz_set(&id);
+                res(tx, Res::TzDone(r));
+                res(tx, Res::TimeInfo { tz: sys::tz_current(), synced: sys::ntp_synced() });
+                res(tx, Res::Clock(sys::clock_text()));
+            }),
+            Cmd::ClockFormat(on) => bg(tx, move |tx| {
+                done(tx, sys::write_clock24(on));
+                res(tx, Res::Clock(sys::clock_text()));
+            }),
             Cmd::VenuesScan => bg(tx, |tx| res(tx, Res::VenuesPlan(sys::venues_plan()))),
             Cmd::VenuesRun => bg(tx, |tx| {
                 let r = sys::venues_add(|t| res(tx, Res::Progress(t)));
@@ -402,6 +436,9 @@ pub fn run() -> i32 {
             }
         }
     });
+
+    // The clock in the corner (and the time zone chosen before, applied first).
+    spawn_clock(tx.clone());
 
     // Wi-Fi switched off before stays off.
     bg(&tx, |_| sys::wifi_apply_saved());

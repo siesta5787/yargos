@@ -62,6 +62,7 @@ pub fn parse(line: &str) -> Option<Request> {
         "os-find" => Some(Request::Os("find")),
         "grow-data" => Some(Request::Fixed("/usr/lib/yargos/growdata.sh", &[])),
         "volume-save" => Some(Request::Fixed("alsactl", &["store"])),
+        "timezone-apply" => Some(Request::Fixed("/usr/lib/yargos/timezone.sh", &[])),
         "os-update-offline" => Some(Request::Os("install-offline")),
         "songs-umount" => Some(Request::SongsUmount),
         "sound-prepare" => Some(Request::SoundPrepare),
@@ -274,6 +275,8 @@ mod tests {
         assert_eq!(parse("diag-yarg"), Some(Request::Diag("yarg")));
         assert_eq!(parse("diag-system"), Some(Request::Diag("system")));
         assert_eq!(parse("diag-keys"), Some(Request::Diag("keys")));
+        assert_eq!(parse("timezone-apply"), Some(Request::Fixed("/usr/lib/yargos/timezone.sh", &[])));
+        assert_eq!(parse("timezone-apply America/New_York"), None);
         assert_eq!(parse("diag-other"), None);
         assert_eq!(parse("diag-sound x"), None);
         assert_eq!(parse("diag-"), None);

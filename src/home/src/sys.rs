@@ -1827,6 +1827,90 @@ pub fn os_info() -> OsInfo {
     info
 }
 
+// ---- date and time -----------------------------------------------------------------------------
+
+/// 24-hour clock? `CLOCK24=yes` in /data/yargos.conf (the default is the 12-hour clock with AM/PM).
+pub fn clock24() -> bool {
+    std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| c.lines().any(|l| l.trim() == "CLOCK24=yes")).unwrap_or(false)
+}
+
+pub fn write_clock24(on: bool) -> Result<String, String> {
+    write_conf_flag("CLOCK24", on)?;
+    Ok(format!("Clock set to {}", if on { "24-hour" } else { "12-hour" }))
+}
+
+/// The strftime format of the clock in the corner: "Sun Oct 18  9:41 PM" or "Sun Oct 18  21:41".
+pub fn clock_format(use24: bool) -> &'static str {
+    if use24 { "+%a %b %-d  %H:%M" } else { "+%a %b %-d  %-I:%M %p" }
+}
+
+/// The date and time now in the chosen time zone, as the corner clock shows it (empty if `date` does not answer).
+pub fn clock_text() -> String {
+    run("date", &[clock_format(clock24())]).map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
+/// The time zone the system uses now: /etc/timezone, else where /etc/localtime points.
+pub fn tz_current() -> String {
+    if let Ok(t) = std::fs::read_to_string("/etc/timezone") {
+        if !t.trim().is_empty() {
+            return t.trim().to_string();
+        }
+    }
+    std::fs::read_link("/etc/localtime").ok().and_then(|p| p.to_string_lossy().split("zoneinfo/").nth(1).map(String::from)).unwrap_or_else(|| "Etc/UTC".into())
+}
+
+/// `zone.tab` ("CC<TAB>coordinates<TAB>Region/City<TAB>comment") -> the zones, by id.
+pub fn parse_zone_tab(text: &str) -> Vec<TzEntry> {
+    let mut v: Vec<TzEntry> = text
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            let id = f.get(2)?.trim();
+            let (region, rest) = id.split_once('/')?;
+            if region.is_empty() || rest.is_empty() || !valid_zone_id(id) {
+                return None;
+            }
+            Some(TzEntry { id: id.to_string(), place: rest.replace('_', " ").replace('/', " / "), note: f.get(3).map(|c| c.trim().to_string()).unwrap_or_default() })
+        })
+        .collect();
+    v.sort_by(|a, b| a.id.cmp(&b.id));
+    v.dedup_by(|a, b| a.id == b.id);
+    v
+}
+
+/// A time zone name the system helper would accept: letters, digits and _ + - / only, no "..", nothing absolute.
+pub fn valid_zone_id(id: &str) -> bool {
+    !id.is_empty() && !id.starts_with('/') && !id.contains("..") && id.chars().all(|c| c.is_ascii_alphanumeric() || "_+-/".contains(c))
+}
+
+pub fn zone_list() -> Vec<TzEntry> {
+    parse_zone_tab(&std::fs::read_to_string("/usr/share/zoneinfo/zone.tab").unwrap_or_default())
+}
+
+/// Choose the time zone: kept in /data/yargos.conf (it survives system updates) and applied by the root helper.
+pub fn tz_set(id: &str) -> Result<String, String> {
+    if !valid_zone_id(id) || !std::path::Path::new("/usr/share/zoneinfo").join(id).is_file() {
+        return Err(format!("{id} is not a time zone this system knows"));
+    }
+    write_conf_value("TIMEZONE", id)?;
+    ctl_request("timezone-apply").map_err(|e| format!("Could not set the time zone: {e}"))?;
+    Ok(format!("Time zone: {}", id.replace('_', " ")))
+}
+
+/// At start-up: the chosen time zone (if any) is applied again, the system folder starts every update with UTC.
+pub fn tz_apply_saved() {
+    let has = std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| c.lines().any(|l| l.trim().starts_with("TIMEZONE="))).unwrap_or(false);
+    if has {
+        let _ = ctl_request("timezone-apply");
+    }
+}
+
+/// Is the clock set from the internet? (`timedatectl show -p NTPSynchronized`)
+pub fn ntp_synced() -> Option<bool> {
+    run("timedatectl", &["show", "-p", "NTPSynchronized", "--value"]).ok().map(|o| o.trim() == "yes")
+}
+
 /// Does this device follow the beta channel (test versions before everyone else)? `OS_CHANNEL=beta` in /data/yargos.conf.
 pub fn os_channel_beta() -> bool {
     std::fs::read_to_string(format!("{DATA}/yargos.conf")).map(|c| c.lines().any(|l| l.trim() == "OS_CHANNEL=beta")).unwrap_or(false)
@@ -2348,6 +2432,23 @@ I: Bus=0005 Vendor=046d Product=b34e Version=0001\nN: Name=\"BT Keys\"\nH: Handl
         assert_eq!(parse_powered(on), Some(true));
         assert_eq!(parse_powered(off), Some(false));
         assert_eq!(parse_powered("no such device"), None);
+    }
+
+    #[test]
+    fn time_zones_come_from_zone_tab_and_are_checked() {
+        let tab = "# comment\nUS\t+404251-0740023\tAmerica/New_York\tEastern (most areas)\nUS\t+415100-0873900\tAmerica/Chicago\tCentral (most areas)\nAR\t-3436-05827\tAmerica/Argentina/Buenos_Aires\tBuenos Aires (BA, CF)\nJP\t+353916+1394441\tAsia/Tokyo\t\nXX\t+0000+0000\tbad zone\nZZ\t+0\t../etc/passwd\tx\n";
+        let z = parse_zone_tab(tab);
+        let ids: Vec<&str> = z.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["America/Argentina/Buenos_Aires", "America/Chicago", "America/New_York", "Asia/Tokyo"]);
+        assert_eq!(z[2].place, "New York");
+        assert_eq!(z[2].note, "Eastern (most areas)");
+        assert_eq!(z[0].place, "Argentina / Buenos Aires");
+        assert!(valid_zone_id("America/New_York") && valid_zone_id("Etc/GMT+5"));
+        for bad in ["", "/etc/passwd", "../x", "a/../b", "America/New York", "a;b", "a\nb"] {
+            assert!(!valid_zone_id(bad), "{bad:?}");
+        }
+        assert_eq!(clock_format(false), "+%a %b %-d  %-I:%M %p");
+        assert_eq!(clock_format(true), "+%a %b %-d  %H:%M");
     }
 
     #[test]

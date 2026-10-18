@@ -29,6 +29,11 @@ fn main() {
         Some("volume") => sys::volume_cli(args.get(2).map(String::as_str).unwrap_or("get")),
         Some("wiicheck") => sys::wiicheck(args.get(2).map(String::as_str)),
         Some("xfocus") => x::xfocus(),
+        Some("clock") => {
+            // what the corner clock shows now (a shell check, and tests)
+            println!("{}", sys::clock_text());
+            0
+        }
         Some("screenshot") => {
             let name = args.get(2).map(String::as_str).unwrap_or("home");
             let out = args.get(3).map(String::as_str).unwrap_or("/tmp/yargos-home.png");

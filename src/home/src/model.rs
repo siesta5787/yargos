@@ -34,6 +34,10 @@ pub enum Screen {
     System,
     /// SYSTEM > Updates: the choice between the system's updates and YARG's.
     UpdatesMenu,
+    /// SYSTEM > Date & time: the time zone and the clock's format.
+    DateTime,
+    /// Choose the time zone: common ones first, then every region and its places.
+    TimeZone,
     Install,
     Devices,
     /// The system (YARG OS itself): check for, install and go back from an over-the-air update.
@@ -49,6 +53,44 @@ pub enum Screen {
     /// Browse the internal songs and delete a song, a folder or everything.
     Manage,
 }
+
+/// One time zone: its name ("America/New_York"), the place as shown ("New York") and zone.tab's remark ("Eastern (most areas)").
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TzEntry {
+    pub id: String,
+    pub place: String,
+    pub note: String,
+}
+
+/// Where the time zone chooser is: the common zones, the regions, or the places of one region.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TzStage {
+    Common,
+    Regions,
+    Places(String),
+}
+
+/// A row of the time zone chooser.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TzRow {
+    /// A time zone to choose: id, text, remark.
+    Zone(String, String, String),
+    Region(String),
+    /// "More time zones..." on the common list.
+    More,
+}
+
+/// The time zones most people want, first: (id, text, remark).
+pub const COMMON_ZONES: [(&str, &str, &str); 8] = [
+    ("America/New_York", "Eastern", "New York, Toronto"),
+    ("America/Chicago", "Central", "Chicago, Mexico City"),
+    ("America/Denver", "Mountain", "Denver"),
+    ("America/Phoenix", "Arizona", "no daylight saving"),
+    ("America/Los_Angeles", "Pacific", "Los Angeles, Vancouver"),
+    ("America/Anchorage", "Alaska", "Anchorage"),
+    ("Pacific/Honolulu", "Hawaii", "Honolulu"),
+    ("Etc/UTC", "UTC", "universal time"),
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Network {
@@ -257,6 +299,10 @@ pub enum Cmd {
     VenuesRun,
     /// Delete the venue files in YARG's venue folder.
     VenuesRemove,
+    /// Choose this time zone ("America/New_York").
+    TzSet(String),
+    /// 24-hour clock (true) or 12-hour (false).
+    ClockFormat(bool),
     /// Follow the beta channel (true: test versions) or only the stable one (false).
     OsChannel(bool),
     /// Look on the song drive again for a system update (the dashboard asks again every few seconds while the screen is open).
@@ -363,6 +409,14 @@ pub enum Res {
     Wifi { dev: Option<String>, nets: Vec<Network> },
     /// Is the Wi-Fi adapter on?
     WifiPower(bool),
+    /// The corner clock's text.
+    Clock(String),
+    /// The time zone in use and whether the clock is set from the internet.
+    TimeInfo { tz: String, synced: Option<bool> },
+    /// Every time zone the system knows (zone.tab).
+    Zones(Vec<TzEntry>),
+    /// A time zone was chosen: the message, or what went wrong.
+    TzDone(Result<String, String>),
     /// The venue files found on the song drive, or why there are none.
     VenuesPlan(Result<crate::venues::VenuePlan, String>),
     /// Venues were added or removed: the message to show, or what went wrong.
@@ -500,8 +554,8 @@ impl Osk {
 
 pub const HOME_ITEMS: [&str; 5] = ["PLAY YARG", "SOUND", "BLUETOOTH", "CONNECTED DEVICES", "SYSTEM"];
 
-/// SYSTEM: four rows (Wi-Fi, Updates, Storage, Diagnostics), then the two power icons: Restart, Shut down.
-pub const SYSTEM_ROWS: usize = 4;
+/// SYSTEM: five rows (Wi-Fi, Updates, Storage, Date & time, Diagnostics), then the two power icons: Restart, Shut down.
+pub const SYSTEM_ROWS: usize = 5;
 
 /// The busy text while "Install from the song drive" looks at the drive again.
 pub const LOOKING_ON_DRIVE: &str = "Looking on the song drive\u{2026}";
@@ -533,6 +587,14 @@ pub struct Model {
     /// YARG release zips on the song drive (full paths).
     pub yarg_zips: Vec<String>,
     pub storage: StorageInfo,
+    /// The date and time as the corner clock shows it ("Sun Oct 18  9:41 PM"); empty until it is read.
+    pub clock: String,
+    pub clock24: bool,
+    /// The time zone in use ("America/New_York") and whether the clock is set from the internet.
+    pub tz: String,
+    pub ntp_synced: Option<bool>,
+    pub tz_zones: Vec<TzEntry>,
+    pub tz_stage: TzStage,
     /// The Wi-Fi screen was opened from the YARG install screen (BACK returns there, not to SYSTEM).
     wifi_from_yarg: bool,
     pub drives: Vec<ImportDrive>,
@@ -589,6 +651,12 @@ impl Model {
             yarg_zips: vec![],
             storage: StorageInfo::default(),
             wifi_from_yarg: false,
+            clock: String::new(),
+            clock24: false,
+            tz: String::new(),
+            ntp_synced: None,
+            tz_zones: vec![],
+            tz_stage: TzStage::Common,
             drives: vec![],
             browse: Browse::default(),
             back_to: None,
@@ -642,6 +710,8 @@ impl Model {
             Screen::Bluetooth => 1 + self.bt.len(),
             Screen::Updates => 4,
             Screen::UpdatesMenu => 2,
+            Screen::DateTime => 2,
+            Screen::TimeZone => self.tz_rows().len(),
             Screen::Songs => 2 + usize::from(self.songs.mounted),
             Screen::System => SYSTEM_ROWS + 2,
             Screen::Diag => 0,
@@ -653,6 +723,28 @@ impl Model {
             Screen::Yarg => 3,
             Screen::Install => if self.installed.is_some() { 2 } else { 1 + self.disks.len() },
             Screen::Password => 0,
+        }
+    }
+
+    /// The rows of the time zone chooser at its stage.
+    pub fn tz_rows(&self) -> Vec<TzRow> {
+        match &self.tz_stage {
+            TzStage::Common => {
+                let mut v: Vec<TzRow> = COMMON_ZONES.iter().map(|(id, p, n)| TzRow::Zone(id.to_string(), p.to_string(), n.to_string())).collect();
+                v.push(TzRow::More);
+                v
+            }
+            TzStage::Regions => {
+                let mut regions: Vec<String> = self.tz_zones.iter().filter_map(|z| z.id.split_once('/').map(|(r, _)| r.to_string())).collect();
+                regions.dedup();
+                regions.into_iter().map(TzRow::Region).collect()
+            }
+            TzStage::Places(r) => self
+                .tz_zones
+                .iter()
+                .filter(|z| z.id.split_once('/').is_some_and(|(reg, _)| reg == r))
+                .map(|z| TzRow::Zone(z.id.clone(), z.place.clone(), z.note.clone()))
+                .collect(),
         }
     }
 
@@ -875,7 +967,22 @@ impl Model {
             Nav::Left | Nav::Right | Nav::Up | Nav::Down | Nav::Ok | Nav::Submit if self.screen == Screen::Diag => return self.handle_diag(nav),
             Nav::Back => match self.screen {
                 Screen::Home => {}
-                Screen::Diag => return self.back_to(Screen::System, 3),
+                Screen::Diag => return self.back_to(Screen::System, 4),
+                Screen::DateTime => return self.back_to(Screen::System, 3),
+                Screen::TimeZone => {
+                    match self.tz_stage.clone() {
+                        TzStage::Places(_) => {
+                            self.tz_stage = TzStage::Regions;
+                            self.sel = 0;
+                        }
+                        TzStage::Regions => {
+                            self.tz_stage = TzStage::Common;
+                            self.sel = COMMON_ZONES.len();
+                        }
+                        TzStage::Common => return self.back_to(Screen::DateTime, 0),
+                    }
+                    return vec![];
+                }
                 Screen::ImportPick => return self.enter(Screen::Storage),
                 Screen::Manage => return self.manage_up(),
                 Screen::Storage => return self.back_to(Screen::System, 2),
@@ -977,6 +1084,12 @@ impl Model {
     /// Left/Right on a row: volume, forgetting a Bluetooth device, deleting an internal song or folder.
     fn adjust(&mut self, right: bool) -> Vec<Cmd> {
         match self.screen {
+            Screen::TimeZone => {
+                // LEFT/RIGHT page through a long list of places
+                let last = self.row_count().saturating_sub(1);
+                self.sel = if right { (self.sel + 7).min(last) } else { self.sel.saturating_sub(7) };
+                vec![]
+            }
             Screen::Manage if !right && self.sel >= 1 => {
                 self.ask_delete(Some(self.sel - 1));
                 vec![]
@@ -1147,7 +1260,33 @@ impl Model {
             }
             Screen::System if self.sel == 1 => self.enter(Screen::UpdatesMenu),
             Screen::System if self.sel == 2 => self.enter(Screen::Storage),
-            Screen::System if self.sel == 3 => {
+            Screen::System if self.sel == 3 => self.enter(Screen::DateTime),
+            Screen::DateTime => {
+                if self.sel == 0 {
+                    self.tz_stage = TzStage::Common;
+                    return self.enter(Screen::TimeZone);
+                }
+                self.clock24 = !self.clock24;
+                vec![Cmd::ClockFormat(self.clock24)]
+            }
+            Screen::TimeZone => match self.tz_rows().get(self.sel).cloned() {
+                Some(TzRow::Zone(id, place, _)) => {
+                    self.busy = Some(format!("Setting the time zone to {place}\u{2026}"));
+                    vec![Cmd::TzSet(id)]
+                }
+                Some(TzRow::More) => {
+                    self.tz_stage = TzStage::Regions;
+                    self.sel = 0;
+                    vec![]
+                }
+                Some(TzRow::Region(r)) => {
+                    self.tz_stage = TzStage::Places(r);
+                    self.sel = 0;
+                    vec![]
+                }
+                None => vec![],
+            },
+            Screen::System if self.sel == 4 => {
                 self.diag = vec![];
                 self.diag_page = 0;
                 self.diag_top = 0;
@@ -1312,6 +1451,29 @@ impl Model {
                     self.alert_ack = true;
                 }
                 self.status = s;
+            }
+            Res::Clock(text) => self.clock = text,
+            Res::TimeInfo { tz, synced } => {
+                self.tz = tz;
+                self.ntp_synced = synced;
+                self.loading = false;
+            }
+            Res::Zones(z) => {
+                self.tz_zones = z;
+                self.loading = false;
+                self.sel = self.sel.min(self.row_count().saturating_sub(1));
+            }
+            Res::TzDone(r) => {
+                self.busy = None;
+                match r {
+                    Ok(msg) => {
+                        self.toast(msg);
+                        self.screen = Screen::DateTime;
+                        self.sel = 0;
+                        self.tz_stage = TzStage::Common;
+                    }
+                    Err(e) => self.alert = Some(e),
+                }
             }
             Res::OsOffline { offline, hint } => {
                 let looking = self.busy.as_deref() == Some(LOOKING_ON_DRIVE);
@@ -1630,37 +1792,109 @@ mod tests {
     }
 
     #[test]
+    fn date_and_time_has_the_time_zone_chooser_and_the_clock_format() {
+        let mut m = Model::new();
+        m.screen = Screen::System;
+        m.sel = 3;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::DateTime)]);
+        assert_eq!(m.screen, Screen::DateTime);
+        m.apply(Res::TimeInfo { tz: "America/New_York".into(), synced: Some(true) });
+        assert_eq!(m.tz, "America/New_York");
+        // the clock's format is a switch
+        m.sel = 1;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::ClockFormat(true)]);
+        assert!(m.clock24);
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::ClockFormat(false)]);
+        m.apply(Res::Clock("Sun Oct 18  9:41 PM".into()));
+        assert_eq!(m.clock, "Sun Oct 18  9:41 PM");
+        // the chooser: the common zones, then "More time zones", the regions, a region's places
+        m.sel = 0;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::TimeZone)]);
+        m.apply(Res::Zones(vec![
+            TzEntry { id: "America/Chicago".into(), place: "Chicago".into(), note: "Central".into() },
+            TzEntry { id: "America/New_York".into(), place: "New York".into(), note: String::new() },
+            TzEntry { id: "Asia/Tokyo".into(), place: "Tokyo".into(), note: String::new() },
+        ]));
+        assert_eq!(m.row_count(), COMMON_ZONES.len() + 1);
+        m.sel = COMMON_ZONES.len();
+        assert!(m.handle(Nav::Ok).is_empty());
+        assert_eq!(m.tz_stage, TzStage::Regions);
+        assert_eq!(m.tz_rows(), vec![TzRow::Region("America".into()), TzRow::Region("Asia".into())]);
+        m.sel = 0;
+        m.handle(Nav::Ok);
+        assert_eq!(m.tz_stage, TzStage::Places("America".into()));
+        assert_eq!(m.row_count(), 2);
+        // LEFT/RIGHT jump through a long list
+        m.handle(Nav::Right);
+        assert_eq!(m.sel, 1, "it stops at the end");
+        m.handle(Nav::Left);
+        assert_eq!(m.sel, 0);
+        // choosing a place sets the zone and returns to Date & time
+        m.sel = 1;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::TzSet("America/New_York".into())]);
+        assert!(m.busy.is_some());
+        m.apply(Res::TzDone(Ok("Time zone: America/New York".into())));
+        assert!(m.busy.is_none() && m.screen == Screen::DateTime && m.tz_stage == TzStage::Common);
+        assert!(m.live_toast().unwrap().contains("Time zone"));
+        // a failure is an alert
+        m.apply(Res::TzDone(Err("nope".into())));
+        assert!(m.alert.is_some());
+        m.alert = None;
+        // BACK walks up: places -> regions -> common -> Date & time -> SYSTEM on its row
+        m.sel = 0;
+        m.handle(Nav::Ok);
+        m.tz_stage = TzStage::Places("Asia".into());
+        m.handle(Nav::Back);
+        assert_eq!(m.tz_stage, TzStage::Regions);
+        m.handle(Nav::Back);
+        assert_eq!((m.tz_stage.clone(), m.sel), (TzStage::Common, COMMON_ZONES.len()));
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::DateTime)]);
+        assert_eq!(m.screen, Screen::DateTime);
+        assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
+        assert_eq!((m.screen, m.sel), (Screen::System, 3));
+    }
+
+    #[test]
+    fn a_common_time_zone_is_one_press_away() {
+        let mut m = Model::new();
+        m.screen = Screen::TimeZone;
+        m.sel = 4;
+        assert_eq!(m.tz_rows()[4], TzRow::Zone("America/Los_Angeles".into(), "Pacific".into(), "Los Angeles, Vancouver".into()));
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::TzSet("America/Los_Angeles".into())]);
+    }
+
+    #[test]
     fn the_power_icons_are_one_stop_below_the_system_rows() {
         let mut m = Model::new();
         m.screen = Screen::System;
-        assert_eq!(m.row_count(), 6);
-        for want in [1, 2, 3, 4] {
+        assert_eq!(m.row_count(), 7);
+        for want in [1, 2, 3, 4, 5] {
             m.handle(Nav::Down);
             assert_eq!(m.sel, want);
         }
         // on the icons: Left/Right choose, Up returns to the last row, Down wraps to the top
         m.handle(Nav::Right);
-        assert_eq!(m.sel, 5);
+        assert_eq!(m.sel, 6);
         m.handle(Nav::Right);
-        assert_eq!(m.sel, 4, "it toggles between the two");
+        assert_eq!(m.sel, 5, "it toggles between the two");
         m.handle(Nav::Right);
         m.handle(Nav::Up);
-        assert_eq!(m.sel, 3, "from either icon UP is the last row");
+        assert_eq!(m.sel, 4, "from either icon UP is the last row");
         m.handle(Nav::Down);
         m.handle(Nav::Down);
         assert_eq!(m.sel, 0, "DOWN from the icons wraps to the first row");
         m.handle(Nav::Up);
-        assert_eq!(m.sel, 4, "UP from the first row reaches the icons");
+        assert_eq!(m.sel, 5, "UP from the first row reaches the icons");
         // OK on an icon asks first
         assert!(m.handle(Nav::Ok).is_empty());
         assert_eq!(m.confirm, Some(Power::Restart));
         m.confirm = None;
-        m.sel = 5;
+        m.sel = 6;
         m.handle(Nav::Ok);
         assert_eq!(m.confirm, Some(Power::Shutdown));
         // a click on an icon does the same
         m.confirm = None;
-        assert!(m.click(4).is_empty());
+        assert!(m.click(5).is_empty());
         assert_eq!(m.confirm, Some(Power::Restart));
     }
 
@@ -1802,7 +2036,7 @@ mod tests {
     fn power_actions_need_confirmation() {
         let mut m = Model::new();
         m.screen = Screen::System;
-        m.sel = 5;
+        m.sel = 6;
         assert!(m.handle(Nav::Ok).is_empty());
         assert_eq!(m.confirm, Some(Power::Shutdown));
         // Default choice is Cancel.
@@ -2062,7 +2296,7 @@ mod tests {
     fn diagnostics_pages_are_read_changed_scrolled_and_left_with_back() {
         let mut m = Model::new();
         m.screen = Screen::System;
-        m.sel = 3;
+        m.sel = 4;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Diag)]);
         assert_eq!(m.screen, Screen::Diag);
         m.apply(Res::Diag { page: 0, lines: (0..40).map(|i| format!("line {i}")).collect() });
@@ -2082,7 +2316,7 @@ mod tests {
         assert_eq!(m.handle(Nav::Left), vec![Cmd::DiagLoad(4)], "it wraps round");
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::DiagLoad(4)], "OK reads it again");
         assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::System)]);
-        assert_eq!((m.screen, m.sel), (Screen::System, 3));
+        assert_eq!((m.screen, m.sel), (Screen::System, 4));
     }
 
     #[test]

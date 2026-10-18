@@ -57,6 +57,13 @@ pub fn model(name: &str) -> Model {
         Disk { path: "/dev/sdb".into(), bytes: 1_000_204_886_016, model: "Samsung Portable SSD".into(), removable: true },
     ];
     m.tick = 3;
+    m.clock = "Sun Oct 18  9:41 PM".into();
+    m.tz = "America/New_York".into();
+    m.ntp_synced = Some(true);
+    m.tz_zones = ["America/Argentina/Buenos_Aires", "America/Chicago", "America/New_York", "America/Sao_Paulo", "Asia/Tokyo", "Europe/London", "Europe/Paris", "Pacific/Auckland"]
+        .iter()
+        .map(|id| TzEntry { id: id.to_string(), place: id.split_once('/').unwrap().1.replace('_', " ").replace('/', " / "), note: String::new() })
+        .collect();
     m.storage = StorageInfo { used_kib: 46_000_000, free_kib: 180_000_000, total_kib: 235_000_000, reserve_kib: 4_000_000, folders: 2, slack_kib: 0, on_stick: true, venues: 3 };
     m.drives = vec![
         ImportDrive { dev: "/dev/sdb1".into(), label: "YARGSONGS".into(), fs: "EXFAT".into(), bytes: 931_000_000_000, uuid: "1234-ABCD".into() },
@@ -91,6 +98,10 @@ pub fn model(name: &str) -> Model {
             ];
         }
         "storage" => { m.screen = Screen::Storage; m.sel = 1; }
+        "datetime" => { m.screen = Screen::DateTime; m.sel = 0; }
+        "timezone" => { m.screen = Screen::TimeZone; m.sel = 2; }
+        "timezone-regions" => { m.screen = Screen::TimeZone; m.tz_stage = TzStage::Regions; m.sel = 1; }
+        "timezone-places" => { m.screen = Screen::TimeZone; m.tz_stage = TzStage::Places("America".into()); }
         "storage-internal" => { m.screen = Screen::Storage; m.storage.on_stick = false; }
         "storage-slack" => {
             m.screen = Screen::Storage;
