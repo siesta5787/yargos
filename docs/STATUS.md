@@ -45,6 +45,11 @@ latest tests below (over-the-air updates, HDMI sound, Bluetooth earbuds, USB key
 
 ## Not yet tried on real hardware
 
+- The corner clock and SYSTEM > Date & time: `tools/test-clock.sh` drives the real dashboard in QEMU (the clock text, choosing Pacific,
+  the 24-hour switch, the zone coming back after a restart with a fresh /etc, the helper refusing odd names, the time sync service
+  running). Not seen on the mini PC: whether the time sync reaches a time server over the real Wi-Fi, and how the PC's own clock (UTC or
+  local time from a former Windows install) looks before it syncs.
+
 - Importing venues from the song drive (SYSTEM > Storage): `tools/test-venues.sh` drives the real dashboard in QEMU (nested folder,
   link and text file left behind, owner, repeat, remove). The copy and the folder were never tried with real YARG: that YARG
   loads `.yarground` files from `<persistent data path>/venue` was read in its source (`VenueLoader.cs`, `PathHelper.cs`), not seen

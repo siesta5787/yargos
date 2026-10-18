@@ -228,6 +228,13 @@ and KB/s (`PROGRESS percent MB-done MB-total KB/s`). Never add a download withou
 `bluealsa-cli volume` (software volume; the model marks it `BT_VOLUME`). The session grabs the volume keys on the root window
 (`x::grab_volume_keys`) so YARG does not get them; the level shows in the banner window. HDMI has no mixer on purpose.
 
+## Clock and time zone
+
+The corner clock is `Model.clock`, text from `date` (`sys::clock_text`, format by `CLOCK24=yes`) read every 5 s by `spawn_clock` and drawn
+on every screen by `ui::draw`. The time zone is `TIMEZONE=<zone>` in /data/yargos.conf (player-owned: root only reads it as text) and
+`usr/lib/yargos/timezone.sh` (helper word `timezone-apply`) links /etc/localtime into /usr/share/zoneinfo after checking the name:
+never widen that. A system update brings a UTC /etc, so the dashboard applies the saved zone at every start. `tools/test-clock.sh`.
+
 ## Venues
 
 YARG reads venues from `<persistent data path>/venue` (= `/data/yarg/venue`, we start it with `-persistent-data-path /data/yarg`):

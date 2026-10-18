@@ -39,6 +39,10 @@ updates itself like a console.
   own disk, so the songs are there without the drive. Imported songs become YARG song sources like the song drive does,
   and a song, a folder or everything can be deleted again from the same screen, all with a game controller. No formatting:
   the songs go in a folder on the data partition, which already fills the disk; the last few GB stay free for the system.
+- **Clock:** the date and time show in the top right corner of every screen. SYSTEM > Date & time chooses the time zone (the
+  common US ones first, then every region and place; LEFT/RIGHT jump through a long list) and 12-hour or 24-hour. The time is
+  set from the internet (systemd-timesyncd) once there is a network; the zone is kept on the data partition, so it survives
+  system updates.
 - **Venues:** SYSTEM > Storage > *Import venues from the song drive* copies the venue files (`.yarground`, or video and
   picture backgrounds) from a folder called `venues` on the song drive (the YARC Launcher's `Venues/<id>/installation/` layout
   works too) into YARG's venue folder; *Remove added venues* deletes them again. YARG picks one at random for each song, and its
