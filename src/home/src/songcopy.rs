@@ -220,7 +220,7 @@ pub fn run(
     Ok(r)
 }
 
-fn copy_file(src: &Path, dest: &Path, cancel: &AtomicBool, on_chunk: &mut dyn FnMut(u64) -> Result<(), Stop>) -> Result<(), Stop> {
+pub fn copy_file(src: &Path, dest: &Path, cancel: &AtomicBool, on_chunk: &mut dyn FnMut(u64) -> Result<(), Stop>) -> Result<(), Stop> {
     let part = PathBuf::from(format!("{}{PART}", dest.display()));
     let result = (|| {
         let mut input = fs::File::open(src).map_err(|e| Stop::Other(e.to_string()))?;

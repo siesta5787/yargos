@@ -1576,6 +1576,40 @@ pub fn running_from_internal() -> bool {
     run("yargos-install", &["where"]).map(|o| o.trim() == "internal").unwrap_or(false)
 }
 
+/// The venue files on the song drive and how many of them are not in YARG's venue folder yet.
+pub fn venues_plan() -> Result<crate::venues::VenuePlan, String> {
+    let files = crate::venues::find(std::path::Path::new(crate::venues::DRIVE))?;
+    let mut p = crate::venues::plan(&files, std::path::Path::new(crate::venues::DEST));
+    let (total, free) = data_space();
+    p.free_kib = free;
+    p.reserve_kib = reserve_kib(total);
+    Ok(p)
+}
+
+pub fn venues_add(mut on_progress: impl FnMut(String)) -> Result<String, String> {
+    use crate::songcopy::Stop;
+    let files = crate::venues::find(std::path::Path::new(crate::venues::DRIVE))?;
+    let (total, _) = data_space();
+    let reserve = reserve_kib(total);
+    let (copied, failed) = crate::venues::copy(&files, std::path::Path::new(crate::venues::DEST), reserve, &|| Some(data_space().1), &mut |d, t| {
+        on_progress(format!("Adding venues\u{2026} {}%", (d * 100).checked_div(t).unwrap_or(100)))
+    })
+    .map_err(|e| match e {
+        Stop::Full => "The internal drive is down to the space kept free for the system. Delete some internal songs, then add the venues again.".to_string(),
+        Stop::Other(e) => e,
+        _ => "Adding the venues stopped".to_string(),
+    })?;
+    if failed > 0 {
+        return Err(format!("{copied} venue file{} added, {failed} could not be copied (was the drive unplugged?)", if copied == 1 { "" } else { "s" }));
+    }
+    Ok(format!("{copied} venue file{} added. YARG uses them from its next start", if copied == 1 { "" } else { "s" }))
+}
+
+pub fn venues_remove() -> Result<String, String> {
+    let n = crate::venues::remove_all(std::path::Path::new(crate::venues::DEST))?;
+    Ok(format!("{n} venue file{} removed", if n == 1 { "" } else { "s" }))
+}
+
 pub fn storage_info() -> StorageInfo {
     let (total, free) = data_space();
     let used = run("du", &["-sk", songcopy::ROOT]).ok().and_then(|o| o.split_whitespace().next().and_then(|n| n.parse().ok())).unwrap_or(0);
@@ -1587,6 +1621,7 @@ pub fn storage_info() -> StorageInfo {
         folders: songcopy::list(std::path::Path::new(songcopy::ROOT)).len(),
         slack_kib: data_slack_kib(),
         on_stick: !running_from_internal(),
+        venues: crate::venues::installed(std::path::Path::new(crate::venues::DEST)),
     }
 }
 

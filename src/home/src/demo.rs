@@ -57,7 +57,7 @@ pub fn model(name: &str) -> Model {
         Disk { path: "/dev/sdb".into(), bytes: 1_000_204_886_016, model: "Samsung Portable SSD".into(), removable: true },
     ];
     m.tick = 3;
-    m.storage = StorageInfo { used_kib: 46_000_000, free_kib: 180_000_000, total_kib: 235_000_000, reserve_kib: 4_000_000, folders: 2, slack_kib: 0, on_stick: true };
+    m.storage = StorageInfo { used_kib: 46_000_000, free_kib: 180_000_000, total_kib: 235_000_000, reserve_kib: 4_000_000, folders: 2, slack_kib: 0, on_stick: true, venues: 3 };
     m.drives = vec![
         ImportDrive { dev: "/dev/sdb1".into(), label: "YARGSONGS".into(), fs: "EXFAT".into(), bytes: 931_000_000_000, uuid: "1234-ABCD".into() },
         ImportDrive { dev: "/dev/sdc1".into(), label: String::new(), fs: "NTFS".into(), bytes: 64_000_000_000, uuid: "ZZ".into() },
@@ -95,7 +95,7 @@ pub fn model(name: &str) -> Model {
         "storage-slack" => {
             m.screen = Screen::Storage;
             m.sel = 2;
-            m.storage = StorageInfo { used_kib: 0, free_kib: 20_000, total_kib: 700_000, reserve_kib: 1_500_000, folders: 0, slack_kib: 233_000_000, on_stick: true };
+            m.storage = StorageInfo { used_kib: 0, free_kib: 20_000, total_kib: 700_000, reserve_kib: 1_500_000, folders: 0, slack_kib: 233_000_000, on_stick: true, venues: 0 };
         }
         "import" => { m.screen = Screen::ImportPick; m.sel = 1; }
         "import-none" => { m.screen = Screen::ImportPick; m.drives.clear(); }

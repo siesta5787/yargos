@@ -122,6 +122,8 @@ pub struct StorageInfo {
     /// The system runs from a USB stick or another removable drive (so "Install on this computer's disk" makes sense). False
     /// once it runs from a disk built into the computer.
     pub on_stick: bool,
+    /// Venue files in YARG's venue folder (/data/yarg/venue).
+    pub venues: u64,
 }
 
 /// The rows of the Storage screen, in order: some only exist when they have something to do.
@@ -130,6 +132,10 @@ pub enum StorageRow {
     Import,
     Manage,
     SongDrive,
+    /// Copy venue files from the song drive to YARG's venue folder.
+    Venues,
+    /// Delete the venue files that were added (only while there are some).
+    RemoveVenues,
     /// Unused room after the data partition.
     UseRest,
     /// Copy this system to the computer's own disk (only while running from a stick).
@@ -245,6 +251,12 @@ pub enum Cmd {
     OsInstall,
     /// Install the update found on the song drive (no internet).
     OsInstallOffline,
+    /// Look at the venue files on the song drive (the answer is a question: copy them?).
+    VenuesScan,
+    /// Copy the venue files from the song drive to YARG's venue folder.
+    VenuesRun,
+    /// Delete the venue files in YARG's venue folder.
+    VenuesRemove,
     /// Follow the beta channel (true: test versions) or only the stable one (false).
     OsChannel(bool),
     /// Look on the song drive again for a system update (the dashboard asks again every few seconds while the screen is open).
@@ -351,6 +363,10 @@ pub enum Res {
     Wifi { dev: Option<String>, nets: Vec<Network> },
     /// Is the Wi-Fi adapter on?
     WifiPower(bool),
+    /// The venue files found on the song drive, or why there are none.
+    VenuesPlan(Result<crate::venues::VenuePlan, String>),
+    /// Venues were added or removed: the message to show, or what went wrong.
+    VenuesDone(Result<String, String>),
     /// What the song drive holds as a system update (or why not), see Cmd::OsFindOffline.
     OsOffline { offline: Option<String>, hint: Option<String> },
     Sound { outputs: Vec<Output>, current: Option<(u32, u32)>, current_bt: Option<String>, volume: Option<(u32, u8)> },
@@ -640,7 +656,10 @@ impl Model {
 
     /// The rows of the Storage screen now.
     pub fn storage_rows(&self) -> Vec<StorageRow> {
-        let mut v = vec![StorageRow::Import, StorageRow::Manage, StorageRow::SongDrive];
+        let mut v = vec![StorageRow::Import, StorageRow::Manage, StorageRow::SongDrive, StorageRow::Venues];
+        if self.storage.venues > 0 {
+            v.push(StorageRow::RemoveVenues);
+        }
         if self.storage.slack_kib >= SLACK_WORTH_KIB {
             v.push(StorageRow::UseRest);
         }
@@ -1139,6 +1158,22 @@ impl Model {
                     self.enter(Screen::Manage)
                 }
                 Some(StorageRow::SongDrive) => self.enter(Screen::Songs),
+                Some(StorageRow::Venues) => {
+                    self.busy = Some("Looking for venues on the song drive\u{2026}".into());
+                    vec![Cmd::VenuesScan]
+                }
+                Some(StorageRow::RemoveVenues) => {
+                    let n = self.storage.venues;
+                    self.ask(
+                        format!("Remove {} venue file{}?", thousands(n), if n == 1 { "" } else { "s" }),
+                        "Everything in YARG's venue folder is deleted. YARG uses its built-in venue again.",
+                        "Remove",
+                        true,
+                        "Removing venues\u{2026}",
+                        Cmd::VenuesRemove,
+                    );
+                    vec![]
+                }
                 Some(StorageRow::UseRest) => {
                     self.busy = Some("Using the rest of the drive\u{2026}".into());
                     vec![Cmd::GrowData]
@@ -1381,6 +1416,38 @@ impl Model {
                             a.cancel = Some(Cmd::ImportCancel);
                         }
                     }
+                }
+            }
+            Res::VenuesPlan(r) => {
+                self.busy = None;
+                match r {
+                    Err(e) => self.toast(e),
+                    Ok(p) if p.todo == 0 => self.toast(if p.found == 1 {
+                        "The venue file on the song drive is already added".to_string()
+                    } else {
+                        format!("All {} venue files on the song drive are already added", thousands(p.found))
+                    }),
+                    Ok(p) if !p.fits() => {
+                        self.alert = Some(format!(
+                            "There is not enough room on the internal drive. The venues need {}, but only {} can be used.",
+                            human_kib(p.todo_bytes / 1024),
+                            human_kib(p.free_kib.saturating_sub(p.reserve_kib))
+                        ));
+                    }
+                    Ok(p) => {
+                        let note = format!(
+                            "{}\nYARG picks one of the venues at random for each song. Its built-in venue is not used while there are venues.",
+                            human_kib(p.todo_bytes / 1024)
+                        );
+                        self.ask(format!("Add {} venue file{}?", thousands(p.todo), if p.todo == 1 { "" } else { "s" }), note, "Add", false, "Adding venues\u{2026}", Cmd::VenuesRun);
+                    }
+                }
+            }
+            Res::VenuesDone(r) => {
+                self.busy = None;
+                match r {
+                    Ok(msg) => self.toast(msg),
+                    Err(e) => self.alert = Some(e),
                 }
             }
             Res::ImportDone(r) => {
@@ -2148,22 +2215,22 @@ mod tests {
     fn storage_leads_to_the_installer_only_while_running_from_a_stick() {
         let mut m = Model::new();
         m.screen = Screen::Storage;
-        assert_eq!(m.storage_rows(), [StorageRow::Import, StorageRow::Manage, StorageRow::SongDrive], "no row until we know it is a stick");
+        assert!(!m.storage_rows().contains(&StorageRow::Install), "no row until we know it is a stick");
         m.apply(Res::Storage(StorageInfo { on_stick: true, ..Default::default() }));
-        assert_eq!(m.row_count(), 4);
-        m.sel = 3;
+        assert_eq!(m.row_count(), 5);
+        m.sel = 4;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Install)]);
         assert_eq!(m.screen, Screen::Install);
         assert_eq!(m.handle(Nav::Back), vec![Cmd::Refresh(Screen::Storage)]);
-        assert_eq!((m.screen, m.sel), (Screen::Storage, 3), "back on the install row");
+        assert_eq!((m.screen, m.sel), (Screen::Storage, 4), "back on the install row");
         // installed on the computer's own disk: the row is gone
         m.apply(Res::Storage(StorageInfo { on_stick: false, ..Default::default() }));
-        assert_eq!(m.row_count(), 3);
+        assert_eq!(m.row_count(), 4);
         assert!(!m.storage_rows().contains(&StorageRow::Install));
-        // with room to grow as well: import, manage, song drive, use the rest, install
+        // with room to grow as well: import, manage, song drive, venues, use the rest, install
         m.apply(Res::Storage(StorageInfo { on_stick: true, slack_kib: 233_000_000, ..Default::default() }));
-        assert_eq!(m.storage_rows(), [StorageRow::Import, StorageRow::Manage, StorageRow::SongDrive, StorageRow::UseRest, StorageRow::Install]);
-        m.sel = 4;
+        assert_eq!(m.storage_rows(), [StorageRow::Import, StorageRow::Manage, StorageRow::SongDrive, StorageRow::Venues, StorageRow::UseRest, StorageRow::Install]);
+        m.sel = 5;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Install)]);
     }
 
@@ -2316,7 +2383,7 @@ mod tests {
     fn the_song_drive_is_a_row_of_storage_and_back_returns_there() {
         let mut m = Model::new();
         m.screen = Screen::Storage;
-        assert_eq!(m.row_count(), 3);
+        assert_eq!(m.row_count(), 4);
         m.sel = 2;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::Refresh(Screen::Songs)]);
         assert_eq!(m.screen, Screen::Songs);
@@ -2328,18 +2395,68 @@ mod tests {
     fn unused_room_on_the_drive_is_offered_and_growing_runs_once_asked() {
         let mut m = Model::new();
         m.screen = Screen::Storage;
-        assert_eq!(m.row_count(), 3);
-        m.apply(Res::Storage(StorageInfo { slack_kib: 233_000_000, ..Default::default() }));
         assert_eq!(m.row_count(), 4);
-        m.sel = 3;
+        m.apply(Res::Storage(StorageInfo { slack_kib: 233_000_000, ..Default::default() }));
+        assert_eq!(m.row_count(), 5);
+        m.sel = 4;
         assert_eq!(m.handle(Nav::Ok), vec![Cmd::GrowData]);
         assert!(m.busy.is_some());
         m.apply(Res::Done("The rest of the drive is now in use".into()));
         m.apply(Res::Storage(StorageInfo::default()));
-        assert_eq!(m.row_count(), 3, "the row goes away once the room is used");
+        assert_eq!(m.row_count(), 4, "the row goes away once the room is used");
         // A little leftover (a few MB) is not worth a row.
         m.apply(Res::Storage(StorageInfo { slack_kib: 4096, ..Default::default() }));
-        assert_eq!(m.row_count(), 3);
+        assert_eq!(m.row_count(), 4);
+    }
+
+    fn venue_plan(todo: u64, mb: u64) -> crate::venues::VenuePlan {
+        crate::venues::VenuePlan { found: 5, todo, todo_bytes: mb << 20, free_kib: 50_000_000, reserve_kib: 1_500_000 }
+    }
+
+    #[test]
+    fn venues_are_scanned_asked_about_then_copied_and_can_be_removed() {
+        let mut m = Model::new();
+        m.screen = Screen::Storage;
+        assert_eq!(m.storage_rows()[3], StorageRow::Venues);
+        m.sel = 3;
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::VenuesScan]);
+        assert!(m.busy.is_some());
+        // nothing found: the answer says what to do
+        m.apply(Res::VenuesPlan(Err("No folder called venues on the song drive.".into())));
+        assert!(m.busy.is_none() && m.live_toast().unwrap().contains("No folder called venues"));
+        // all already there
+        m.apply(Res::VenuesPlan(Ok(venue_plan(0, 0))));
+        assert!(m.live_toast().unwrap().contains("already added"));
+        // found some: a question, Cancel is the default, the second button copies
+        m.apply(Res::VenuesPlan(Ok(venue_plan(2, 30))));
+        let a = m.ask.clone().unwrap();
+        assert!(a.question.contains("Add 2 venue files?") && a.note.contains(" MB"), "{a:?}");
+        assert_eq!(m.handle(Nav::Ok), vec![], "Cancel is the default");
+        m.apply(Res::VenuesPlan(Ok(venue_plan(1, 3))));
+        assert!(m.ask.as_ref().unwrap().question.contains("Add 1 venue file?"));
+        m.handle(Nav::Right);
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::VenuesRun]);
+        assert!(m.busy.is_some());
+        m.apply(Res::VenuesDone(Ok("1 venue file added".into())));
+        assert!(m.busy.is_none() && m.live_toast().unwrap().contains("added"));
+        // not enough room: a message, no question
+        m.apply(Res::VenuesPlan(Ok(crate::venues::VenuePlan { free_kib: 1_600_000, ..venue_plan(1, 900) })));
+        assert!(m.ask.is_none() && m.alert.as_ref().unwrap().contains("not enough room"));
+        m.alert = None;
+        // a failure is an alert
+        m.apply(Res::VenuesDone(Err("1 venue file added, 1 could not be copied".into())));
+        assert!(m.alert.is_some());
+        m.alert = None;
+        // the remove row only exists while there are venue files, and asks first (red button)
+        assert!(!m.storage_rows().contains(&StorageRow::RemoveVenues));
+        m.apply(Res::Storage(StorageInfo { venues: 3, ..Default::default() }));
+        assert_eq!(m.storage_rows()[4], StorageRow::RemoveVenues);
+        m.sel = 4;
+        assert!(m.handle(Nav::Ok).is_empty());
+        let a = m.ask.clone().unwrap();
+        assert!(a.danger && a.question.contains("Remove 3 venue files?"));
+        m.handle(Nav::Right);
+        assert_eq!(m.handle(Nav::Ok), vec![Cmd::VenuesRemove]);
     }
 
     #[test]

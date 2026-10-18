@@ -142,6 +142,8 @@ fn rows(m: &Model) -> Vec<Row> {
                 StorageRow::Import => row("Import from a portable drive"),
                 StorageRow::Manage => Row { value: if m.storage.used_kib > 0 { human_kib(m.storage.used_kib) } else { String::new() }, ..row("Manage internal songs") },
                 StorageRow::SongDrive => Row { value: m.status.songs.clone(), ..row("Song drive") },
+                StorageRow::Venues => row("Import venues from the song drive"),
+                StorageRow::RemoveVenues => Row { value: format!("{} file{}", m.storage.venues, if m.storage.venues == 1 { "" } else { "s" }), ..row("Remove added venues") },
                 StorageRow::UseRest => Row { value: human_kib(m.storage.slack_kib), tag: Some(("NOT IN USE", AMBER)), ..row("Use the rest of this drive") },
                 StorageRow::Install => row("Install on this computer's disk"),
             })

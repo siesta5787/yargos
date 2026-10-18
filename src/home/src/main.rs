@@ -7,6 +7,7 @@ mod logo;
 mod model;
 mod session;
 mod songcopy;
+mod venues;
 mod splash;
 mod screens;
 mod sys;

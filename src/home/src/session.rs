@@ -245,6 +245,16 @@ fn exec(cmds: Vec<Cmd>, m: &Model, tx: &Sender<Event>) {
                 res(tx, Res::Status(sys::status(&sys::sound_label(), &upd)));
             }),
             Cmd::OsChannel(beta) => bg(tx, move |tx| done(tx, sys::write_os_channel(beta))),
+            Cmd::VenuesScan => bg(tx, |tx| res(tx, Res::VenuesPlan(sys::venues_plan()))),
+            Cmd::VenuesRun => bg(tx, |tx| {
+                let r = sys::venues_add(|t| res(tx, Res::Progress(t)));
+                res(tx, Res::VenuesDone(r));
+                res(tx, Res::Storage(sys::storage_info()));
+            }),
+            Cmd::VenuesRemove => bg(tx, |tx| {
+                res(tx, Res::VenuesDone(sys::venues_remove()));
+                res(tx, Res::Storage(sys::storage_info()));
+            }),
             Cmd::OsFindOffline => bg(tx, |tx| {
                 let i = sys::os_info();
                 res(tx, Res::OsOffline { offline: i.offline, hint: i.offline_hint });
