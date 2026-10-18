@@ -144,6 +144,16 @@ Staged releases: `tools/release.sh VER --github --channel beta` (writes beta.jso
 (beta), then `tools/promote.sh VER --yes` (stable.json is beta.json byte for byte with the same signature; the release stops being a
 pre-release). A plain release (`--channel stable`, the default) goes straight to everyone. GitHub serves release assets through a cache: right after `publish.sh` or `promote.sh` a plain fetch of `stable.json` can still return the old file for a minute or two (promoting 2026.10.28 took about 90 s); check from outside with a retry loop, not once.
 
+## Version numbers (dates, then 1.0 ...)
+
+Two kinds (entries.sh `version_era`): dates (first number >= 1000, 2026.10.30) and release numbers (1.0, 1.1, 2.0 ...). Every release
+number is newer than every date (`ver_gt` in yargos-os-update); inside a kind it is a field by field number compare. systemd-boot
+orders entries by sort-key (ascending) then version (newest first) and our loader.conf default is `yargos-2*`, so a release entry is
+named `yargos-2-<version>` with sort-key `yargos-9` (`os_entry_id`, `os_sort_key`; date entries stay `yargos-<version>`, `yargos-a`).
+NEVER write or find an OS boot entry by a hand-built name: use `os_entry_id`. A device whose updater predates this (2026.10.30
+and older) calls 1.0 "not newer": it needs the bridge release first (stable for a while before 1.0 is published).
+`tools/test-version-bridge.sh` boots the whole sequence (date -> 1.0 -> 1.1, go back, a broken 1.0 falling back) in QEMU.
+
 ## Disk identity and the installer
 
 Never find a root or data partition by label: the flashed image uses fixed partition GUIDs (`...0001` system A,

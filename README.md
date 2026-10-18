@@ -76,6 +76,11 @@ The first boot grows the data partition to fill the stick. Wired networks work w
   again. "Go back to the earlier system" is one press. Releases are signed (Ed25519); the public keys are in
   `board/yargos/rootfs-overlay/usr/lib/yargos/keys/`. A failed download says why (no DNS, a stalled connection, an HTTP
   error, a full disk) and is retried, resuming where it stopped.
+- **Version numbers:** up to 2026.10.x a version was a date. From **1.0** on it is a release number: 1.0, 1.1 ... and 2.0 for a big
+  change or the yearly update. The updater counts every release number as newer than any date, and compares release numbers
+  field by field (1.10 is newer than 1.9). A computer must first have the *bridge* release (2026.10.31 or later, the one that
+  teaches the updater this) before it can update to 1.0: a computer on an older date version says "up to date" when 1.0 is
+  published, and needs the bridge from the song drive (or a new stick).
 - **Test versions (beta):** SYSTEM > Updates > System updates > *Test versions (beta)* makes this computer follow the beta
   channel: releases published as GitHub pre-releases (`tools/publish.sh VER --channel beta`) reach only computers that switched
   this on, also by automatic update. When a beta has been tried, `tools/promote.sh VER --yes` makes it the stable release for

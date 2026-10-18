@@ -185,7 +185,7 @@ kernel is `/yargos/<version>/bzImage` on the ESP. The installer writes `loader.c
 
 ## Updating the system over the air
 
-The system updates itself like a console: `yargos-os-update` (root; the dashboard's SYSTEM > Updates > System updates reaches it
+Versions are dates (2026.10.30) up to the bridge release and release numbers (1.0, 1.1, 2.0) after it; see CLAUDE.md "Version numbers" for how the two kinds are ordered by the updater and the boot loader. The system updates itself like a console: `yargos-os-update` (root; the dashboard's SYSTEM > Updates > System updates reaches it
 through the root helper) downloads a signed release into the OTHER system slot, adds a boot entry that tries it twice and
 never restarts by itself. The new system must bring up the launcher and keep it running (`yargos-boot-ok`), otherwise the
 boot loader falls back to the old system after two tries and the update is remembered as rejected. SYSTEM > Updates > System updates
