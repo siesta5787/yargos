@@ -5,7 +5,7 @@
 # Layout of the ESP:  loader/loader.conf   loader/entries/*.conf   yargos/<version>/bzImage
 #
 # OS entries are called yargos-<version>.conf and are the ones picked by default (loader.conf: default yargos-2*). The
-# newest version wins; an entry with a boot counter (yargos-<version>+2.conf) that did not boot in time is skipped, which
+# newest version wins (see "Two kinds of version" below for 1.0, 1.1 ... after the date-like 2026.10.30 ones); an entry with a boot counter (yargos-<version>+2.conf) that did not boot in time is skipped, which
 # is how a bad update falls back. install.conf and debug.conf are menu extras for whichever system booted last.
 
 YARGOS_BASE_OPTS="rootwait rw usbcore.autosuspend=-1 usb-storage.delay_use=5 panic=10"
@@ -26,6 +26,21 @@ entry_options() {
     esac
 }
 
+# Two kinds of version. Until the bridge release a version was a date, 2026.10.30. From 1.0 on it is a release number: 1.0,
+# 1.1 ... 2.0. A release number is always NEWER than any date, but "1.0" compared as numbers is smaller than "2026.10.30": the
+# updater (ver_gt) and this boot entry naming take care of it. systemd-boot orders entries by sort-key first (ascending), and
+# entries with the same key by version (newest first), and default picks the first entry matching yargos-2*: so release entries
+# get a sort-key that sorts before the date ones, and their file name keeps the yargos-2 prefix (yargos-2-1.0.conf).
+version_era() { # VERSION: "date" when the first number is 1000 or more, else "release"
+    case ${1%%.*} in "" | *[!0-9]*) echo date ;; *) if [ "${1%%.*}" -ge 1000 ]; then echo date; else echo release; fi ;; esac
+}
+os_entry_id() { # VERSION: the boot entry's name, without .conf
+    if [ "$(version_era "$1")" = release ]; then echo "yargos-2-$1"; else echo "yargos-$1"; fi
+}
+os_sort_key() { # VERSION
+    if [ "$(version_era "$1")" = release ]; then echo yargos-9; else echo yargos-a; fi
+}
+
 # write_entry FILE TITLE VERSION SORTKEY KERNEL OPTIONS  (written beside the target and renamed over it)
 write_entry() {
     printf 'title   %s\nversion %s\nsort-key %s\nlinux   %s\noptions %s\n' "$2" "$3" "$4" "$5" "$6" > "$1.new" && mv "$1.new" "$1"
@@ -33,7 +48,7 @@ write_entry() {
 
 # write_os_entry ESP VERSION ROOT DATA [TRIES]: the entry that starts that version from that root partition.
 write_os_entry() {
-    write_entry "$1/loader/entries/yargos-$2${5:+"+$5"}.conf" "YARG OS $2" "$2" yargos-a "/yargos/$2/bzImage" "$(entry_options "$3" "$4" quiet)"
+    write_entry "$1/loader/entries/$(os_entry_id "$2")${5:+"+$5"}.conf" "YARG OS $2" "$2" "$(os_sort_key "$2")" "/yargos/$2/bzImage" "$(entry_options "$3" "$4" quiet)"
 }
 
 # write_extra_entries ESP VERSION ROOT DATA [install]: the troubleshooting entry, and the installer entry on a stick.

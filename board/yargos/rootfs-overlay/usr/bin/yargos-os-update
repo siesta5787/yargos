@@ -70,12 +70,17 @@ conf_channel() {
 
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo 0; }
 
-# ver_gt A B: true if A > B (dotted numbers)
+# ver_gt A B: true if A > B (dotted numbers). Two kinds of version (see entries.sh): dates (2026.10.30, first number 1000 or
+# more) and release numbers (1.0, 1.1, 2.0). Every release number is newer than every date; inside a kind the numbers are
+# compared field by field.
 ver_gt() {
-    awk -v a="$1" -v b="$2" 'BEGIN {
-        n = split(a, x, "."); m = split(b, y, "."); k = (n > m) ? n : m
-        for (i = 1; i <= k; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
-        exit 1 }'
+    awk -v a="$1" -v b="$2" '
+        function era(v,   f) { split(v, f, "."); return (f[1] + 0 >= 1000) ? 0 : 1 }
+        BEGIN {
+            if (era(a) != era(b)) exit (era(a) > era(b)) ? 0 : 1
+            n = split(a, x, "."); m = split(b, y, "."); k = (n > m) ? n : m
+            for (i = 1; i <= k; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+            exit 1 }'
 }
 
 fsize() { if [ -f "$1" ]; then wc -c < "$1"; else echo 0; fi; }   # a size without the shell complaining about a missing file
@@ -557,9 +562,10 @@ cmd_go_back() {
     other=$(other_good_version)
     [ -n "$other" ] || die "there is no earlier system to go back to"
     # Mark the running one bad (a boot counter of 0) so the other becomes the default, and never offer it again.
-    run=$ESP/loader/entries/yargos-$cur.conf
+    id=$(os_entry_id "$cur")
+    run=$ESP/loader/entries/$id.conf
     [ -f "$run" ] || die "cannot find this system's boot entry"
-    mv "$run" "$ESP/loader/entries/yargos-$cur+0.conf" || die "cannot change the boot entry"
+    mv "$run" "$ESP/loader/entries/$id+0.conf" || die "cannot change the boot entry"
     sync
     echo "$cur" >> "$STATE/rejected"
     write_status "available=" "previous=" "went_back_from=$cur"
