@@ -428,8 +428,10 @@ pub fn human_kib(kib: u64) -> String {
         format!("{:.0} GB", b / 1e9)
     } else if b >= 1e9 {
         format!("{:.1} GB", b / 1e9)
-    } else {
+    } else if b >= 1e6 {
         format!("{:.0} MB", b / 1e6)
+    } else {
+        format!("{:.0} KB", (b / 1e3).ceil())
     }
 }
 
@@ -1436,7 +1438,7 @@ impl Model {
                     }
                     Ok(p) => {
                         let note = format!(
-                            "{}\nYARG picks one of the venues at random for each song. Its built-in venue is not used while there are venues.",
+                            "{}. YARG picks one at random for each song",
                             human_kib(p.todo_bytes / 1024)
                         );
                         self.ask(format!("Add {} venue file{}?", thousands(p.todo), if p.todo == 1 { "" } else { "s" }), note, "Add", false, "Adding venues\u{2026}", Cmd::VenuesRun);

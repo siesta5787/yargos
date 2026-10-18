@@ -209,6 +209,14 @@ and KB/s (`PROGRESS percent MB-done MB-total KB/s`). Never add a download withou
 `bluealsa-cli volume` (software volume; the model marks it `BT_VOLUME`). The session grabs the volume keys on the root window
 (`x::grab_volume_keys`) so YARG does not get them; the level shows in the banner window. HDMI has no mixer on purpose.
 
+## Venues
+
+YARG reads venues from `<persistent data path>/venue` (= `/data/yarg/venue`, we start it with `-persistent-data-path /data/yarg`):
+`.yarground`, mp4/mov/webm, png/jpg, recursively; it picks one at random per song and uses its built-in venue only when there
+are none. `venues.rs` copies them from a `venues` folder on the song drive as the player (never follows links, `.yargos-part`
+then rename, space reserve); `tools/test-venues.sh` tests it. The research for downloading content from the YARC Launcher's
+catalog is in docs/CONTENT-PLAN.md (not built: it needs YARC's agreement).
+
 ## Menus
 
 Main menu (`HOME_ITEMS`): Play, Sound, Bluetooth, Connected devices, System. SYSTEM rows: Wi-Fi, Updates (a menu: System updates /

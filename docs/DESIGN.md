@@ -139,7 +139,7 @@ hold-1+2 flow), Connected devices and System. System: Wi-Fi (turn the radio off 
 System updates: check, install, restart, automatic on/off, go back, from the song drive; and YARG updates: check, install,
 automatic on/off, go back), Storage (import songs to the internal drive, browse them and delete a song, a folder or everything
 with LEFT; Song drive: the drive, and one YARG song source per folder on it; Use the rest of this drive when there is unused room;
-Install on this computer's disk, only while the system runs from a USB or removable drive: `yargos-install where` says
+Venues (`venues.rs`: the files in a folder called `venues` on the song drive, any case, are copied to `/data/yarg/venue`, which is YARG's venue folder under `-persistent-data-path /data/yarg`; as the player, links never copied, repeatable, space-checked; Remove deletes the folder's contents without following links); Install on this computer's disk, only while the system runs from a USB or removable drive: `yargos-install where` says
 "internal" for a built-in disk) and Diagnostics; Restart and Shut down are two small square icons under the rows (DOWN from the
 last row reaches them, LEFT/RIGHT choose, both ask first). BACK walks the same path up with the row you came from highlighted. Instruments navigate like YARG's menus: strum or cymbals move up/down, green
 fret/pad = OK, red = Back, the two outer frets/pads = left/right. Everything that needs root goes through a helper

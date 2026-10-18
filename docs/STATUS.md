@@ -45,6 +45,11 @@ latest tests below (over-the-air updates, HDMI sound, Bluetooth earbuds, USB key
 
 ## Not yet tried on real hardware
 
+- Importing venues from the song drive (SYSTEM > Storage): `tools/test-venues.sh` drives the real dashboard in QEMU (nested folder,
+  link and text file left behind, owner, repeat, remove). The copy and the folder were never tried with real YARG: that YARG
+  loads `.yarground` files from `<persistent data path>/venue` was read in its source (`VenueLoader.cs`, `PathHelper.cs`), not seen
+  on a device, nor whether a venue from the launcher's download plays on the real GPU.
+
 - The menu remodel (main menu: Play, Sound, Bluetooth, Connected devices, System; SYSTEM: Wi-Fi, Updates, Storage with the song drive
   and install-to-disk, Diagnostics, Restart/Shut down icons) and the Wi-Fi on/off row. Run in QEMU on the real dashboard with key
   presses (`tools/test-songs.sh`, `tools/test-offline-update.sh`: both pass through the new menus); the Wi-Fi switch was tried
