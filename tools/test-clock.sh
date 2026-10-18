@@ -66,6 +66,15 @@ until_g 'pidof yargos-home >/dev/null' 60
 sleep 8
 eq "the chosen zone is back" America/Los_Angeles "$(g 'cat /etc/timezone')"
 
+echo "== YARG is started with the clock setting (its own clock follows the culture: en-US 12-hour, en-GB 24-hour)"
+g 'mkdir -p /data/apps/yarg/0.0.1 && ln -sfn 0.0.1 /data/apps/yarg/current && printf "%s\n" "#!/bin/sh" "env > /tmp/yarg-env" > /data/apps/yarg/0.0.1/YARG && chmod +x /data/apps/yarg/0.0.1/YARG && chown -R player /data/apps/yarg/0.0.1' >/dev/null
+g 'su player -s /bin/sh -c "/usr/lib/yargos/run-yarg" >/dev/null 2>&1' >/dev/null
+eq "12-hour: the language is en-US" "LANG=en_US.UTF-8" "$(g 'grep ^LANG= /tmp/yarg-env')"
+g 'echo CLOCK24=yes >> /data/yargos.conf; su player -s /bin/sh -c "/usr/lib/yargos/run-yarg" >/dev/null 2>&1' >/dev/null
+eq "24-hour: the language is en-GB" "LANG=en_GB.UTF-8" "$(g 'grep ^LANG= /tmp/yarg-env')"
+eq "no LC_ALL gets in the way" 0 "$(g 'grep -c ^LC_ALL= /tmp/yarg-env')"
+g 'sed -i /^CLOCK24=/d /data/yargos.conf; echo CLOCK24=no >> /data/yargos.conf; rm -rf /data/apps/yarg/0.0.1 /data/apps/yarg/current' >/dev/null
+
 echo "== what the helper refuses"
 g "echo 'TIMEZONE=../../etc/passwd' > /tmp/bad.conf; sed 's|/data/yargos.conf|/tmp/bad.conf|' /usr/lib/yargos/timezone.sh > /tmp/tz-test.sh; sh /tmp/tz-test.sh" | grep -q "no time zone chosen"; [ $? -eq 0 ] && ok "a path trick is refused" || bad "a path trick was not refused"
 g "echo 'TIMEZONE=Nowhere/Land' > /tmp/bad.conf; sh /tmp/tz-test.sh" | grep -q "unknown time zone"; [ $? -eq 0 ] && ok "an unknown zone is refused" || bad "an unknown zone was not refused"

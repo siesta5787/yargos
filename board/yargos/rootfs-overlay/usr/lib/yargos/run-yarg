@@ -30,6 +30,11 @@ if [ "$AUTO_SONG_SOURCES" != no ]; then
             "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
     fi
 fi
+# YARG shows its clock (Settings > Show time) with the culture's short time pattern, "{0:t}". Mono takes the culture from LC_ALL / LANG, and
+# with neither set that is the invariant culture, whose short time is 24-hour ("21:41") whatever SYSTEM > Date & time says. So the
+# clock setting is passed on: en-US writes "9:41 PM", en-GB "21:41". (Numbers and dates are formatted the same way in both.)
+unset LC_ALL
+if [ -f /data/yargos.conf ] && grep -qx 'CLOCK24=yes' /data/yargos.conf; then export LANG=en_GB.UTF-8; else export LANG=en_US.UTF-8; fi
 # YARG's audio library (BASS) loads its add-ons (Opus decoding, the effects used for the microphone) by bare
 # name, which only works if the plugins folder is on the library path. Without it every .opus sound effect,
 # every Opus song and the microphone silently fail ("Failed to load ...: OK!", "Failed to initialize microphone").

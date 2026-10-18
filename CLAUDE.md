@@ -233,7 +233,9 @@ and KB/s (`PROGRESS percent MB-done MB-total KB/s`). Never add a download withou
 The corner clock is `Model.clock`, text from `date` (`sys::clock_text`, format by `CLOCK24=yes`) read every 5 s by `spawn_clock` and drawn
 on every screen by `ui::draw`. The time zone is `TIMEZONE=<zone>` in /data/yargos.conf (player-owned: root only reads it as text) and
 `usr/lib/yargos/timezone.sh` (helper word `timezone-apply`) links /etc/localtime into /usr/share/zoneinfo after checking the name:
-never widen that. A system update brings a UTC /etc, so the dashboard applies the saved zone at every start. `tools/test-clock.sh`.
+never widen that. A system update brings a UTC /etc, so the dashboard applies the saved zone at every start. YARG shows its own clock with
+`{0:t}` (the culture's short time): Mono takes the culture from LC_ALL / LANG and with neither set it is the invariant 24-hour one, so
+`run-yarg` exports LANG=en_US.UTF-8 (12-hour) or en_GB.UTF-8 (CLOCK24=yes). `tools/test-clock.sh`.
 
 ## Venues
 
